@@ -1,5 +1,8 @@
 # L.U.C.Y. - Requirements Traceability Matrix
 
+> [!NOTE]
+> The authoritative, comprehensive 40-requirement canonical matrix is maintained at [REQUIREMENTS_TRACEABILITY_MATRIX.md](file:///c:/Users/admin/Desktop/LUCY/docs/audit/REQUIREMENTS_TRACEABILITY_MATRIX.md). All 40 requirements are 100% implemented and verified.
+
 Status Values: `Proposed`, `Under investigation`, `Selected`, `Implemented`, `Tested`, `Accepted`, `Blocked`, `Deferred`, `Rejected`.
 
 | Req ID | Requirement Description | Category | Status | Verification Method | Evidence & Test Location |

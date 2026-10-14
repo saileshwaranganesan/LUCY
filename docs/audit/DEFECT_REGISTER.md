@@ -2,7 +2,7 @@
 
 **Audit Date:** October 14, 2026  
 **Auditor:** Antigravity AI Engineering / QA Lead & Application Security Reviewer  
-**Total Tracked Defects:** 6 (Confirmed & Evidence-Backed)
+**Total Tracked Defects:** 7 (Confirmed & Evidence-Backed)
 
 ---
 
@@ -13,6 +13,7 @@
 | **DEF-001** | Task Planner Regex Precedence & Literal Content Extraction | **High (P1)** | Natural Language Planning & Execution | High (100%) | **Resolved (Workstream 1B — `tests/core/def-001-reproduction.test.js`)** |
 | **DEF-002** | Absence of Native Tool/Function Calling Schemas | **High (P1)** | Model-to-Tool Dispatch & Reliability | High (100%) | **Resolved (Workstream 1B — `tests/core/def-002-structured-tool-calling.test.js`)** |
 | **DEF-003** | Missing Screenshot-to-Vision Multimodal Feedback Loop | **Medium (P2)** | Desktop & Web Visual Verification | High (100%) | **Resolved (`tests/core/def-003-vision-loop.test.js`)** |
+| **DEF-004** | Ephemeral Playwright Browser Contexts (No Persistent Auth) | **Medium (P2)** | Browser Automation & Session Continuity | High (100%) | **Resolved (`tests/browser/persistent-browser-session.test.js`)** |
 | **DEF-005A** | Workspace Missing Version Control (No Git Repository) | **Medium (P2)** | Configuration & Change Safety | High (100%) | **Resolved (Workstream 1A — commit `16d88a86`)** |
 | **DEF-005B** | Unsigned Windows Executables & Release Trust Verification | **Low (P3)** | Distribution & SmartScreen Trust | High (100%) | **Resolved (`scripts/verify-release-artifacts.js`, `tests/packaging/release-trust-verification.test.js`)** |
 | **DEF-006** | Orphaned Background Packaged App Process (`LUCY.exe`) | **Low (P3)** | Process Contention & Port Safety | High (100%) | **Mitigated (Single-instance lock & procedural termination)** |

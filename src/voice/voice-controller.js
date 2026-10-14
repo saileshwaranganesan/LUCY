@@ -20,6 +20,14 @@ const _createSpeechSynthesis = (typeof require !== 'undefined')
     ? require('./speech-synthesis.js').createSpeechSynthesis
     : (typeof window !== 'undefined' ? window.createSpeechSynthesis : globalThis.createSpeechSynthesis);
 
+const _WhisperEngine = (typeof require !== 'undefined')
+    ? require('./whisper-recognition.js').WhisperOfflineRecognitionEngine
+    : (typeof window !== 'undefined' ? window.WhisperOfflineRecognitionEngine : null);
+
+const _WakeWordEngine = (typeof require !== 'undefined')
+    ? require('./wake-word-engine.js').WakeWordEngine
+    : (typeof window !== 'undefined' ? window.WakeWordEngine : null);
+
 const VOICE_STATES = Object.freeze({
     IDLE: 'idle',
     LISTENING: 'listening',
@@ -35,8 +43,11 @@ class VoiceController {
         onInterimTranscript = () => {},
         onFinalTranscript = () => {},
         onError = () => {},
+        onWakeWord = () => {},
         ttsEnabled = true,
-        language = 'en-US'
+        language = 'en-US',
+        wakeWordEnabled = false,
+        whisperConfig = {}
     } = {}) {
         this.globalScope = globalScope;
         this.onStateChange = onStateChange;
@@ -94,6 +105,23 @@ class VoiceController {
             }
         }) : { supported: false, isSpeaking: false, speak: async () => false, stop: () => {} };
         this.synthesis.enabled = this.ttsEnabled;
+
+        // Initialize Wake-Word Engine (opt-in privacy default)
+        this.wakeWordEngine = _WakeWordEngine ? new _WakeWordEngine({
+            enabled: Boolean(wakeWordEnabled)
+        }) : null;
+
+        if (this.wakeWordEngine) {
+            this.wakeWordEngine.on('wakeWordDetected', (res) => {
+                if (typeof onWakeWord === 'function') {
+                    onWakeWord(res);
+                }
+                this.startListening();
+            });
+        }
+
+        // Initialize Offline Whisper Recognition Engine
+        this.whisperEngine = _WhisperEngine ? new _WhisperEngine(whisperConfig) : null;
     }
 
     get isRecognitionSupported() {
@@ -169,12 +197,21 @@ class VoiceController {
         if (this.isListening) {
             return false;
         }
-        const speechId = ++this.currentSpeechId;
-        const res = await this.synthesis.speak(text, options);
-        if (speechId !== this.currentSpeechId) {
-            return false;
+        if (this.wakeWordEngine) {
+            this.wakeWordEngine.pause();
         }
-        return res;
+        const speechId = ++this.currentSpeechId;
+        try {
+            const res = await this.synthesis.speak(text, options);
+            if (speechId !== this.currentSpeechId) {
+                return false;
+            }
+            return res;
+        } finally {
+            if (this.wakeWordEngine) {
+                this.wakeWordEngine.resume();
+            }
+        }
     }
 
     /**
@@ -183,6 +220,9 @@ class VoiceController {
     stopSpeaking() {
         this.currentSpeechId++;
         this.synthesis.stop();
+        if (this.wakeWordEngine) {
+            this.wakeWordEngine.resume();
+        }
         if (this.voiceState === VOICE_STATES.SPEAKING) {
             this.setVoiceState(VOICE_STATES.IDLE);
         }
@@ -243,9 +283,30 @@ class VoiceController {
         return [];
     }
 
+    getWakeWordStatus() {
+        return this.wakeWordEngine ? this.wakeWordEngine.getPrivacyState() : { enabled: false, supported: false };
+    }
+
+    setWakeWordEnabled(enabled) {
+        if (!this.wakeWordEngine) return false;
+        if (enabled) {
+            this.wakeWordEngine.enable();
+        } else {
+            this.wakeWordEngine.disable();
+        }
+        return this.wakeWordEngine.enabled;
+    }
+
+    getWhisperStatus() {
+        return this.whisperEngine ? this.whisperEngine.getStatus() : { engine: 'whisper.cpp', isAvailable: false };
+    }
+
     dispose() {
         this.cancelListening();
         this.stopSpeaking();
+        if (this.wakeWordEngine && typeof this.wakeWordEngine.dispose === 'function') {
+            this.wakeWordEngine.dispose();
+        }
         if (this.recognition && typeof this.recognition.dispose === 'function') {
             this.recognition.dispose();
         }

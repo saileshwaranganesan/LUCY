@@ -24,6 +24,9 @@ const { registerMemoryTools } = require('../tools/memory-tools.js');
 const { FloatingCompanionWindow } = require('../companion/floating-companion-window.js');
 const { MemoryStore } = require('../memory/memory-store.js');
 const { TaskContinuityStore } = require('../memory/task-continuity-store.js');
+const { Scheduler } = require('../core/scheduler.js');
+const { StudentWorkflows } = require('../workflows/student-workflows.js');
+const { registerStudentWorkflowTools } = require('../tools/student-workflow-tools.js');
 const {
     validateExecuteRequest,
     validateSetProviderConfig,
@@ -77,6 +80,8 @@ let desktopManager = null;
 let floatingCompanion = null;
 let voiceConfigFile = null;
 let memoryStore = null;
+let scheduler = null;
+let studentWorkflows = null;
 const pendingPermissionCallbacks = new Map();
 
 function createWindow() {
@@ -223,6 +228,20 @@ function initAssistantBackend() {
         taskContinuityStore
     });
     coordinator.setCompanionBridge(companionBridge);
+
+    scheduler = new Scheduler({
+        storageDir: memoryDir,
+        taskCoordinator: coordinator,
+        permissionAuthority
+    });
+    studentWorkflows = new StudentWorkflows({
+        browserManager,
+        workspaceRoot: permissionAuthority.workspaceRoot,
+        scheduler,
+        permissionAuthority
+    });
+    registerStudentWorkflowTools(toolRegistry, studentWorkflows, scheduler);
+    scheduler.start();
 
     floatingCompanion = new FloatingCompanionWindow({
         mainWindow,
@@ -668,6 +687,9 @@ if (gotSingleInstanceLock && app && typeof app.whenReady === 'function') {
         }
         if (desktopManager) {
             desktopManager.cleanup();
+        }
+        if (scheduler) {
+            scheduler.dispose();
         }
         if (floatingCompanion) {
             floatingCompanion.destroy();
