@@ -13,8 +13,8 @@
 | **DEF-001** | Task Planner Regex Precedence & Literal Content Extraction | **High (P1)** | Natural Language Planning & Execution | High (100%) | **Resolved (Workstream 1B — `tests/core/def-001-reproduction.test.js`)** |
 | **DEF-002** | Absence of Native Tool/Function Calling Schemas | **High (P1)** | Model-to-Tool Dispatch & Reliability | High (100%) | **Resolved (Workstream 1B — `tests/core/def-002-structured-tool-calling.test.js`)** |
 | **DEF-003** | Missing Screenshot-to-Vision Multimodal Feedback Loop | **Medium (P2)** | Desktop & Web Visual Verification | High (100%) | Confirmed: Models accept text only, no image inputs |
-| **DEF-004** | Ephemeral Playwright Browser Contexts (No Persistent Auth) | **Medium (P2)** | Web Workflows & User Portal Logins | High (100%) | **Resolved (`tests/browser/persistent-browser-session.test.js`)** |
-| **DEF-005** | Workspace Missing Version Control (No Git Repository) | **Medium (P2)** | Configuration & Change Safety | High (100%) | **Resolved (Workstream 1A — commit `16d88a86`)** |
+| **DEF-005A** | Workspace Missing Version Control (No Git Repository) | **Medium (P2)** | Configuration & Change Safety | High (100%) | **Resolved (Workstream 1A — commit `16d88a86`)** |
+| **DEF-005B** | Unsigned Windows Executables & Release Trust Verification | **Low (P3)** | Distribution & SmartScreen Trust | High (100%) | **Resolved (`scripts/verify-release-artifacts.js`, `tests/packaging/release-trust-verification.test.js`)** |
 | **DEF-006** | Orphaned Background Packaged App Process (`LUCY.exe`) | **Low (P3)** | Process Contention & Port Safety | High (100%) | Confirmed via PowerShell `Get-Process` |
 
 ---
@@ -120,17 +120,43 @@
 
 ---
 
-### DEF-005: Workspace Missing Version Control (No Git Repository)
+### DEF-005A: Workspace Missing Version Control (No Git Repository)
 
 - **Severity:** Medium (P2)
+- **Status:** **Resolved (Workstream 1A — commit `16d88a86`)**
 - **Component:** Workspace root (`C:\Users\admin\Desktop\LUCY`)
 - **Requirement Linked:** Safety & Change Management (Rule E)
 - **Description:**
-  The workspace `C:\Users\admin\Desktop\LUCY` contains no `.git` directory. Running `git status` fails with `fatal: not a git repository`.
-- **Impact:**
-  Without Git, there is no automatic rollback, diff tracking, or branch isolation. Any accidental modification or file corruption during future implementation work could cause unrecoverable loss.
-- **Smallest Safe Correction:**
-  User or agent should initialize Git (`git init`), create a `.gitignore` (which already exists in the repo), and commit the verified 235-test passing baseline as the initial commit (`git commit -m "chore: verified baseline v0.1.0"`).
+  The workspace `C:\Users\admin\Desktop\LUCY` initially contained no `.git` directory. Running `git status` failed with `fatal: not a git repository`.
+- **Resolution:**
+  Initialized Git repository, configured hardened `.gitignore` excluding live memory, database journals, swap files, build outputs, and credentials, and committed the verified passing baseline as commit `16d88a86`.
+
+---
+
+### DEF-005B: Unsigned Windows Packaged Executables & Release Trust Verification
+
+- **Severity:** Low (P3)
+- **Status:** **Resolved (`scripts/verify-release-artifacts.js`, `tests/packaging/release-trust-verification.test.js`)**
+- **Component:** `dist-release/`, `electron-builder.yml`, `scripts/`
+- **Requirement Linked:** REQ-026, Distribution & Release Trust
+- **Description:**
+  Packaged release executables (`L.U.C.Y-Setup-0.1.0-win-x64.exe` and `L.U.C.Y-Portable-0.1.0-win-x64.exe`) are unsigned (`Status: NotSigned`). On initial download from the internet, Microsoft Defender SmartScreen displays an "Unknown Publisher" advisory.
+- **Code Signing Evaluation:**
+  - Standard OV / Individual Code Signing: Authenticode signs binaries, but new keys require building download reputation before SmartScreen ceases warning users.
+  - EV (Extended Validation) Code Signing: Requires commercial entity verification (DUNS number, corporate registration) and a hardware token or cloud HSM ($300–$700/yr). Immediate SmartScreen reputation.
+  - Azure Trusted Signing: Requires active Azure enterprise tenant and identity verification.
+  - Decision: Without purchasing a certificate, cryptographic hash verification (SHA-256) is the industry standard for open-source integrity.
+- **Remediation Implementation:**
+  1. Implemented `scripts/generate-release-manifest.js` creating standard `dist-release/SHA256SUMS.txt` and structured `dist-release/release-manifest.json` with source git revision, file sizes, and SHA-256 hashes.
+  2. Implemented `scripts/verify-release-artifacts.js` (`npm run release:verify`) recalculating hashes, checking Authenticode status, and detecting file tampering.
+  3. Added `*.pfx`, `*.p12`, `*.cer`, `*.crt`, `*.key` exclusions to `.gitignore` ensuring zero private keys enter source control.
+  4. Corrected inaccurate release hashes in `docs/PACKAGING_AND_INSTALLATION_GUIDE.md`.
+- **Verification Evidence:**
+  - Automated test suite `tests/packaging/release-trust-verification.test.js` passes 6/6 tests.
+  - Verified detection of tampered bytes (`hash_mismatch`) and missing files (`missing_file`).
+  - Production artifacts verified:
+    - `L.U.C.Y-Setup-0.1.0-win-x64.exe`: `3fa5ed3ef606969d98bf83725c329dfee5c91147db535d42ba5f07810a8b6744`
+    - `L.U.C.Y-Portable-0.1.0-win-x64.exe`: `29f5a22a0431f22733cbd7e25141c123cac8202b04d1247b81e2cb0aee01b7e8`
 
 ---
 

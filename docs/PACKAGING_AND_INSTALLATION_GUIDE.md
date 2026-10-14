@@ -6,15 +6,26 @@
 
 ---
 
-## 1. Release Deliverables & Checksums
+## 1. Release Deliverables & Cryptographic Checksums
 
 The release artifacts are stored in the project's release output directory: `dist-release/`.
 
 | File Name | File Size | Target Description | SHA-256 Digest |
 |---|---|---|---|
-| **`L.U.C.Y-Setup-0.1.0-win-x64.exe`** | ~87.8 MB | Standard Windows Installer (NSIS). Creates Start Menu & Desktop shortcuts, includes uninstaller. | `9B4BDC8FD93D9CD66BE8FD15DF139F99B7DCA96317772652BFA733D98E5E048A` |
-| **`L.U.C.Y-Portable-0.1.0-win-x64.exe`** | ~87.5 MB | Portable executable. Runs directly without installation or administrator privileges. | `1C4223A4A7675D14CAEAA9D566FAAA48A5BCB16D178726EBA320A72B5771ACBF` |
-| **`RELEASE_METADATA.json`** | ~1 KB | Cryptographic verification manifest recording build environment, tool versions, and file hashes. | — |
+| **`L.U.C.Y-Setup-0.1.0-win-x64.exe`** | 88,221,392 B (84.13 MB) | Standard Windows Installer (NSIS). Creates Start Menu & Desktop shortcuts, includes uninstaller. | `3fa5ed3ef606969d98bf83725c329dfee5c91147db535d42ba5f07810a8b6744` |
+| **`L.U.C.Y-Portable-0.1.0-win-x64.exe`** | 87,991,845 B (83.92 MB) | Portable executable. Runs directly without installation or administrator privileges. | `29f5a22a0431f22733cbd7e25141c123cac8202b04d1247b81e2cb0aee01b7e8` |
+| **`L.U.C.Y-Setup-0.1.0-win-x64.exe.blockmap`** | 92,873 B (0.09 MB) | Differential update blockmap for Electron auto-updater. | `d9a4494040d93fe406c8254e32827c68cb6e3c3c9ee9c517737a691ba9eabebf` |
+| **`SHA256SUMS.txt`** | Standard GNU format | Cryptographic checksum manifest for verification with `sha256sum -c` or PowerShell. | — |
+| **`release-manifest.json`** | ~1 KB | Machine-readable release metadata with source revision commit, build timestamps, and hashes. | — |
+
+To verify artifact integrity on Windows:
+```powershell
+# Verify using built-in verification script:
+npm run release:verify
+
+# Or verify manually via PowerShell:
+Get-FileHash dist-release\L.U.C.Y-Setup-0.1.0-win-x64.exe -Algorithm SHA256
+```
 
 ---
 

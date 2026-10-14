@@ -8,6 +8,10 @@ node_modules/
 *.pem
 *.key
 *.secret
+*.pfx
+*.p12
+*.cer
+*.crt
 
 # User Data & Runtime Memory Stores (Do not commit real user data)
 /data/
