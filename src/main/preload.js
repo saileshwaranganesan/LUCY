@@ -64,5 +64,8 @@ contextBridge.exposeInMainWorld('lucyIpc', {
     },
     // Voice Customization & Lifecycle APIs
     getVoiceConfig: () => ipcRenderer.invoke('lucy:getVoiceConfig'),
-    setVoiceConfig: (config) => ipcRenderer.invoke('lucy:setVoiceConfig', config)
+    setVoiceConfig: (config) => ipcRenderer.invoke('lucy:setVoiceConfig', config),
+    // Offline Speech Recognition (REQ-027)
+    getWhisperStatus: () => ipcRenderer.invoke('lucy:getWhisperStatus'),
+    transcribeAudio: (audioData, options) => ipcRenderer.invoke('lucy:transcribeAudio', audioData, options)
 });

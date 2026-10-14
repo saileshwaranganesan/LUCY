@@ -41,6 +41,9 @@ class WhisperOfflineRecognitionEngine {
         // Discover model path
         this.modelsDir = modelsDir
             || process.env.LUCY_WHISPER_MODELS_DIR
+            || (process.resourcesPath && fs.existsSync(path.join(process.resourcesPath, 'models', 'whisper'))
+                ? path.join(process.resourcesPath, 'models', 'whisper')
+                : null)
             || path.resolve(process.cwd(), 'models', 'whisper');
 
         this.modelPath = modelPath
@@ -49,12 +52,22 @@ class WhisperOfflineRecognitionEngine {
     }
 
     _findDefaultBinary() {
-        const candidates = [
-            path.resolve(process.cwd(), 'bin', 'whisper.exe'),
+        const candidates = [];
+        if (process.resourcesPath) {
+            candidates.push(
+                path.join(process.resourcesPath, 'bin', 'whisper-cli.exe'),
+                path.join(process.resourcesPath, 'bin', 'whisper.exe'),
+                path.join(process.resourcesPath, 'bin', 'main.exe')
+            );
+        }
+        candidates.push(
             path.resolve(process.cwd(), 'bin', 'whisper-cli.exe'),
+            path.resolve(process.cwd(), 'bin', 'whisper.exe'),
             path.resolve(process.cwd(), 'bin', 'main.exe'),
-            path.resolve(__dirname, '../../bin/whisper-cli.exe')
-        ];
+            path.resolve(__dirname, '../../bin/whisper-cli.exe'),
+            path.resolve(__dirname, '../../bin/whisper.exe'),
+            path.resolve(__dirname, '../../bin/main.exe')
+        );
         for (const candidate of candidates) {
             if (fs.existsSync(candidate)) return candidate;
         }
@@ -62,10 +75,24 @@ class WhisperOfflineRecognitionEngine {
     }
 
     _findDefaultModel() {
-        if (!fs.existsSync(this.modelsDir)) return null;
-        for (const name of DEFAULT_MODEL_NAMES) {
-            const candidate = path.join(this.modelsDir, name);
-            if (fs.existsSync(candidate)) return candidate;
+        const candidateDirs = [];
+        if (process.resourcesPath) {
+            candidateDirs.push(path.join(process.resourcesPath, 'models', 'whisper'));
+        }
+        if (this.modelsDir) {
+            candidateDirs.push(this.modelsDir);
+        }
+        candidateDirs.push(
+            path.resolve(process.cwd(), 'models', 'whisper'),
+            path.resolve(__dirname, '../../models/whisper')
+        );
+
+        for (const dir of candidateDirs) {
+            if (!dir || !fs.existsSync(dir)) continue;
+            for (const name of DEFAULT_MODEL_NAMES) {
+                const candidate = path.join(dir, name);
+                if (fs.existsSync(candidate)) return candidate;
+            }
         }
         return null;
     }
@@ -85,12 +112,19 @@ class WhisperOfflineRecognitionEngine {
      */
     getStatus() {
         const available = this.isAvailable();
+        let modelSizeBytes = null;
+        if (this.modelPath && fs.existsSync(this.modelPath)) {
+            try {
+                modelSizeBytes = fs.statSync(this.modelPath).size;
+            } catch (_) {}
+        }
         return {
             engine: 'whisper.cpp',
             license: WHISPER_LICENCE,
             isAvailable: available,
             binaryPath: this.binaryPath,
             modelPath: this.modelPath,
+            modelSize: modelSizeBytes,
             language: this.language,
             threads: this.threads,
             message: available
@@ -103,7 +137,9 @@ class WhisperOfflineRecognitionEngine {
      * Transcribe a WAV audio file or buffer using local whisper.cpp executable.
      * @param {string|Buffer} audioInput - File path to 16kHz WAV file or Buffer.
      * @param {object} [options]
-     * @returns {Promise<{ ok: boolean, transcript: string, durationMs?: number, error?: string }>}
+     * @param {AbortSignal} [options.signal] - Optional AbortSignal for cancellation.
+     * @param {number} [options.timeoutMs] - Optional custom timeout in milliseconds.
+     * @returns {Promise<{ ok: boolean, transcript: string, durationMs?: number, error?: string, cancelled?: boolean }>}
      */
     async transcribeAudio(audioInput, options = {}) {
         const status = this.getStatus();
@@ -116,50 +152,94 @@ class WhisperOfflineRecognitionEngine {
             };
         }
 
+        if (options.signal && options.signal.aborted) {
+            return {
+                ok: false,
+                transcript: '',
+                error: 'Transcription was cancelled before start',
+                cancelled: true
+            };
+        }
+
         let tempWavFile = null;
         let wavPath = '';
 
         if (Buffer.isBuffer(audioInput)) {
+            if (audioInput.length === 0) {
+                return {
+                    ok: false,
+                    transcript: '',
+                    error: 'Invalid audio input: audio buffer is empty'
+                };
+            }
             tempWavFile = path.join(os.tmpdir(), `lucy_whisper_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.wav`);
             fs.writeFileSync(tempWavFile, audioInput);
             wavPath = tempWavFile;
         } else if (typeof audioInput === 'string' && fs.existsSync(audioInput)) {
+            const stat = fs.statSync(audioInput);
+            if (stat.size === 0) {
+                return {
+                    ok: false,
+                    transcript: '',
+                    error: 'Invalid audio input: audio file is empty'
+                };
+            }
             wavPath = audioInput;
         } else {
             return {
                 ok: false,
                 transcript: '',
-                error: 'Invalid audio input: expected existing file path or audio Buffer'
+                error: 'Invalid audio input: expected existing file path or non-empty audio Buffer'
             };
         }
 
         const startTime = Date.now();
+        const timeoutMs = options.timeoutMs || this.timeoutMs;
         const args = [
             '-m', this.modelPath,
             '-f', wavPath,
             '-l', options.language || this.language,
             '-t', String(this.threads),
-            '--no-timestamps',
-            '-nt'
+            '-nt',
+            '-np'
         ];
+
+        let proc = null;
+        let abortHandler = null;
 
         try {
             const isWindowsBatch = process.platform === 'win32' && /\.(cmd|bat)$/i.test(this.binaryPath);
             const spawnCommand = isWindowsBatch ? (process.env.ComSpec || 'cmd.exe') : this.binaryPath;
             const spawnArgs = isWindowsBatch ? ['/d', '/s', '/c', this.binaryPath, ...args] : args;
+
             const transcript = await new Promise((resolve, reject) => {
-                const proc = spawn(spawnCommand, spawnArgs, {
+                proc = spawn(spawnCommand, spawnArgs, {
                     stdio: ['ignore', 'pipe', 'pipe'],
                     windowsHide: true
                 });
 
                 let stdout = '';
                 let stderr = '';
+                let timedOut = false;
+                let cancelled = false;
 
                 const timer = setTimeout(() => {
-                    proc.kill();
-                    reject(new Error(`whisper.cpp transcription timed out after ${this.timeoutMs}ms`));
-                }, this.timeoutMs);
+                    timedOut = true;
+                    try { proc.kill(); } catch (_) {}
+                    reject(new Error(`whisper.cpp transcription timed out after ${timeoutMs}ms`));
+                }, timeoutMs);
+
+                if (options.signal) {
+                    abortHandler = () => {
+                        cancelled = true;
+                        clearTimeout(timer);
+                        try { proc.kill(); } catch (_) {}
+                        const err = new Error('Transcription was cancelled');
+                        err.cancelled = true;
+                        reject(err);
+                    };
+                    options.signal.addEventListener('abort', abortHandler, { once: true });
+                }
 
                 proc.stdout.on('data', (d) => { stdout += d.toString('utf8'); });
                 proc.stderr.on('data', (d) => { stderr += d.toString('utf8'); });
@@ -171,8 +251,11 @@ class WhisperOfflineRecognitionEngine {
 
                 proc.on('close', (code) => {
                     clearTimeout(timer);
+                    if (timedOut || cancelled) return;
                     if (code === 0) {
-                        resolve(stdout.trim());
+                        // Clean whitespace and any stray brackets
+                        const cleaned = stdout.trim().replace(/^\[\d+:\d+:\d+\.\d+\s*-->\s*\d+:\d+:\d+\.\d+\]\s*/gm, '').trim();
+                        resolve(cleaned);
                     } else {
                         reject(new Error(`whisper.cpp exited with code ${code}: ${stderr.trim()}`));
                     }
@@ -191,9 +274,13 @@ class WhisperOfflineRecognitionEngine {
                 ok: false,
                 transcript: '',
                 error: err.message,
-                fallbackRequired: true
+                cancelled: Boolean(err.cancelled),
+                fallbackRequired: !err.cancelled
             };
         } finally {
+            if (options.signal && abortHandler) {
+                try { options.signal.removeEventListener('abort', abortHandler); } catch (_) {}
+            }
             if (tempWavFile && fs.existsSync(tempWavFile)) {
                 try { fs.unlinkSync(tempWavFile); } catch (_) {}
             }

@@ -23,6 +23,10 @@ files:
 extraResources:
   - from: "src/tools/native-uia/LucyUiaWorker.exe"
     to: "native-uia/LucyUiaWorker.exe"
+  - from: "bin"
+    to: "bin"
+  - from: "models"
+    to: "models"
 
 asar: true
 asarUnpack:

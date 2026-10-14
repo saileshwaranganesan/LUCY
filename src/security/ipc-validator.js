@@ -512,6 +512,66 @@ function validateVoiceConfig(config) {
     return { ok: true, sanitized };
 }
 
+/**
+ * Validate audio transcription request from renderer (REQ-027 & SEC-008).
+ * Caps payload size at 25MB to prevent memory exhaustion and validates options.
+ */
+function validateTranscribeAudioRequest(audioData, options = {}) {
+    if (!audioData) {
+        return { ok: false, code: 'EMPTY_AUDIO', error: 'Audio data is required for transcription.' };
+    }
+
+    let buffer;
+    if (Buffer.isBuffer(audioData)) {
+        buffer = audioData;
+    } else if (audioData instanceof Uint8Array || audioData instanceof ArrayBuffer) {
+        buffer = Buffer.from(audioData);
+    } else if (typeof audioData === 'string') {
+        // Base64 encoded audio
+        try {
+            buffer = Buffer.from(audioData, 'base64');
+        } catch {
+            return { ok: false, code: 'INVALID_AUDIO_FORMAT', error: 'Could not decode base64 audio payload.' };
+        }
+    } else {
+        return { ok: false, code: 'INVALID_AUDIO_TYPE', error: 'Audio data must be a Buffer, Uint8Array, or base64 string.' };
+    }
+
+    if (buffer.length === 0) {
+        return { ok: false, code: 'EMPTY_AUDIO', error: 'Audio payload contains 0 bytes.' };
+    }
+
+    const MAX_AUDIO_BYTES = 25 * 1024 * 1024; // 25 MB limit
+    if (buffer.length > MAX_AUDIO_BYTES) {
+        return { ok: false, code: 'PAYLOAD_TOO_LARGE', error: `Audio payload exceeds maximum permitted size of 25MB (${buffer.length} bytes).` };
+    }
+
+    const sanitizedOptions = {};
+    if (options && typeof options === 'object') {
+        if (options.language !== undefined && options.language !== null) {
+            if (typeof options.language !== 'string' || !/^[a-zA-Z-]{2,10}$/.test(options.language)) {
+                return { ok: false, code: 'INVALID_LANGUAGE', error: 'Language must be an ISO language code (e.g. en, es, en-US).' };
+            }
+            sanitizedOptions.language = options.language.trim();
+        }
+        if (options.timeoutMs !== undefined && options.timeoutMs !== null) {
+            const t = Number(options.timeoutMs);
+            if (!Number.isInteger(t) || t < 1000 || t > 120000) {
+                return { ok: false, code: 'INVALID_TIMEOUT', error: 'timeoutMs must be an integer between 1000 and 120000 ms.' };
+            }
+            sanitizedOptions.timeoutMs = t;
+        }
+    }
+
+    return {
+        ok: true,
+        sanitized: {
+            audioBuffer: buffer,
+            options: sanitizedOptions
+        }
+    };
+}
+
 module.exports = {
     // Loopback & URL validation
     isLoopbackHost,
@@ -533,6 +593,7 @@ module.exports = {
     validateDiscoverOllamaModels,
     validateCancelRequest,
     validateVoiceConfig,
+    validateTranscribeAudioRequest,
 
     // Constant sets
     ALLOWED_PROVIDERS,

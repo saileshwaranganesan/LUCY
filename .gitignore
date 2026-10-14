@@ -42,6 +42,10 @@ out/
 release/
 *.blockmap
 
+# Native Binaries & ML Model Weights (REQ-027)
+/bin/
+/models/
+
 # Reference Upstream (kept locally for inspection, excluded from releases)
 reference/AILIS/
 reference/ailis.zip

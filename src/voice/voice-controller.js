@@ -28,12 +28,22 @@ const _WakeWordEngine = (typeof require !== 'undefined')
     ? require('./wake-word-engine.js').WakeWordEngine
     : (typeof window !== 'undefined' ? window.WakeWordEngine : null);
 
+const _createAudioRecorder = (typeof require !== 'undefined')
+    ? require('./audio-recorder.js').createAudioRecorder
+    : (typeof window !== 'undefined' ? window.createAudioRecorder : null);
+
 const VOICE_STATES = Object.freeze({
     IDLE: 'idle',
     LISTENING: 'listening',
     PROCESSING: 'processing',
     SPEAKING: 'speaking',
     ERROR: 'error'
+});
+
+const RECOGNITION_MODES = Object.freeze({
+    AUTO: 'auto',
+    OFFLINE: 'offline',
+    WEB_SPEECH: 'web-speech'
 });
 
 class VoiceController {
@@ -47,6 +57,9 @@ class VoiceController {
         ttsEnabled = true,
         language = 'en-US',
         wakeWordEnabled = false,
+        recognitionMode = RECOGNITION_MODES.AUTO,
+        audioRecorder = null,
+        whisperEngine = null,
         whisperConfig = {}
     } = {}) {
         this.globalScope = globalScope;
@@ -57,13 +70,18 @@ class VoiceController {
         this.voiceState = VOICE_STATES.IDLE;
         this.ttsEnabled = Boolean(ttsEnabled);
         this.currentSpeechId = 0;
+        this.recognitionMode = recognitionMode;
+        this.activeRecognitionEngine = 'web-speech'; // 'whisper' | 'web-speech'
+        this.transcriptionAbortController = null;
+        this._cachedWhisperStatus = null;
 
-        // Initialize Speech Recognition
+        // Initialize Speech Recognition (Web Speech API fallback)
         const makeRecognition = _createSpeechRecognition || (globalScope ? globalScope.createSpeechRecognition : null);
         this.recognition = makeRecognition ? makeRecognition({
             globalScope,
             language,
             onStateChange: ({ state }) => {
+                if (this.activeRecognitionEngine === 'whisper') return;
                 if (state === 'listening') {
                     this.setVoiceState(VOICE_STATES.LISTENING);
                 } else if (state === 'processing') {
@@ -73,14 +91,16 @@ class VoiceController {
                 }
             },
             onInterimResult: ({ transcript }) => {
+                if (this.activeRecognitionEngine === 'whisper') return;
                 this.onInterimTranscript(transcript);
             },
             onFinalResult: ({ transcript }) => {
+                if (this.activeRecognitionEngine === 'whisper') return;
                 this.onFinalTranscript(transcript);
-                // Return to idle after transcription finishes
                 this.setVoiceState(VOICE_STATES.IDLE);
             },
             onError: (err) => {
+                if (this.activeRecognitionEngine === 'whisper') return;
                 this.setVoiceState(VOICE_STATES.ERROR, { error: err });
                 this.onError(err);
             }
@@ -121,11 +141,38 @@ class VoiceController {
         }
 
         // Initialize Offline Whisper Recognition Engine
-        this.whisperEngine = _WhisperEngine ? new _WhisperEngine(whisperConfig) : null;
+        if (whisperEngine) {
+            this.whisperEngine = whisperEngine;
+        } else if (_WhisperEngine) {
+            this.whisperEngine = new _WhisperEngine(whisperConfig);
+        } else if (globalScope && globalScope.lucyIpc && typeof globalScope.lucyIpc.transcribeAudio === 'function') {
+            // Electron renderer IPC bridge
+            this.whisperEngine = {
+                isAvailable: () => Boolean(this._cachedWhisperStatus?.isAvailable ?? true),
+                getStatus: () => (this._cachedWhisperStatus || { engine: 'whisper.cpp', isAvailable: true }),
+                transcribeAudio: (buf, opts) => globalScope.lucyIpc.transcribeAudio(buf, opts)
+            };
+            if (typeof globalScope.lucyIpc.getWhisperStatus === 'function') {
+                globalScope.lucyIpc.getWhisperStatus().then((st) => {
+                    this._cachedWhisperStatus = st;
+                }).catch(() => {});
+            }
+        } else {
+            this.whisperEngine = null;
+        }
+
+        // Initialize Audio Recorder for offline microphone capture
+        const makeAudioRecorder = audioRecorder || _createAudioRecorder;
+        this.audioRecorder = (typeof makeAudioRecorder === 'function')
+            ? makeAudioRecorder({ globalScope })
+            : (audioRecorder || null);
     }
 
     get isRecognitionSupported() {
-        return this.recognition.supported;
+        if (this.recognitionMode === RECOGNITION_MODES.OFFLINE) {
+            return this.isWhisperAvailable();
+        }
+        return this.recognition.supported || this.isWhisperAvailable();
     }
 
     get isSynthesisSupported() {
@@ -145,33 +192,155 @@ class VoiceController {
         this.onStateChange({ voiceState: nextState, ...detail });
     }
 
+    setRecognitionMode(mode) {
+        if (!Object.values(RECOGNITION_MODES).includes(mode)) {
+            throw new Error(`Invalid recognition mode: '${mode}'. Supported modes: ${Object.values(RECOGNITION_MODES).join(', ')}`);
+        }
+        this.recognitionMode = mode;
+        return this.recognitionMode;
+    }
+
+    getRecognitionMode() {
+        return this.recognitionMode;
+    }
+
+    isWhisperAvailable() {
+        if (!this.whisperEngine) return false;
+        if (typeof this.whisperEngine.isAvailable === 'function') {
+            return this.whisperEngine.isAvailable();
+        }
+        if (this._cachedWhisperStatus) {
+            return Boolean(this._cachedWhisperStatus.isAvailable);
+        }
+        return false;
+    }
+
     /**
      * Start microphone listening (Push-to-talk).
-     * Rejects duplicate sessions if already listening.
+     * Automatically routes to whisper.cpp offline engine or Web Speech API based on mode.
      */
     startListening() {
         if (this.isListening) {
             return false;
         }
-        // If speaking, interrupt speech first
         if (this.isSpeaking) {
             this.stopSpeaking();
         }
-        return this.recognition.start();
+
+        const isOfflineAvailable = this.isWhisperAvailable();
+        const hasRecorderSupport = Boolean(this.audioRecorder && this.audioRecorder.supported !== false);
+
+        // Strict offline mode validation: never silently fall back to cloud if offline was explicitly requested
+        if (this.recognitionMode === RECOGNITION_MODES.OFFLINE) {
+            if (!isOfflineAvailable) {
+                const err = new Error('Offline speech recognition is unavailable: whisper.cpp binary or model weights not detected.');
+                err.code = 'OFFLINE_UNAVAILABLE';
+                this.setVoiceState(VOICE_STATES.ERROR, { error: err });
+                this.onError(err);
+                return false;
+            }
+        }
+
+        // Determine active engine
+        const shouldUseOffline = (this.recognitionMode === RECOGNITION_MODES.OFFLINE) ||
+            (this.recognitionMode === RECOGNITION_MODES.AUTO && isOfflineAvailable && hasRecorderSupport);
+
+        if (shouldUseOffline) {
+            this.activeRecognitionEngine = 'whisper';
+            this.setVoiceState(VOICE_STATES.LISTENING);
+
+            if (this.audioRecorder && typeof this.audioRecorder.start === 'function') {
+                Promise.resolve(this.audioRecorder.start()).catch((err) => {
+                    this.setVoiceState(VOICE_STATES.ERROR, { error: err });
+                    this.onError(err);
+                });
+            }
+            return true;
+        } else {
+            this.activeRecognitionEngine = 'web-speech';
+            return this.recognition.start();
+        }
     }
 
     /**
      * Stop microphone listening.
      */
     stopListening() {
-        return this.recognition.stop();
+        if (this.activeRecognitionEngine === 'whisper') {
+            if (this.voiceState !== VOICE_STATES.LISTENING) {
+                return false;
+            }
+            this.setVoiceState(VOICE_STATES.PROCESSING);
+
+            const recordPromise = (this.audioRecorder && typeof this.audioRecorder.stop === 'function')
+                ? Promise.resolve(this.audioRecorder.stop())
+                : Promise.resolve(null);
+
+            recordPromise.then((audioBuffer) => {
+                if (!audioBuffer) {
+                    this.setVoiceState(VOICE_STATES.IDLE);
+                    return;
+                }
+                this.transcriptionAbortController = new AbortController();
+                return this.transcribeAudio(audioBuffer, {
+                    signal: this.transcriptionAbortController.signal
+                }).then((res) => {
+                    if (res && res.ok && res.transcript) {
+                        this.onFinalTranscript(res.transcript);
+                        this.setVoiceState(VOICE_STATES.IDLE);
+                    } else if (res && res.cancelled) {
+                        this.setVoiceState(VOICE_STATES.IDLE);
+                    } else {
+                        const err = new Error(res?.error || 'Offline speech transcription failed.');
+                        this.setVoiceState(VOICE_STATES.ERROR, { error: err });
+                        this.onError(err);
+                    }
+                });
+            }).catch((err) => {
+                this.setVoiceState(VOICE_STATES.ERROR, { error: err });
+                this.onError(err);
+            });
+
+            return true;
+        } else {
+            return this.recognition.stop();
+        }
     }
 
     /**
      * Cancel listening without transcribing.
      */
     cancelListening() {
-        return this.recognition.cancel();
+        if (this.activeRecognitionEngine === 'whisper') {
+            if (this.audioRecorder && typeof this.audioRecorder.cancel === 'function') {
+                this.audioRecorder.cancel();
+            }
+            if (this.transcriptionAbortController) {
+                try { this.transcriptionAbortController.abort(); } catch (_) {}
+                this.transcriptionAbortController = null;
+            }
+            this.setVoiceState(VOICE_STATES.IDLE);
+            return true;
+        } else {
+            return this.recognition.cancel();
+        }
+    }
+
+    /**
+     * Transcribe an audio file or buffer using local whisper.cpp offline engine.
+     * @param {string|Buffer|Uint8Array} audioInput
+     * @param {object} [options]
+     * @returns {Promise<{ ok: boolean, transcript: string, durationMs?: number, error?: string }>}
+     */
+    async transcribeAudio(audioInput, options = {}) {
+        if (!this.whisperEngine) {
+            return {
+                ok: false,
+                transcript: '',
+                error: 'Whisper offline engine is not configured'
+            };
+        }
+        return await this.whisperEngine.transcribeAudio(audioInput, options);
     }
 
     /**
@@ -320,6 +489,7 @@ function createVoiceController(options = {}) {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         VOICE_STATES,
+        RECOGNITION_MODES,
         VoiceController,
         createVoiceController
     };
@@ -327,6 +497,7 @@ if (typeof module !== 'undefined' && module.exports) {
 
 if (typeof window !== 'undefined') {
     window.VOICE_STATES = VOICE_STATES;
+    window.RECOGNITION_MODES = RECOGNITION_MODES;
     window.VoiceController = VoiceController;
     window.createVoiceController = createVoiceController;
 }

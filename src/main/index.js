@@ -27,6 +27,7 @@ const { TaskContinuityStore } = require('../memory/task-continuity-store.js');
 const { Scheduler } = require('../core/scheduler.js');
 const { StudentWorkflows } = require('../workflows/student-workflows.js');
 const { registerStudentWorkflowTools } = require('../tools/student-workflow-tools.js');
+const { WhisperOfflineRecognitionEngine } = require('../voice/whisper-recognition.js');
 const {
     validateExecuteRequest,
     validateSetProviderConfig,
@@ -39,7 +40,8 @@ const {
     validateSendVoiceState,
     validateDiscoverOllamaModels,
     validateCancelRequest,
-    validateVoiceConfig
+    validateVoiceConfig,
+    validateTranscribeAudioRequest
 } = require('../security/ipc-validator.js');
 
 // SEC-004: Single-Instance Application Lock
@@ -50,9 +52,10 @@ const gotSingleInstanceLock = (app && typeof app.requestSingleInstanceLock === '
 
 if (!gotSingleInstanceLock) {
     console.warn('[L.U.C.Y. Process] Another instance of L.U.C.Y. is already running. Exiting secondary process safely.');
-    if (app && typeof app.quit === 'function') {
-        app.quit();
+    if (app && typeof app.exit === 'function') {
+        try { app.exit(0); } catch (_) {}
     }
+    process.exit(0);
 } else {
     if (app && typeof app.on === 'function') {
         app.on('second-instance', (_event, _commandLine, _workingDirectory) => {
@@ -82,6 +85,7 @@ let voiceConfigFile = null;
 let memoryStore = null;
 let scheduler = null;
 let studentWorkflows = null;
+let whisperEngine = null;
 const pendingPermissionCallbacks = new Map();
 
 function createWindow() {
@@ -248,6 +252,8 @@ function initAssistantBackend() {
         companionBridge,
         coordinator
     });
+
+    whisperEngine = new WhisperOfflineRecognitionEngine();
 
     // Forward visual updates from companion bridge to renderer & floating companion
     companionBridge.on('visualUpdate', (state) => {
@@ -642,6 +648,28 @@ ipcMain.handle('lucy:setVoiceConfig', async (_event, config = {}) => {
         }
     }
     return { ok: true, config: merged };
+});
+
+// Offline Speech Recognition IPC Handlers (REQ-027)
+ipcMain.handle('lucy:getWhisperStatus', async () => {
+    if (!whisperEngine) {
+        return { engine: 'whisper.cpp', isAvailable: false, message: 'Whisper engine not initialized in main process' };
+    }
+    return whisperEngine.getStatus();
+});
+
+ipcMain.handle('lucy:transcribeAudio', async (_event, audioData, options = {}) => {
+    if (!whisperEngine) {
+        return { ok: false, transcript: '', error: 'Whisper engine not initialized in main process' };
+    }
+    const validation = validateTranscribeAudioRequest(audioData, options);
+    if (!validation.ok) {
+        return { ok: false, code: validation.code, error: validation.error };
+    }
+    return await whisperEngine.transcribeAudio(
+        validation.sanitized.audioBuffer,
+        validation.sanitized.options
+    );
 });
 
 if (gotSingleInstanceLock && app && typeof app.whenReady === 'function') {
