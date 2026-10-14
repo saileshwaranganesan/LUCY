@@ -279,18 +279,21 @@ class ProviderAdapter {
 
         const data = await res.json();
         const candidate = data.candidates?.[0];
-        const contentPart = candidate?.content?.parts?.[0];
+        const parts = candidate?.content?.parts || [];
 
         let content = '';
         const toolCalls = [];
 
-        if (contentPart?.text) {
-            content = contentPart.text;
-        } else if (contentPart?.functionCall) {
-            toolCalls.push({
-                name: contentPart.functionCall.name,
-                arguments: contentPart.functionCall.args || {}
-            });
+        for (const part of parts) {
+            if (part.text) {
+                content += part.text;
+            }
+            if (part.functionCall) {
+                toolCalls.push({
+                    name: part.functionCall.name,
+                    arguments: part.functionCall.args || {}
+                });
+            }
         }
 
         // Usage and cost representation
@@ -453,6 +456,17 @@ class ProviderAdapter {
             stream: isStreaming
         };
 
+        if (tools && tools.length) {
+            body.tools = tools.map((t) => ({
+                type: 'function',
+                function: {
+                    name: t.id,
+                    description: t.description,
+                    parameters: t.schema || { type: 'object', properties: {} }
+                }
+            }));
+        }
+
         const fetchSignal = options.signal || AbortSignal.timeout(45000);
 
         const res = await fetch(url, {
@@ -481,6 +495,26 @@ class ProviderAdapter {
 
         const data = await res.json();
         const msg = data.message || {};
+        const toolCalls = [];
+
+        if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+            for (const call of msg.tool_calls) {
+                let parsedArgs = {};
+                if (typeof call.function?.arguments === 'string') {
+                    try {
+                        parsedArgs = JSON.parse(call.function.arguments || '{}');
+                    } catch {
+                        parsedArgs = {};
+                    }
+                } else if (typeof call.function?.arguments === 'object' && call.function?.arguments !== null) {
+                    parsedArgs = call.function.arguments;
+                }
+                toolCalls.push({
+                    name: call.function?.name,
+                    arguments: parsedArgs
+                });
+            }
+        }
 
         const usage = data.prompt_eval_count != null ? {
             status: 'reported',
@@ -501,8 +535,8 @@ class ProviderAdapter {
             provider: this.provider,
             model: this.model,
             content: msg.content || '',
-            toolCalls: [],
-            hasToolCalls: false,
+            toolCalls,
+            hasToolCalls: toolCalls.length > 0,
             usage,
             cost
         };
@@ -542,6 +576,17 @@ class ProviderAdapter {
             max_tokens: options.maxTokens,
             stream: isStreaming
         };
+
+        if (tools && tools.length) {
+            body.tools = tools.map((t) => ({
+                type: 'function',
+                function: {
+                    name: t.id,
+                    description: t.description,
+                    parameters: t.schema || { type: 'object', properties: {} }
+                }
+            }));
+        }
 
         const fetchSignal = options.signal || AbortSignal.timeout(35000);
 
@@ -601,6 +646,26 @@ class ProviderAdapter {
         const data = await res.json();
         const choice = data.choices?.[0];
         const msg = choice?.message || {};
+        const toolCalls = [];
+
+        if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+            for (const call of msg.tool_calls) {
+                let parsedArgs = {};
+                if (typeof call.function?.arguments === 'string') {
+                    try {
+                        parsedArgs = JSON.parse(call.function.arguments || '{}');
+                    } catch {
+                        parsedArgs = {};
+                    }
+                } else if (typeof call.function?.arguments === 'object' && call.function?.arguments !== null) {
+                    parsedArgs = call.function.arguments;
+                }
+                toolCalls.push({
+                    name: call.function?.name,
+                    arguments: parsedArgs
+                });
+            }
+        }
 
         const usage = this._formatUsage(data.usage);
         const cost = {
@@ -615,8 +680,8 @@ class ProviderAdapter {
             provider: this.provider,
             model: this.model,
             content: msg.content || '',
-            toolCalls: [],
-            hasToolCalls: false,
+            toolCalls,
+            hasToolCalls: toolCalls.length > 0,
             usage,
             cost
         };

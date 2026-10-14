@@ -10,8 +10,8 @@
 
 | Defect ID | Title | Severity | Impact Area | Confidence | Status |
 | :--- | :--- | :---: | :--- | :---: | :---: |
-| **DEF-001** | Task Planner Regex Precedence & Literal Content Extraction | **High (P1)** | Natural Language Planning & Execution | High (100%) | Confirmed via code inspection & test simulation |
-| **DEF-002** | Absence of Native Tool/Function Calling Schemas | **High (P1)** | Model-to-Tool Dispatch & Reliability | High (100%) | Confirmed via `ProviderAdapter` & `TaskPlanner` inspection |
+| **DEF-001** | Task Planner Regex Precedence & Literal Content Extraction | **High (P1)** | Natural Language Planning & Execution | High (100%) | **Resolved (Workstream 1B — `tests/core/def-001-reproduction.test.js`)** |
+| **DEF-002** | Absence of Native Tool/Function Calling Schemas | **High (P1)** | Model-to-Tool Dispatch & Reliability | High (100%) | **Resolved (Workstream 1B — `tests/core/def-002-structured-tool-calling.test.js`)** |
 | **DEF-003** | Missing Screenshot-to-Vision Multimodal Feedback Loop | **Medium (P2)** | Desktop & Web Visual Verification | High (100%) | Confirmed: Models accept text only, no image inputs |
 | **DEF-004** | Ephemeral Playwright Browser Contexts (No Persistent Auth) | **Medium (P2)** | Web Workflows & User Portal Logins | High (100%) | Confirmed: `newContext()` used without `userDataDir` |
 | **DEF-005** | Workspace Missing Version Control (No Git Repository) | **Medium (P2)** | Configuration & Change Safety | High (100%) | **Resolved (Workstream 1A — commit `16d88a86`)** |
@@ -26,54 +26,46 @@
 ### DEF-001: Task Planner Regex Precedence & Literal Content Extraction
 
 - **Severity:** High (P1)
-- **Component:** `src/core/task-planner.js` (lines 105–115, 370–394)
+- **Status:** **Resolved in Workstream 1B**
+- **Component:** `src/core/content-discriminator.js`, `src/core/task-planner.js`
 - **Requirement Linked:** REQ-001, REQ-002
 - **Description:**
-  In `TaskPlanner.prototype.plan()`, hardcoded regular expressions in `_detectCompoundIntent` and `_detectDirectIntent` execute **before** invoking the AI model. When a user issues a generative multi-step instruction such as:
-  > *"Open Notepad and type a thank-you letter to Bob."*
-  The regex on line 371:
-  `/(?:open|launch|start)\s+notepad\s+(?:and|then)\s+(?:type|enter|write)\s+['"]?([^'"]+?)['"]?/i`
-  matches the request and captures `"a thank-you letter to Bob"` as the literal text parameter `textToType`.
+  In `TaskPlanner.prototype.plan()`, hardcoded regular expressions in `_detectCompoundIntent` and `_detectDirectIntent` previously executed **before** invoking the AI model, capturing unquoted generative requests (e.g. `"a thank-you letter to Bob"`) as literal keystroke payloads for `desktop_type_text`.
 - **Reproduction Steps:**
   1. Call `planner.plan('Open Notepad and type a thank-you letter to Bob')`.
   2. Inspect the resulting plan step for `desktop_type_text`.
-  3. Observe `params.text` is `"a thank-you letter to Bob"`.
-- **Expected Behavior:**
-  The assistant should recognize that `"a thank-you letter to Bob"` requires generative composition. It should use the LLM to draft the letter, and then pass the drafted text to Notepad.
-- **Actual Behavior:**
-  L.U.C.Y. launches Notepad and literally types the phrase `"a thank-you letter to Bob"`.
-- **Smallest Safe Correction:**
-  1. Introduce an intent discriminator that detects whether the requested text is a literal string (in quotes) or a generative topic prompt.
-  2. If the text prompt is generative, route to the LLM to synthesize the content before constructing the typing step, or allow the LLM to construct the full plan when an API key is available.
+  3. Observe `params.text` was `"a thank-you letter to Bob"` instead of composed letter content.
+- **Remediation Implementation (Workstream 1B):**
+  1. Implemented `classifyTextIntent()` in `src/core/content-discriminator.js` to distinguish explicit literal/quoted text from generative document/composition requests.
+  2. Added `_planGenerativeCompoundTask()` in `TaskPlanner` to synthesize generative content using the configured model when composition is needed.
+  3. Preserved deterministic literal handlers for explicit quoted strings and unambiguous offline commands.
+  4. Returns honest `unconfigured_provider` status if a generative request is issued without an active AI key.
+- **Verification Evidence:**
+  - Automated test suite `tests/core/def-001-reproduction.test.js` passes 4/4 tests:
+    - Generative request composes content via provider before typing into Notepad.
+    - Explicit quoted string preserves exact literal text deterministically.
+    - Missing provider returns informative guidance without crashing.
 
 ---
 
 ### DEF-002: Absence of Native Tool/Function Calling Schemas
 
 - **Severity:** High (P1)
-- **Component:** `src/core/task-planner.js` (lines 156–205), `src/providers/provider-adapter.js` (lines 204–257)
+- **Status:** **Resolved in Workstream 1B**
+- **Component:** `src/tools/schema-validator.js`, `src/tools/tool-registry.js`, `src/providers/provider-adapter.js`, `src/core/task-planner.js`
 - **Requirement Linked:** REQ-003
 - **Description:**
-  When `TaskPlanner` uses an LLM for structured planning, it concatenates tool descriptions into a system prompt string (line 157) and asks the model to output a JSON object in text. It then parses the string using regex-based extraction (`_extractJson()`).
-  Modern frontier models (Gemini 2.0 Flash, GPT-4o, Claude 3.5, Mistral) support native function/tool calling schemas directly in their API protocols (`tools: [{ functionDeclarations }]`). While `_callGemini` formats declarations in line 238, the planner does not use this mechanism; instead, it passes empty `tools: []` and relies on markdown JSON prompting.
-- **Reproduction Steps:**
-  1. Inspect `TaskPlanner.prototype.plan()` lines 176–182:
-     ```javascript
-     const res = await this.providerAdapter.complete({
-         messages: [
-             { role: 'system', content: systemPrompt },
-             { role: 'user', content: trimmedRequest }
-         ]
-     });
-     ```
-  2. Observe that `tools` parameter is omitted.
-  3. Observe line 195: `const parsed = this._extractJson(res.content);`.
-- **Expected Behavior:**
-  The model should receive registered tool schemas natively and return structured `tool_calls` with type-validated arguments, preventing JSON syntax breakage, markdown fencing hallucinations, and parsing errors.
-- **Actual Behavior:**
-  Planning relies on fragile text JSON extraction from free-form model completions.
-- **Smallest Safe Correction:**
-  Pass `tools: availableTools` directly to `providerAdapter.complete()`, handle `response.toolCalls` in the adapter response, and validate tool arguments against `ToolRegistry` schemas.
+  `TaskPlanner` previously omitted `tools` when calling `providerAdapter.complete()` and relied on fragile regex markdown extraction (`_extractJson()`). Furthermore, Ollama and Hugging Face provider adapters did not pass or parse tool call payloads.
+- **Remediation Implementation (Workstream 1B):**
+  1. Implemented `validateToolArguments(schema, params)` in `src/tools/schema-validator.js` verifying types, required parameters, and enums.
+  2. Updated `ToolRegistry` with `validateParams()` and pre-execution validation.
+  3. Standardized native structured tool calling across Google Gemini (`functionDeclarations` + `functionCall` parsing), OpenAI / OpenRouter (`tools` + `tool_calls` parsing), local Ollama (`/api/chat` `tools` + `message.tool_calls`), and Hugging Face (`tools` + `tool_calls`).
+  4. Updated `TaskPlanner.plan()` to supply `tools: availableTools` and directly consume structured `res.toolCalls`.
+  5. Implemented `_validatePlanSteps()` to validate tool names and JSON schema parameters before execution, failing closed on unknown tools or invalid arguments.
+  6. Enforced `PermissionAuthority` on all model-generated plans, ensuring model output cannot bypass user confirmation for consequential actions.
+- **Verification Evidence:**
+  - Automated test suite `tests/core/def-002-structured-tool-calling.test.js` passes 9/9 tests.
+  - Full application test suite `npm test` passes 257/257 tests with 0 failures.
 
 ---
 

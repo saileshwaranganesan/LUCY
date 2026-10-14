@@ -34,6 +34,9 @@ const UNSUPPORTED_DOMAINS = [
     /\b(?:hack\s+into|ddos\s+|crack\s+password)\b/i
 ];
 
+const { classifyTextIntent } = require('./content-discriminator.js');
+const { validateToolArguments } = require('../tools/schema-validator.js');
+
 class TaskPlanner {
     constructor(options = {}) {
         this.providerAdapter = options.providerAdapter;
@@ -105,6 +108,9 @@ class TaskPlanner {
         // 5. Multi-Step Compound Intent Recognition
         const compoundPlan = this._detectCompoundIntent(trimmedRequest, availableTools);
         if (compoundPlan) {
+            if (compoundPlan.isGenerativeIntent) {
+                return await this._planGenerativeCompoundTask(compoundPlan, context, availableTools);
+            }
             return this._validatePlanSteps(compoundPlan, availableTools);
         }
 
@@ -152,14 +158,14 @@ class TaskPlanner {
                     };
                 }
 
-                // Otherwise, perform structured plan synthesis
+                // Structured plan synthesis via Native Tool Calling or Fallback
                 const toolsPrompt = availableTools.map((t) => `${t.id}: ${t.description}`).join('\n');
                 const systemPrompt = `You are the planning engine for L.U.C.Y., an autonomous Windows desktop assistant.
 Given the user request, break it down into explicit tool execution steps or provide an answer.
 Available tools:
 ${toolsPrompt}
 
-Respond strictly in JSON:
+Respond strictly in JSON if tool execution is required:
 {
   "objective": "...",
   "type": "plan" | "conversation" | "clarification",
@@ -178,6 +184,7 @@ Respond strictly in JSON:
                         { role: 'system', content: systemPrompt },
                         { role: 'user', content: trimmedRequest }
                     ],
+                    tools: availableTools,
                     signal: context.signal
                 });
 
@@ -191,6 +198,25 @@ Respond strictly in JSON:
                     };
                 }
 
+                // 1. Native Structured Tool Calls from model
+                if (res.hasToolCalls && Array.isArray(res.toolCalls) && res.toolCalls.length > 0) {
+                    const steps = res.toolCalls.map((tc, idx) => ({
+                        index: idx + 1,
+                        title: `Execute ${tc.name}`,
+                        toolId: tc.name,
+                        params: tc.arguments || {},
+                        expectedOutcome: `Completed ${tc.name}`
+                    }));
+                    const synthesizedPlan = {
+                        objective: trimmedRequest,
+                        type: 'plan',
+                        replyText: res.content || `Planned ${steps.length} tool execution step(s).`,
+                        steps
+                    };
+                    return this._validatePlanSteps(synthesizedPlan, availableTools);
+                }
+
+                // 2. Structured JSON Fallback Parsing
                 if (res.content) {
                     const parsed = this._extractJson(res.content);
                     if (parsed && (parsed.steps || parsed.replyText)) {
@@ -368,9 +394,23 @@ Respond strictly in JSON:
         const lower = request.toLowerCase();
 
         // 1. "open notepad and type <text>"
-        const notepadTypeMatch = request.match(/(?:open|launch|start)\s+notepad\s+(?:and|then)\s+(?:type|enter|write)\s+['"]?([^'"]+?)['"]?(?:\s+(?:in|into)\s+notepad)?$/i);
+        const notepadTypeMatch = request.match(/(?:open|launch|start)\s+notepad\s+(?:and|then)\s+(?:type|enter|write)\s+(['"]?)([\s\S]+?)\1(?:\s+(?:in|into)\s+notepad)?$/i);
         if (notepadTypeMatch) {
-            const textToType = notepadTypeMatch[1].trim();
+            const wasQuoted = Boolean(notepadTypeMatch[1]);
+            const rawText = notepadTypeMatch[2].trim();
+            const classification = classifyTextIntent(rawText, request, wasQuoted);
+
+            if (classification.type === 'GENERATIVE') {
+                return {
+                    isGenerativeIntent: true,
+                    objective: `Launch Notepad and type composed ${classification.prompt}`,
+                    app: 'notepad.exe',
+                    target: 'Notepad',
+                    generativePrompt: classification.prompt
+                };
+            }
+
+            const textToType = classification.text;
             return {
                 objective: `Launch Notepad and enter text "${textToType}"`,
                 type: 'plan',
@@ -394,11 +434,23 @@ Respond strictly in JSON:
         }
 
         // 2. "create file <path> with content <content> and read it back"
-        const writeReadMatch = request.match(/(?:write|create)\s+file\s+['"]?([a-zA-Z0-9_.\-\/\\]+)['"]?\s+with\s+content\s+['"]?([^'"]+?)['"]?\s+(?:and|then)\s+(?:read\s+(?:it|the\s+file|file)|verify)/i);
+        const writeReadMatch = request.match(/(?:write|create)\s+file\s+['"]?([a-zA-Z0-9_.\-\/\\]+)['"]?\s+with\s+content\s+(['"]?)([\s\S]+?)\2\s+(?:and|then)\s+(?:read\s+(?:it|the\s+file|file)|verify)/i);
         if (writeReadMatch) {
             const targetPath = writeReadMatch[1].trim();
-            const rawContent = writeReadMatch[2].trim();
-            const content = rawContent.replace(/^["']|["']$/g, '');
+            const wasQuoted = Boolean(writeReadMatch[2]);
+            const rawContent = writeReadMatch[3].trim();
+            const classification = classifyTextIntent(rawContent, request, wasQuoted);
+
+            if (classification.type === 'GENERATIVE') {
+                return {
+                    isGenerativeIntent: true,
+                    isFileWrite: true,
+                    targetPath,
+                    generativePrompt: classification.prompt
+                };
+            }
+
+            const content = classification.text;
             return {
                 objective: `Create file '${targetPath}' and read back contents`,
                 type: 'plan',
@@ -448,6 +500,105 @@ Respond strictly in JSON:
         }
 
         return null;
+    }
+
+    /**
+     * Synthesize generative content via AI model and generate the execution plan
+     */
+    async _planGenerativeCompoundTask(compoundPlan, context, availableTools) {
+        const hasKey = this.providerAdapter ? Boolean(this.providerAdapter.resolveApiKey()) : false;
+        if (!hasKey) {
+            return {
+                objective: compoundPlan.objective || `Compose ${compoundPlan.generativePrompt}`,
+                type: 'unconfigured_provider',
+                replyText: `Composing content for "${compoundPlan.generativePrompt}" requires an AI provider, but no AI provider is currently configured with an API key. Please configure a provider in Provider Settings (Google Gemini, OpenRouter, or local Ollama) to enable generative tasks.`,
+                needsConfig: true,
+                steps: []
+            };
+        }
+
+        try {
+            const genRes = await this.providerAdapter.complete({
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You are L.U.C.Y., an autonomous Windows assistant. Compose the requested content concisely, politely, and appropriately according to the user directive. Output ONLY the composed content itself, ready to be entered into an editor, without preamble, conversational remarks, or markdown code blocks.'
+                    },
+                    {
+                        role: 'user',
+                        content: `Compose: ${compoundPlan.generativePrompt}`
+                    }
+                ],
+                signal: context.signal,
+                onChunk: context.onChunk
+            });
+
+            if (!genRes.ok) {
+                return {
+                    objective: compoundPlan.objective,
+                    type: genRes.cancelled ? 'cancelled' : 'provider_error',
+                    replyText: `AI Provider (${this.providerAdapter.provider}) content generation failed: ${genRes.error}`,
+                    providerError: genRes.error,
+                    steps: []
+                };
+            }
+
+            const generatedContent = (genRes.content || '').trim();
+
+            if (compoundPlan.isFileWrite) {
+                const plan = {
+                    objective: `Create file '${compoundPlan.targetPath}' with composed ${compoundPlan.generativePrompt} and read back contents`,
+                    type: 'plan',
+                    steps: [
+                        {
+                            index: 1,
+                            title: `Write file: ${compoundPlan.targetPath}`,
+                            toolId: 'file_write',
+                            params: { path: compoundPlan.targetPath, content: generatedContent },
+                            expectedOutcome: 'File created and verified within workspace'
+                        },
+                        {
+                            index: 2,
+                            title: `Read file: ${compoundPlan.targetPath}`,
+                            toolId: 'file_read',
+                            params: { path: compoundPlan.targetPath },
+                            expectedOutcome: 'File content read and verified matching written content'
+                        }
+                    ]
+                };
+                return this._validatePlanSteps(plan, availableTools);
+            }
+
+            const plan = {
+                objective: `Launch Notepad and enter composed text for "${compoundPlan.generativePrompt}"`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        title: 'Launch Notepad application',
+                        toolId: 'desktop_launch_app',
+                        params: { executable: compoundPlan.app || 'notepad.exe' },
+                        expectedOutcome: 'Notepad open on interactive desktop'
+                    },
+                    {
+                        index: 2,
+                        title: `Type composed ${compoundPlan.generativePrompt} into Notepad`,
+                        toolId: 'desktop_type_text',
+                        params: { target: compoundPlan.target || 'Notepad', text: generatedContent },
+                        expectedOutcome: 'Composed text entered and verified via UI Automation'
+                    }
+                ]
+            };
+            return this._validatePlanSteps(plan, availableTools);
+        } catch (err) {
+            return {
+                objective: compoundPlan.objective,
+                type: 'provider_error',
+                replyText: `Failed to generate content: ${err.message}`,
+                providerError: err.message,
+                steps: []
+            };
+        }
     }
 
     _detectDirectIntent(request, tools) {
@@ -1066,39 +1217,67 @@ Respond strictly in JSON:
     }
 
     /**
-     * Validate that proposed steps strictly map to existing registered tools
+     * Validate that proposed steps strictly map to existing registered tools and valid schemas
      */
     _validatePlanSteps(plan, availableTools) {
         if (!plan || !Array.isArray(plan.steps) || plan.steps.length === 0) {
             return plan;
         }
 
-        // If no tool list was provided (standalone planner instance or unit tests), preserve proposed steps
+        // If no tool list was provided (e.g. standalone test), preserve proposed steps
         if (!availableTools || availableTools.length === 0) {
             return plan;
         }
 
-        const validToolIds = new Set(availableTools.map((t) => t.id));
-        const filteredSteps = [];
+        const toolsMap = new Map(availableTools.map((t) => [t.id, t]));
+        const validatedSteps = [];
 
-        for (const step of plan.steps) {
-            if (validToolIds.has(step.toolId)) {
-                filteredSteps.push(step);
-            } else {
-                console.warn(`[TaskPlanner] Dropped unregistered tool '${step.toolId}' from plan.`);
+        for (let i = 0; i < plan.steps.length; i++) {
+            const step = plan.steps[i];
+            if (!step || typeof step !== 'object') {
+                return {
+                    objective: plan.objective,
+                    type: 'invalid_plan',
+                    replyText: `Step ${i + 1} is malformed or invalid.`,
+                    error: `Step ${i + 1} is not an object`,
+                    steps: []
+                };
             }
+
+            const tool = toolsMap.get(step.toolId);
+            if (!tool) {
+                return {
+                    objective: plan.objective,
+                    type: 'unsupported',
+                    replyText: `Proposed step ${i + 1} requests unregistered tool '${step.toolId}'. Unknown capabilities cannot be executed.`,
+                    error: `Unknown tool: ${step.toolId}`,
+                    steps: []
+                };
+            }
+
+            // Validate step parameters against tool schema
+            const validation = validateToolArguments(tool.schema, step.params || {});
+            if (!validation.valid) {
+                return {
+                    objective: plan.objective,
+                    type: 'invalid_plan',
+                    replyText: `Proposed step ${i + 1} ('${step.toolId}') has invalid parameters: ${validation.error}`,
+                    error: validation.error,
+                    missingParameter: validation.missingParameter,
+                    steps: []
+                };
+            }
+
+            validatedSteps.push({
+                index: i + 1,
+                title: step.title || `Execute ${step.toolId}`,
+                toolId: step.toolId,
+                params: step.params || {},
+                expectedOutcome: step.expectedOutcome || `Completed ${step.toolId}`
+            });
         }
 
-        if (filteredSteps.length === 0) {
-            return {
-                objective: plan.objective,
-                type: 'unsupported',
-                replyText: 'Proposed execution plan contained tools not available in the system registry.',
-                steps: []
-            };
-        }
-
-        plan.steps = filteredSteps;
+        plan.steps = validatedSteps;
         return plan;
     }
 

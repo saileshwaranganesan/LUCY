@@ -1,6 +1,7 @@
 'use strict';
 
 const { RISK_TIERS } = require('../security/permission-authority.js');
+const { validateToolArguments } = require('./schema-validator.js');
 
 /**
  * ToolRegistry
@@ -9,6 +10,7 @@ const { RISK_TIERS } = require('../security/permission-authority.js');
  * 1. Mandatory dry-run boundary: Side-effects CANNOT execute when dryRun is true.
  * 2. Mandatory permission evaluation through PermissionAuthority.
  * 3. Execution outcome verification.
+ * 4. Rigorous JSON schema parameter validation before dispatch.
  */
 class ToolRegistry {
     constructor(options = {}) {
@@ -58,6 +60,20 @@ class ToolRegistry {
     }
 
     /**
+     * Validate proposed parameters against the registered tool's schema.
+     * @param {string} toolId
+     * @param {Object} [params={}]
+     * @returns {{ valid: boolean, error?: string, missingParameter?: string }}
+     */
+    validateParams(toolId, params = {}) {
+        const tool = this.tools.get(toolId);
+        if (!tool) {
+            return { valid: false, error: `Tool not found: ${toolId}` };
+        }
+        return validateToolArguments(tool.schema, params);
+    }
+
+    /**
      * Dispatch and execute a tool call with permission enforcement and guaranteed dry-run isolation.
      * @param {string} toolId
      * @param {Object} params
@@ -74,6 +90,38 @@ class ToolRegistry {
                 error: `Tool not found: ${toolId}`,
                 toolId
             };
+        }
+
+        // 1. Parameter Validation before execution
+        if (context.strictSchema) {
+            const paramValidation = validateToolArguments(tool.schema, params);
+            if (!paramValidation.valid) {
+                const err = `Parameter validation failed for tool '${toolId}': ${paramValidation.error}`;
+                return {
+                    ok: false,
+                    status: 'invalid_parameters',
+                    error: err,
+                    toolId,
+                    missingParameter: paramValidation.missingParameter,
+                    result: { ok: false, status: 'invalid_parameters', error: err },
+                    verification: { verified: false, failureReason: err }
+                };
+            }
+        } else if (tool.schema?.required && Array.isArray(tool.schema.required)) {
+            for (const req of tool.schema.required) {
+                if (params[req] === undefined || params[req] === null || (typeof params[req] === 'string' && params[req].trim() === '')) {
+                    const err = `Missing required parameter '${req}' for tool '${toolId}'`;
+                    return {
+                        ok: false,
+                        status: 'invalid_parameters',
+                        error: err,
+                        toolId,
+                        missingParameter: req,
+                        result: { ok: false, status: 'invalid_parameters', error: err },
+                        verification: { verified: false, failureReason: err }
+                    };
+                }
+            }
         }
 
         const dryRun = Boolean(context.dryRun);
