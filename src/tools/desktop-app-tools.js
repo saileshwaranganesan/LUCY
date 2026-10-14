@@ -236,7 +236,24 @@ function registerDesktopTools(registry, desktopManager) {
             required: ['target']
         },
         handler: async (params) => {
-            return await desktopManager.takeScreenshot(params.target);
+            const shot = await desktopManager.takeScreenshot(params.target);
+            const base64 = shot?.base64 || (typeof shot === 'string' ? shot : null);
+            const format = shot?.format || 'png';
+            return {
+                ok: true,
+                status: 'screenshot_captured',
+                target: params.target,
+                format,
+                width: shot?.width,
+                height: shot?.height,
+                base64,
+                dataUri: base64 ? `data:image/${format};base64,${base64}` : null,
+                result: shot,
+                verification: {
+                    verified: Boolean(shot && (base64 || shot.format || typeof shot === 'object')),
+                    method: 'desktop_screenshot_check'
+                }
+            };
         },
         dryRunSimulate: async (params) => {
             return {

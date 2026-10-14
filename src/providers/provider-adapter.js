@@ -101,8 +101,13 @@ class ProviderAdapter {
 
         const keyName = `${provider}_api_key`;
         if (this.credentialStore) {
-            const key = this.credentialStore.getSecret(keyName);
-            if (key) return key;
+            if (typeof this.credentialStore.getSecret === 'function') {
+                const key = this.credentialStore.getSecret(keyName);
+                if (key) return key;
+            } else if (typeof this.credentialStore.resolveApiKey === 'function') {
+                const key = this.credentialStore.resolveApiKey(provider);
+                if (key) return key;
+            }
         }
 
         const envKey = process.env[`LUCY_${provider.replace(/-/g, '_').toUpperCase()}_API_KEY`] ||
@@ -145,6 +150,22 @@ class ProviderAdapter {
                 code: 'empty_messages',
                 error: 'Cannot call model with empty messages array'
             };
+        }
+
+        // Validate multimodal messages fail-closed before network dispatch
+        for (const msg of messages) {
+            const norm = this._normalizeMultimodalMessage(msg);
+            if (!norm.isValid) {
+                return {
+                    ok: false,
+                    code: norm.code || 'invalid_multimodal_message',
+                    error: norm.error || 'Invalid multimodal message payload',
+                    provider: this.provider,
+                    model: this.model,
+                    usage: { status: 'unknown' },
+                    cost: { status: 'unknown' }
+                };
+            }
         }
 
         // 1. Validate credentials - FAIL CLOSED
@@ -206,17 +227,30 @@ class ProviderAdapter {
         const action = isStreaming ? 'streamGenerateContent?alt=sse' : 'generateContent';
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:${action}`;
 
-        // Format Gemini contents
+        // Format Gemini contents with multimodal support
         const contents = [];
         let systemInstruction = null;
 
         for (const msg of messages) {
+            const norm = this._normalizeMultimodalMessage(msg);
             if (msg.role === 'system') {
-                systemInstruction = { parts: [{ text: msg.content }] };
+                systemInstruction = { parts: [{ text: norm.text }] };
             } else {
+                const parts = [];
+                if (norm.text) {
+                    parts.push({ text: norm.text });
+                }
+                for (const img of norm.images) {
+                    parts.push({
+                        inlineData: {
+                            mimeType: img.mimeType,
+                            data: img.base64
+                        }
+                    });
+                }
                 contents.push({
                     role: msg.role === 'assistant' ? 'model' : 'user',
-                    parts: [{ text: msg.content }]
+                    parts: parts.length > 0 ? parts : [{ text: '' }]
                 });
             }
         }
@@ -338,9 +372,27 @@ class ProviderAdapter {
         baseUrl = urlValidation.url;
         const isStreaming = typeof options.onChunk === 'function';
 
+        const formattedMessages = messages.map((msg) => {
+            const norm = this._normalizeMultimodalMessage(msg);
+            if (!norm.hasImages) {
+                return { role: msg.role, content: typeof msg.content === 'string' ? msg.content : norm.text };
+            }
+            const contentParts = [];
+            if (norm.text) {
+                contentParts.push({ type: 'text', text: norm.text });
+            }
+            for (const img of norm.images) {
+                contentParts.push({
+                    type: 'image_url',
+                    image_url: { url: img.dataUri }
+                });
+            }
+            return { role: msg.role, content: contentParts };
+        });
+
         const body = {
             model: this.model,
-            messages,
+            messages: formattedMessages,
             temperature: options.temperature,
             max_tokens: options.maxTokens,
             stream: isStreaming
@@ -447,9 +499,21 @@ class ProviderAdapter {
         const url = `${urlValidation.url.replace(/\/+$/, '')}/api/chat`;
         const isStreaming = typeof options.onChunk === 'function';
 
+        const formattedMessages = messages.map((msg) => {
+            const norm = this._normalizeMultimodalMessage(msg);
+            const ollamaMsg = {
+                role: msg.role,
+                content: typeof msg.content === 'string' && !norm.hasImages ? msg.content : norm.text
+            };
+            if (norm.hasImages) {
+                ollamaMsg.images = norm.images.map((img) => img.base64);
+            }
+            return ollamaMsg;
+        });
+
         const body = {
             model: this.model,
-            messages,
+            messages: formattedMessages,
             options: {
                 temperature: options.temperature
             },
@@ -569,9 +633,50 @@ class ProviderAdapter {
         baseUrl = urlValidation.url;
         const isStreaming = typeof options.onChunk === 'function';
 
+        const hasMultimodal = messages.some((m) => this._normalizeMultimodalMessage(m).hasImages);
+        if (hasMultimodal) {
+            const modelLower = (this.model || '').toLowerCase();
+            const isVisionModel = Boolean(
+                modelLower.includes('vision') ||
+                modelLower.includes('-vl') ||
+                modelLower.includes('paligemma') ||
+                modelLower.includes('llava') ||
+                modelLower.includes('pixtral') ||
+                modelLower.includes('smolvlm') ||
+                modelLower.includes('idefics')
+            );
+            if (!isVisionModel) {
+                return {
+                    ok: false,
+                    code: 'unsupported_multimodal',
+                    error: `Configured Hugging Face model '${this.model}' does not support multimodal visual input. Please use Google Gemini, OpenAI/OpenRouter, or local Ollama with a vision model.`,
+                    provider: this.provider,
+                    model: this.model,
+                    usage: { status: 'unknown' },
+                    cost: { status: 'unknown' }
+                };
+            }
+        }
+
+        const formattedHfMessages = messages.map((msg) => {
+            const norm = this._normalizeMultimodalMessage(msg);
+            if (!norm.hasImages) {
+                return { role: msg.role, content: typeof msg.content === 'string' ? msg.content : norm.text };
+            }
+            const contentParts = [];
+            if (norm.text) contentParts.push({ type: 'text', text: norm.text });
+            for (const img of norm.images) {
+                contentParts.push({
+                    type: 'image_url',
+                    image_url: { url: img.dataUri }
+                });
+            }
+            return { role: msg.role, content: contentParts };
+        });
+
         const body = {
             model: this.model,
-            messages,
+            messages: formattedHfMessages,
             temperature: options.temperature,
             max_tokens: options.maxTokens,
             stream: isStreaming
@@ -894,6 +999,120 @@ class ProviderAdapter {
             hasToolCalls: false,
             usage: finalUsage,
             cost: { status: 'local_zero_cost', amount: 0.0, currency: 'USD' }
+        };
+    }
+
+    /**
+     * Normalize, validate, and extract image and text payload parts from a message.
+     * Enforces MIME whitelist and 4MB per-image size cap fail-closed.
+     * @param {Object} msg
+     * @returns {{ text: string, images: Array<{ mimeType: string, base64: string, dataUri: string, byteLength: number }>, hasImages: boolean, isValid: boolean, code?: string, error?: string }}
+     */
+    _normalizeMultimodalMessage(msg) {
+        if (!msg || typeof msg !== 'object') {
+            return { text: '', images: [], hasImages: false, isValid: false, code: 'invalid_message', error: 'Invalid message object' };
+        }
+
+        let text = '';
+        const rawImages = [];
+
+        if (typeof msg.content === 'string') {
+            text = msg.content;
+        } else if (Array.isArray(msg.content)) {
+            for (const part of msg.content) {
+                if (!part) continue;
+                if (part.type === 'text') {
+                    text = text ? `${text}\n${part.text || ''}` : (part.text || '');
+                } else if (part.type === 'image_url') {
+                    rawImages.push(part.image_url?.url || part.image_url);
+                } else if (part.type === 'image' || part.inlineData) {
+                    rawImages.push(part.inlineData || part);
+                }
+            }
+        }
+
+        if (Array.isArray(msg.images)) {
+            for (const img of msg.images) {
+                rawImages.push(img);
+            }
+        }
+
+        const normalizedImages = [];
+        const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB per image cap
+
+        for (const raw of rawImages) {
+            if (!raw) continue;
+            let mimeType = 'image/png';
+            let base64 = '';
+
+            if (typeof raw === 'string') {
+                const dataUriMatch = raw.match(/^data:([^;]+);base64,(.+)$/s);
+                if (dataUriMatch) {
+                    mimeType = dataUriMatch[1].toLowerCase();
+                    base64 = dataUriMatch[2].replace(/\s+/g, '');
+                } else {
+                    base64 = raw.replace(/\s+/g, '');
+                }
+            } else if (typeof raw === 'object') {
+                mimeType = (raw.mimeType || raw.mime_type || 'image/png').toLowerCase();
+                base64 = (raw.data || raw.base64 || '').replace(/\s+/g, '');
+                if (raw.url) {
+                    const match = raw.url.match(/^data:([^;]+);base64,(.+)$/s);
+                    if (match) {
+                        mimeType = match[1].toLowerCase();
+                        base64 = match[2].replace(/\s+/g, '');
+                    }
+                }
+            }
+
+            const allowedMimes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
+            if (!allowedMimes.includes(mimeType)) {
+                return {
+                    text,
+                    images: [],
+                    hasImages: false,
+                    isValid: false,
+                    code: 'invalid_image_mime',
+                    error: `Unsupported image MIME type: '${mimeType}'. Supported formats: PNG, JPEG, WEBP, GIF.`
+                };
+            }
+
+            if (base64.length === 0) {
+                return {
+                    text,
+                    images: [],
+                    hasImages: false,
+                    isValid: false,
+                    code: 'empty_image_data',
+                    error: 'Encountered empty or missing base64 image data in multimodal message.'
+                };
+            }
+
+            const approxBytes = Math.ceil((base64.length * 3) / 4);
+            if (approxBytes > MAX_IMAGE_BYTES) {
+                return {
+                    text,
+                    images: [],
+                    hasImages: false,
+                    isValid: false,
+                    code: 'image_payload_too_large',
+                    error: `Image payload exceeds maximum allowed size of 4MB (approx ${(approxBytes / (1024 * 1024)).toFixed(2)} MB).`
+                };
+            }
+
+            normalizedImages.push({
+                mimeType,
+                base64,
+                dataUri: `data:${mimeType};base64,${base64}`,
+                byteLength: approxBytes
+            });
+        }
+
+        return {
+            text,
+            images: normalizedImages,
+            hasImages: normalizedImages.length > 0,
+            isValid: true
         };
     }
 

@@ -315,9 +315,9 @@ class FloatingCompanionWindow {
         ipcMain.handle('companion:getConfig', async () => {
             return {
                 ok: true,
-                modelPath: 'assets/dragon.glb',
+                theme: 'celestial_fairy',
                 characterName: 'Lucy Celestial Fairy',
-                theme: 'celestial_fairy'
+                renderer: 'CelestialFamiliarRenderer'
             };
         });
     }

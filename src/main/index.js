@@ -19,6 +19,7 @@ const { BrowserManager } = require('../tools/browser-manager.js');
 const { registerBrowserTools } = require('../tools/browser-tools.js');
 const { DesktopAutomationManager } = require('../tools/desktop-automation-manager.js');
 const { registerDesktopTools } = require('../tools/desktop-app-tools.js');
+const { registerVisualTools } = require('../tools/visual-tools.js');
 const { registerMemoryTools } = require('../tools/memory-tools.js');
 const { FloatingCompanionWindow } = require('../companion/floating-companion-window.js');
 const { MemoryStore } = require('../memory/memory-store.js');
@@ -197,6 +198,7 @@ function initAssistantBackend() {
     const providerAdapter = new ProviderAdapter({
         credentialStore: credStore
     });
+    registerVisualTools(toolRegistry, { providerAdapter, browserManager, desktopManager });
 
     const statusManager = new TaskStatusManager();
     companionBridge = new CompanionBridge();

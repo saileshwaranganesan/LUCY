@@ -429,7 +429,11 @@ class TaskCoordinator {
             }
 
             // 5. Task Completion & Synthesis
-            const completionSummary = `Completed ${executedSteps.length} planned step(s) successfully.${dryRun ? ' (Dry-run simulated)' : ''}`;
+            const visualStep = executedSteps.find((s) => s.toolId === 'visual_inspect' && (s.result?.analysis || s.result?.result?.analysis));
+            const visualAnalysis = visualStep ? (visualStep.result?.analysis || visualStep.result?.result?.analysis) : null;
+            const completionSummary = visualAnalysis
+                ? `Visual analysis: ${visualAnalysis} (Completed ${executedSteps.length} planned step(s) successfully.${dryRun ? ' [Dry-run]' : ''})`
+                : `Completed ${executedSteps.length} planned step(s) successfully.${dryRun ? ' (Dry-run simulated)' : ''}`;
             this.conversationHistory.push({ role: 'assistant', content: completionSummary });
 
             // Record assistant turn into conversation memory
@@ -474,7 +478,8 @@ class TaskCoordinator {
                 status: 'completed',
                 taskId,
                 userRequest,
-                replyText: completionSummary,
+                replyText: visualAnalysis || completionSummary,
+                visualAnalysis: visualAnalysis || undefined,
                 dryRun,
                 plan,
                 executedSteps,

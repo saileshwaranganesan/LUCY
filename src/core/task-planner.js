@@ -499,6 +499,108 @@ Respond strictly in JSON if tool execution is required:
             };
         }
 
+        // 4. "inspect/look at <target> and click/type <action>"
+        const visualActionMatch = request.match(/(?:look\s+at|inspect)\s+(?:the\s+)?(screen|browser|website|page|notepad|calculator|[a-zA-Z0-9_.\-]+)\s+(?:and|then)\s+(?:click\s+(?:on\s+)?['"]?([^'"]+)['"]?|type\s+['"]?([^'"]+)['"]?)/i);
+        if (visualActionMatch) {
+            const rawTarget = visualActionMatch[1].trim();
+            const clickTarget = visualActionMatch[2] ? visualActionMatch[2].trim() : null;
+            const typeText = visualActionMatch[3] ? visualActionMatch[3].trim() : null;
+            let target = 'desktop';
+            const targetLower = rawTarget.toLowerCase();
+            if (targetLower === 'browser' || targetLower === 'website' || targetLower === 'page') target = 'browser';
+            else if (targetLower.includes('calc')) target = 'Calculator';
+            else if (targetLower.includes('notepad')) target = 'Notepad';
+
+            const steps = [
+                {
+                    index: 1,
+                    title: `Visually inspect ${rawTarget}`,
+                    toolId: 'visual_inspect',
+                    params: { prompt: `Locate the UI element to interact with in ${rawTarget}: ${clickTarget || typeText}`, target },
+                    expectedOutcome: 'Target UI element located visually'
+                }
+            ];
+
+            if (clickTarget) {
+                if (target === 'browser') {
+                    steps.push({
+                        index: 2,
+                        title: `Click on element '${clickTarget}'`,
+                        toolId: 'browser_click',
+                        params: { selector: clickTarget },
+                        expectedOutcome: 'Element clicked'
+                    });
+                } else {
+                    steps.push({
+                        index: 2,
+                        title: `Click UI element '${clickTarget}'`,
+                        toolId: 'desktop_click_element',
+                        params: { target, name: clickTarget },
+                        expectedOutcome: 'Element clicked and verified via UI Automation'
+                    });
+                }
+            } else if (typeText) {
+                steps.push({
+                    index: 2,
+                    title: `Type text into '${target}'`,
+                    toolId: 'desktop_type_text',
+                    params: { target, text: typeText },
+                    expectedOutcome: 'Text entered and verified via UI Automation'
+                });
+            }
+
+            return {
+                objective: `Visually inspect ${rawTarget} and execute consequential action`,
+                type: 'plan',
+                steps
+            };
+        }
+
+        // 5. "take screenshot of <target> and (explain|describe|tell me|read)"
+        const screenshotExplainMatch = request.match(/(?:take\s+)?screenshot\s+(?:of\s+)?(?:the\s+)?(website|page|browser|notepad|calculator|[a-zA-Z0-9_.\-]+)\s+(?:and|then)\s+(?:explain|describe|tell\s+me|read|summarize)\s*(.*)/i);
+        if (screenshotExplainMatch) {
+            const rawTarget = screenshotExplainMatch[1].trim();
+            const promptDetail = screenshotExplainMatch[2]?.trim() || request;
+            let target = 'desktop';
+            const targetLower = rawTarget.toLowerCase();
+            if (targetLower === 'browser' || targetLower === 'website' || targetLower === 'page') target = 'browser';
+            else if (targetLower.includes('calc')) target = 'Calculator';
+            else if (targetLower.includes('notepad')) target = 'Notepad';
+
+            const steps = [];
+            if (target === 'browser') {
+                steps.push({
+                    index: 1,
+                    title: 'Capture page screenshot',
+                    toolId: 'browser_screenshot',
+                    params: { fullPage: false },
+                    expectedOutcome: 'Page screenshot captured and verified'
+                });
+            } else {
+                steps.push({
+                    index: 1,
+                    title: `Capture ${target} window screenshot`,
+                    toolId: 'desktop_take_screenshot',
+                    params: { target },
+                    expectedOutcome: 'Window visual screenshot captured'
+                });
+            }
+
+            steps.push({
+                index: 2,
+                title: `Analyze ${target} screenshot visually`,
+                toolId: 'visual_inspect',
+                params: { prompt: promptDetail || `Explain what is visible in the ${target} screenshot`, target },
+                expectedOutcome: 'Visual understanding and explanation completed'
+            });
+
+            return {
+                objective: `Capture and visually explain ${target} screenshot`,
+                type: 'plan',
+                steps
+            };
+        }
+
         return null;
     }
 
@@ -603,6 +705,50 @@ Respond strictly in JSON if tool execution is required:
 
     _detectDirectIntent(request, tools) {
         const lower = request.toLowerCase();
+
+        // Visual Understanding / Screen Inspection Intent (DEF-003)
+        if (
+            lower.includes('look at my screen') ||
+            lower.includes('look at the screen') ||
+            lower.includes('look at screen') ||
+            lower.includes('inspect my screen') ||
+            lower.includes('inspect the screen') ||
+            lower.includes('inspect screen') ||
+            lower.includes('what is on my screen') ||
+            lower.includes("what's on my screen") ||
+            lower.includes('what is on the screen') ||
+            lower.includes("what's on the screen") ||
+            lower.includes('describe the screen') ||
+            lower.includes('read the screen') ||
+            lower.includes('inspect window visually') ||
+            lower.startsWith('look at ') ||
+            lower.startsWith('inspect visual')
+        ) {
+            let target = 'desktop';
+            if (lower.includes('browser') || lower.includes('website') || lower.includes('page') || lower.includes('web')) {
+                target = 'browser';
+            } else if (lower.includes('notepad')) {
+                target = 'Notepad';
+            } else if (lower.includes('calc')) {
+                target = 'Calculator';
+            } else if (lower.includes('paint')) {
+                target = 'Paint';
+            }
+
+            return {
+                objective: `Visually inspect and analyze ${target === 'browser' ? 'browser' : 'screen'}`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        title: `Visually inspect ${target}`,
+                        toolId: 'visual_inspect',
+                        params: { prompt: request, target },
+                        expectedOutcome: 'Visual analysis and element understanding completed'
+                    }
+                ]
+            };
+        }
 
         // System inspection intent
         if (lower.includes('system status') || lower.includes('system info') || lower.includes('os info') || lower.includes('inspect system')) {
@@ -816,6 +962,18 @@ Respond strictly in JSON if tool execution is required:
                 params: { fullPage: false },
                 expectedOutcome: 'Page screenshot captured and verified'
             });
+
+            const needsAnalysis = lower.includes('explain') || lower.includes('describe') || lower.includes('tell me') || lower.includes('read') || lower.includes('summarize') || lower.includes('inspect');
+            if (needsAnalysis) {
+                steps.push({
+                    index: steps.length + 1,
+                    title: 'Analyze captured page screenshot visually',
+                    toolId: 'visual_inspect',
+                    params: { prompt: request, target: 'browser' },
+                    expectedOutcome: 'Visual analysis of page completed'
+                });
+            }
+
             return {
                 objective: 'Capture website screenshot',
                 type: 'plan',
@@ -1134,18 +1292,31 @@ Respond strictly in JSON if tool execution is required:
         if (lower.startsWith('screenshot app') || lower.startsWith('screenshot window') || (lower.includes('screenshot of') && !lower.includes('website') && !lower.includes('page'))) {
             const match = request.match(/(?:screenshot\s+app|screenshot\s+window|screenshot\s+of)\s+['"]?([a-zA-Z0-9_.\-\s]+)['"]?/i);
             const targetApp = match ? match[1].trim() : 'Notepad';
+            const steps = [
+                {
+                    index: 1,
+                    title: `Capture ${targetApp} window screenshot`,
+                    toolId: 'desktop_take_screenshot',
+                    params: { target: targetApp },
+                    expectedOutcome: 'Window visual screenshot captured'
+                }
+            ];
+
+            const needsAnalysis = lower.includes('explain') || lower.includes('describe') || lower.includes('tell me') || lower.includes('read') || lower.includes('check') || lower.includes('find');
+            if (needsAnalysis) {
+                steps.push({
+                    index: 2,
+                    title: `Analyze ${targetApp} window screenshot visually`,
+                    toolId: 'visual_inspect',
+                    params: { prompt: request, target: targetApp },
+                    expectedOutcome: 'Visual understanding of window content completed'
+                });
+            }
+
             return {
                 objective: `Capture screenshot of '${targetApp}'`,
                 type: 'plan',
-                steps: [
-                    {
-                        index: 1,
-                        title: `Capture ${targetApp} window screenshot`,
-                        toolId: 'desktop_take_screenshot',
-                        params: { target: targetApp },
-                        expectedOutcome: 'Window visual screenshot captured'
-                    }
-                ]
+                steps
             };
         }
 

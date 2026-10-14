@@ -810,12 +810,15 @@ class BrowserManager {
             fs.writeFileSync(outputPath, buffer);
         }
 
+        const base64 = buffer.toString('base64');
         return {
             ok: true,
             status: 'screenshot_captured',
             url: this._sanitizeUrlOutput(page.url()),
             outputPath: outputPath || 'in_memory',
             byteLength: buffer.length,
+            base64,
+            dataUri: `data:image/png;base64,${base64}`,
             verification: {
                 verified: buffer.length > 0,
                 method: 'screenshot_buffer_check'
