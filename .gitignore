@@ -19,6 +19,8 @@ node_modules/
 memory-store.json
 task-checkpoints.json
 credentials.json
+browser-profile/
+*browser-profile*
 
 # Temporary Files, Swap Files & Backups
 *.tmp

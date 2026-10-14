@@ -13,7 +13,7 @@
 | **DEF-001** | Task Planner Regex Precedence & Literal Content Extraction | **High (P1)** | Natural Language Planning & Execution | High (100%) | **Resolved (Workstream 1B — `tests/core/def-001-reproduction.test.js`)** |
 | **DEF-002** | Absence of Native Tool/Function Calling Schemas | **High (P1)** | Model-to-Tool Dispatch & Reliability | High (100%) | **Resolved (Workstream 1B — `tests/core/def-002-structured-tool-calling.test.js`)** |
 | **DEF-003** | Missing Screenshot-to-Vision Multimodal Feedback Loop | **Medium (P2)** | Desktop & Web Visual Verification | High (100%) | Confirmed: Models accept text only, no image inputs |
-| **DEF-004** | Ephemeral Playwright Browser Contexts (No Persistent Auth) | **Medium (P2)** | Web Workflows & User Portal Logins | High (100%) | Confirmed: `newContext()` used without `userDataDir` |
+| **DEF-004** | Ephemeral Playwright Browser Contexts (No Persistent Auth) | **Medium (P2)** | Web Workflows & User Portal Logins | High (100%) | **Resolved (`tests/browser/persistent-browser-session.test.js`)** |
 | **DEF-005** | Workspace Missing Version Control (No Git Repository) | **Medium (P2)** | Configuration & Change Safety | High (100%) | **Resolved (Workstream 1A — commit `16d88a86`)** |
 | **DEF-006** | Orphaned Background Packaged App Process (`LUCY.exe`) | **Low (P3)** | Process Contention & Port Safety | High (100%) | Confirmed via PowerShell `Get-Process` |
 
@@ -99,25 +99,24 @@
 ### DEF-004: Ephemeral Playwright Browser Contexts (No Persistent Auth)
 
 - **Severity:** Medium (P2)
-- **Component:** `src/tools/browser-manager.js` (lines 68–78)
+- **Status:** **Resolved (`tests/browser/persistent-browser-session.test.js`)**
+- **Component:** `src/tools/browser-manager.js`, `src/tools/browser-tools.js`
 - **Requirement Linked:** REQ-014, REQ-015, REQ-036
 - **Description:**
-  `BrowserManager.ensureContext()` creates an in-memory browser context:
-  ```javascript
-  this.context = await this.browser.newContext({ ... });
-  ```
-  Every time L.U.C.Y. starts or closes the browser, all session cookies, local storage, and authentication states are discarded. This makes it impossible for L.U.C.Y. to perform real-world student workflows (e.g., accessing college portals, Google Docs, WhatsApp Web, or YouTube Music) without requiring the user to re-authenticate and complete 2FA on every single run.
-- **Reproduction Steps:**
-  1. Launch browser via `browser_navigate` to a test site and store a cookie.
-  2. Call `browserManager.close()`.
-  3. Call `browser_navigate` again.
-  4. Observe that the cookie is completely gone.
-- **Expected Behavior:**
-  The browser should use a dedicated persistent user data directory (e.g., `data/browser-profile`) via `chromium.launchPersistentContext()` so user sessions survive across assistant runs.
-- **Actual Behavior:**
-  All sessions are ephemeral; authentication vanishes on exit.
-- **Smallest Safe Correction:**
-  Add a `persistentContextDir` option to `BrowserManager` defaulting to `path.join(userDataDir, 'browser-profile')`, and launch with `chromium.launchPersistentContext()` when persistent mode is enabled.
+  `BrowserManager.ensureContext()` previously created only in-memory browser contexts via `browser.newContext()`. When L.U.C.Y. closed the browser or completed an automated task, all session cookies, local storage, and authentication states were discarded.
+- **Remediation Implementation:**
+  1. Added optional, explicitly configured persistent browser profile directory (`userDataDir`), defaulting to application-owned user data storage (`lucy-desktop-assistant/browser-profile`).
+  2. Integrated `chromium.launchPersistentContext()` with Windows browser channel detection (`chrome` -> `msedge` -> bundled chromium).
+  3. Preserved ephemeral context as the safe default for automated tests and sessions not requiring persistence.
+  4. Added `enablePersistence()` and `disablePersistence()` dynamic toggling that safely closes contexts without deleting on-disk profile data.
+  5. Registered `browser_session_config` tool to inspect and configure session persistence mode under `SAFE_READ` risk tier.
+  6. Added lock error detection (`_isLockedError`) handling profile collisions safely.
+  7. Hardened `.gitignore` to prevent browser profile directories, cookies, and tokens from ever being tracked in Git.
+- **Verification Evidence:**
+  - Automated test suite `tests/browser/persistent-browser-session.test.js` passes 8/8 tests.
+  - Test login session (cookies and localStorage) survives closing and reopening persistent context across sessions.
+  - Separate profiles do not share sessions; multi-tab navigation functions seamlessly.
+  - All 51 browser tests pass with 0 failures; full test suite passes 265/265 tests.
 
 ---
 

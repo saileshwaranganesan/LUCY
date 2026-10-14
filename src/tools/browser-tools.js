@@ -408,6 +408,42 @@ function registerBrowserTools(registry, browserManager) {
             };
         }
     });
+
+    // 14. browser_session_config
+    registry.registerTool({
+        id: 'browser_session_config',
+        name: 'Browser Session Configuration',
+        description: 'Inspect or configure browser session persistence (persistent user profile for student/portal logins vs isolated ephemeral sessions)',
+        riskTier: RISK_TIERS.SAFE_READ,
+        schema: {
+            type: 'object',
+            properties: {
+                action: { type: 'string', enum: ['status', 'enable', 'disable'], description: 'Persistence action: status, enable, or disable' },
+                userDataDir: { type: 'string', description: 'Optional custom persistent profile directory' }
+            }
+        },
+        handler: async (params) => {
+            const action = params.action || 'status';
+            if (action === 'enable') {
+                return await browserManager.enablePersistence(params.userDataDir);
+            } else if (action === 'disable') {
+                return await browserManager.disablePersistence();
+            }
+            return {
+                ok: true,
+                status: 'session_config_status',
+                persistent: browserManager.isPersistent,
+                userDataDir: browserManager.getProfilePath()
+            };
+        },
+        dryRunSimulate: async (params) => {
+            return {
+                simulatedAction: 'session_config',
+                action: params.action || 'status',
+                effect: `Would ${params.action || 'inspect'} browser session persistence mode`
+            };
+        }
+    });
 }
 
 module.exports = {

@@ -30,6 +30,16 @@ class BrowserManager {
                     : process.cwd()
             )
         );
+        this.persistent = Boolean(options.persistent);
+        this.userDataDir = options.userDataDir || (
+            options.persistentDir || (
+                process.env.LUCY_BROWSER_PROFILE_DIR || (
+                    process.env.APPDATA
+                        ? path.join(process.env.APPDATA, 'lucy-desktop-assistant', 'browser-profile')
+                        : path.join(this.workspaceRoot, '..', 'browser-profile')
+                )
+            )
+        );
         this.browser = null;
         this.context = null;
         this.currentPage = null;
@@ -42,7 +52,22 @@ class BrowserManager {
         this.pageToId = new WeakMap();
     }
 
+    _isLockedError(err) {
+        if (!err || !err.message) return false;
+        const msg = err.message.toLowerCase();
+        return msg.includes('target page, context or browser has been closed') ||
+               msg.includes('profile is in use') ||
+               msg.includes('process did exit: exitcode=21') ||
+               msg.includes('ebusy') ||
+               msg.includes('locked');
+    }
+
     async ensureBrowser() {
+        if (this.persistent) {
+            await this.ensureContext();
+            return this.browser || this.context;
+        }
+
         if (this.browser && this.browser.isConnected()) {
             return this.browser;
         }
@@ -66,13 +91,64 @@ class BrowserManager {
     }
 
     async ensureContext() {
-        await this.ensureBrowser();
+        if (this.context) {
+            try {
+                if (this.browser && !this.browser.isConnected()) {
+                    this.context = null;
+                    this.browser = null;
+                } else if (!this.context.pages) {
+                    this.context = null;
+                }
+            } catch {
+                this.context = null;
+            }
+        }
+
         if (!this.context) {
-            this.context = await this.browser.newContext({
+            const contextOptions = {
                 viewport: { width: 1280, height: 800 },
                 userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 acceptDownloads: true
-            });
+            };
+
+            if (this.persistent) {
+                fs.mkdirSync(this.userDataDir, { recursive: true });
+
+                const launchOpts = {
+                    ...contextOptions,
+                    headless: this.headless
+                };
+
+                try {
+                    this.context = await chromium.launchPersistentContext(this.userDataDir, { ...launchOpts, channel: 'chrome' });
+                } catch (chromeErr) {
+                    if (this._isLockedError(chromeErr)) {
+                        throw new Error(`Browser profile is currently locked by another running browser process (${this.userDataDir}). Please close other instances before launching.`);
+                    }
+                    try {
+                        this.context = await chromium.launchPersistentContext(this.userDataDir, { ...launchOpts, channel: 'msedge' });
+                    } catch (edgeErr) {
+                        if (this._isLockedError(edgeErr)) {
+                            throw new Error(`Browser profile is currently locked by another running browser process (${this.userDataDir}). Please close other instances before launching.`);
+                        }
+                        this.context = await chromium.launchPersistentContext(this.userDataDir, launchOpts);
+                    }
+                }
+
+                this.browser = this.context.browser ? this.context.browser() : null;
+
+                // Track any initial pages created automatically by persistent context
+                const existingPages = this.context.pages().filter((p) => !p.isClosed());
+                for (const p of existingPages) {
+                    this._trackPage(p);
+                }
+                if (existingPages.length > 0 && !this.currentPage) {
+                    this.currentPage = existingPages[0];
+                }
+            } else {
+                await this.ensureBrowser();
+                this.context = await this.browser.newContext(contextOptions);
+            }
         }
         return this.context;
     }
@@ -1285,6 +1361,57 @@ class BrowserManager {
         this.currentPage = null;
         this.tabIdMap.clear();
         this.reservedDestinations.clear();
+    }
+
+    /**
+     * Opt-in to persistent browser sessions.
+     * Safely closes any active ephemeral context and switches to persistent mode.
+     * @param {string} [customUserDataDir=null]
+     */
+    async enablePersistence(customUserDataDir = null) {
+        if (this.persistent && (!customUserDataDir || this.userDataDir === customUserDataDir)) {
+            return {
+                ok: true,
+                status: 'persistence_already_enabled',
+                persistent: true,
+                userDataDir: this.userDataDir
+            };
+        }
+
+        await this.closeAll();
+        this.persistent = true;
+        if (customUserDataDir) {
+            this.userDataDir = customUserDataDir;
+        }
+        return {
+            ok: true,
+            status: 'persistence_enabled',
+            persistent: true,
+            userDataDir: this.userDataDir
+        };
+    }
+
+    /**
+     * Opt-out of persistent browser sessions.
+     * Closes the active persistent context safely without deleting on-disk profile data.
+     */
+    async disablePersistence() {
+        await this.closeAll();
+        this.persistent = false;
+        return {
+            ok: true,
+            status: 'persistence_disabled',
+            persistent: false,
+            userDataDir: this.userDataDir
+        };
+    }
+
+    get isPersistent() {
+        return this.persistent;
+    }
+
+    getProfilePath() {
+        return this.userDataDir;
     }
 }
 
