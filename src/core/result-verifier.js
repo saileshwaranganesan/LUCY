@@ -111,6 +111,7 @@ class ResultVerifier {
                 case 'browser_click':
                 case 'browser_fill':
                     return await this._verifyBrowserAction(step, toolResult, options);
+                case 'student_synthesize_study_guide':
                 case 'student_generate_study_guide':
                     return await this._verifyStudyGuide(step, toolResult, options);
                 case 'visual_inspect':
@@ -468,9 +469,9 @@ class ResultVerifier {
         };
     }
 
-    async _verifyStudyGuide(step, toolResult) {
-        const targetPath = step.params?.outputPath || step.params?.path;
-        const filePath = this._resolveWorkspacePath(targetPath);
+    async _verifyStudyGuide(step, toolResult, options = {}) {
+        const targetPath = step.params?.outputPath || step.params?.outputFileName || step.params?.path || toolResult?.outputPath || toolResult?.result?.outputPath;
+        const filePath = this._resolveWorkspacePath(targetPath, toolResult, options);
         if (filePath && fs.existsSync(filePath)) {
             const size = fs.statSync(filePath).size;
             if (size > 0) {

@@ -267,6 +267,15 @@ function initAssistantBackend() {
             floatingCompanion.sendVisualUpdate(state);
         }
     });
+
+    // Forward task execution lifecycle events to UI activity & status feed
+    statusManager.on('stateChanged', (event) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            try {
+                mainWindow.webContents.send('lucy:taskLifecycleEvent', event);
+            } catch (_) {}
+        }
+    });
 }
 
 // IPC Handlers with Centralized Schema & Type Validation (SEC-008 & REQ-029)

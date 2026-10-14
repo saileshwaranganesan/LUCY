@@ -172,7 +172,13 @@ class TaskCoordinator {
         }
 
         // 1. Initial tool execution
-        let toolResult = await this.toolRegistry.execute(step.toolId, resolvedParams, { dryRun });
+        let toolResult = await this.toolRegistry.execute(step.toolId, resolvedParams, {
+            dryRun,
+            signal: abortController.signal,
+            stepId,
+            taskId,
+            requestId: taskId
+        });
 
         if (abortController.signal.aborted) {
             throw new Error('Task execution was cancelled by user.');
@@ -184,7 +190,8 @@ class TaskCoordinator {
             toolResult
         });
 
-        let verification = await this.resultVerifier.verify(step, toolResult, {
+        const stepToVerify = resolvedParams ? { ...step, params: resolvedParams } : step;
+        let verification = await this.resultVerifier.verify(stepToVerify, toolResult, {
             dryRun,
             workspaceRoot: this.workspaceRoot
         });
@@ -223,7 +230,13 @@ class TaskCoordinator {
                     currentTool: step.toolId
                 });
 
-                toolResult = await this.toolRegistry.execute(step.toolId, resolvedParams, { dryRun });
+                toolResult = await this.toolRegistry.execute(step.toolId, resolvedParams, {
+                    dryRun,
+                    signal: abortController.signal,
+                    stepId,
+                    taskId,
+                    requestId: taskId
+                });
 
                 this.statusManager.transition(TASK_STATES.VERIFYING, {
                     step: stepIndex,
@@ -231,7 +244,7 @@ class TaskCoordinator {
                     toolResult
                 });
 
-                verification = await this.resultVerifier.verify(step, toolResult, {
+                verification = await this.resultVerifier.verify(stepToVerify, toolResult, {
                     dryRun,
                     workspaceRoot: this.workspaceRoot
                 });
@@ -287,7 +300,7 @@ class TaskCoordinator {
      * @returns {Promise<Object>} Final verified response
      */
     async executeRequest(userRequest, options = {}) {
-        const taskId = options.taskId || `task_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const taskId = options.taskId || options.requestId || `task_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
         // Prevent duplicate execution of the exact same active task
         if (this.activeTasks.has(taskId)) {
@@ -621,6 +634,7 @@ class TaskCoordinator {
                         lifecycleState: terminalState,
                         partiallyCompleted: hasPriorSuccess,
                         taskId,
+                        requestId: taskId,
                         userRequest,
                         failedStep: stepReceipt,
                         executedSteps,
@@ -689,6 +703,7 @@ class TaskCoordinator {
                             lifecycleState: terminalState,
                             partiallyCompleted: hasPriorSuccess,
                             taskId,
+                            requestId: taskId,
                             userRequest,
                             failedStep: failedReceipt,
                             executedSteps,
@@ -761,6 +776,7 @@ class TaskCoordinator {
                         lifecycleState: terminalState,
                         partiallyCompleted: hasPriorSuccess,
                         taskId,
+                        requestId: taskId,
                         userRequest,
                         failedStep: stepReceipt,
                         executedSteps,
@@ -828,6 +844,7 @@ class TaskCoordinator {
                 status: 'completed',
                 lifecycleState: TASK_STATES.COMPLETED,
                 taskId,
+                requestId: taskId,
                 userRequest,
                 replyText: visualAnalysis || completionSummary,
                 visualAnalysis: visualAnalysis || undefined,
@@ -848,10 +865,10 @@ class TaskCoordinator {
             const errorMsg = isCancelled ? 'Task was cancelled by user.' : err.message;
 
             if (isCancelled) {
-                if (this.statusManager.canTransition(TASK_STATES.CANCELLED)) {
-                    this.statusManager.transition(TASK_STATES.CANCELLED, { reason: errorMsg });
-                } else {
-                    this.statusManager.failTask(errorMsg);
+                if (this.statusManager.currentState !== TASK_STATES.CANCELLED) {
+                    if (this.statusManager.canTransition(TASK_STATES.CANCELLED)) {
+                        this.statusManager.transition(TASK_STATES.CANCELLED, { reason: errorMsg });
+                    }
                 }
             } else {
                 this.statusManager.failTask(errorMsg);
@@ -872,13 +889,15 @@ class TaskCoordinator {
             return {
                 ok: false,
                 status: finalStatus,
+                lifecycleState: isCancelled ? TASK_STATES.CANCELLED : TASK_STATES.FAILED,
                 taskId,
+                requestId: taskId,
                 userRequest,
                 cancelled: isCancelled,
                 error: errorMsg,
                 executedSteps,
                 dryRun,
-                verification: { verified: false, error: errorMsg }
+                verification: { verified: false, error: errorMsg, cancelled: isCancelled }
             };
         } finally {
             this.activeTasks.delete(taskId);

@@ -92,6 +92,16 @@ class ToolRegistry {
             };
         }
 
+        if (context.signal && context.signal.aborted) {
+            return {
+                ok: false,
+                status: 'cancelled',
+                error: 'Task execution was cancelled before tool started.',
+                cancelled: true,
+                toolId
+            };
+        }
+
         // 1. Parameter Validation before execution
         if (context.strictSchema) {
             const paramValidation = validateToolArguments(tool.schema, params);

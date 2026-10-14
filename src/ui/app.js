@@ -447,9 +447,65 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    let lastSubmittedText = '';
+    let lastSubmittedTime = 0;
+
+    if (window.lucyIpc && typeof window.lucyIpc.onTaskLifecycleEvent === 'function') {
+        window.lucyIpc.onTaskLifecycleEvent((event) => {
+            try {
+                if (!event || !event.state) return;
+                const state = event.state;
+                if (state === 'planning') {
+                    statusLabel.textContent = 'PLANNING';
+                    statusDot.style.background = 'var(--accent-purple)';
+                } else if (state === 'ready') {
+                    statusLabel.textContent = 'READY TO EXECUTE';
+                    statusDot.style.background = 'var(--accent-cyan)';
+                } else if (state === 'executing_tool') {
+                    const stepNum = event.detail?.step || '';
+                    const total = event.detail?.totalSteps || '';
+                    const tool = event.detail?.currentTool || '';
+                    statusLabel.textContent = stepNum ? `EXECUTING (${stepNum}/${total}): ${tool}` : 'EXECUTING';
+                    statusDot.style.background = 'var(--accent-amber)';
+                } else if (state === 'verifying') {
+                    statusLabel.textContent = 'VERIFYING';
+                    statusDot.style.background = 'var(--accent-purple)';
+                } else if (state === 'recovering') {
+                    const attempt = event.detail?.attempt || 1;
+                    statusLabel.textContent = `RECOVERING (${attempt})`;
+                    statusDot.style.background = 'var(--accent-pink)';
+                } else if (state === 'partially_completed') {
+                    statusLabel.textContent = 'PARTIALLY COMPLETED';
+                    statusDot.style.background = 'var(--accent-amber)';
+                } else if (state === 'completed') {
+                    statusLabel.textContent = 'COMPLETED';
+                    statusDot.style.background = 'var(--accent-green)';
+                } else if (state === 'cancelled') {
+                    statusLabel.textContent = 'CANCELLED';
+                    statusDot.style.background = 'var(--accent-amber)';
+                } else if (state === 'failed') {
+                    statusLabel.textContent = 'FAILED';
+                    statusDot.style.background = 'var(--accent-red)';
+                }
+            } catch (err) {
+                console.warn('[UI] Error handling task lifecycle event:', err.message);
+            }
+        });
+    }
+
     async function handleCommand() {
         const text = commandInput.value.trim();
         if (!text) return;
+
+        const now = Date.now();
+        if (text === lastSubmittedText && (now - lastSubmittedTime) < 1000) {
+            return;
+        }
+        if (currentActiveTaskId) {
+            return;
+        }
+        lastSubmittedText = text;
+        lastSubmittedTime = now;
 
         // Stop any active speech response when user sends a new command
         if (voiceController && voiceController.isSpeaking) {

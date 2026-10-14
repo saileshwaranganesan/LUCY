@@ -157,10 +157,21 @@ class Scheduler extends EventEmitter {
             throw new Error('Either delayMs or valid targetTime must be provided');
         }
 
+        const trimmedPrompt = prompt.trim();
+        for (const existingJob of this.jobs.values()) {
+            if (
+                existingJob.status === JOB_STATUS.SCHEDULED &&
+                existingJob.prompt.toLowerCase() === trimmedPrompt.toLowerCase() &&
+                Math.abs(existingJob.executeAt - executeAt) < 5000
+            ) {
+                return existingJob;
+            }
+        }
+
         const jobId = id || `rem_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
         const job = {
             id: jobId,
-            prompt: prompt.trim(),
+            prompt: trimmedPrompt,
             createdAt: now,
             executeAt,
             recurring: false,

@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld('lucyIpc', {
     respondPermission: (auditId, approved) => {
         ipcRenderer.send('lucy:permissionResponse', { auditId, approved });
     },
+    onTaskLifecycleEvent: (callback) => {
+        ipcRenderer.on('lucy:taskLifecycleEvent', (_event, data) => callback(data));
+    },
     // Streaming & Cancellation APIs (REQ-029)
     onStreamChunk: (callback) => {
         ipcRenderer.on('lucy:streamChunk', (_event, data) => callback(data));
