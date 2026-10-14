@@ -1,0 +1,36 @@
+# L.U.C.Y. - Attribution and Third-Party Notices
+
+This project incorporates architectural patterns, evaluation methodologies, and code concepts from:
+
+1. **AILIS** (https://github.com/haowenGuo/AILIS)
+   - License: MIT License
+   - Copyright (c) 2025-2026 haowenGuo and contributors
+   - Components adapted: Core tool contract structures, semantic compaction formats, and desktop lifecycle patterns.
+
+2. **pixiv Inc. VRoid Project**
+   - Animation assets and motion specifications inspected in upstream reference.
+   - Separate attribution and commercial usage requirements apply to proprietary motion packs.
+
+3. **Microsoft Playwright** (https://github.com/microsoft/playwright)
+   - License: Apache License 2.0
+   - Copyright (c) Microsoft Corporation
+   - Capabilities leveraged: Cross-browser automation engine, auto-waiting element locators, visible content extraction, and navigation verification.
+
+4. **WinApp MCP / Desktop Pilot MCP** (https://github.com/floatingbrij/desktop-pilot-mcp)
+   - License: MIT License
+   - Copyright (c) 2026 Brijesh
+   - Capabilities evaluated & adapted: UI Automation pattern concepts (ValuePattern, InvokePattern, SelectionItemPattern, TogglePattern), element hierarchy inspection, desktop application lifecycle management, and window discovery without blind coordinate clicks.
+
+5. **Quaternius — Low-Poly Animated Monsters** (https://quaternius.com / https://quaternius.itch.io/lowpoly-animated-monsters)
+   - License: Creative Commons Zero v1.0 Universal (CC0 1.0 - Public Domain Dedication)
+   - Asset reused: `dragon.glb` (Low-poly animated fantasy dragon, rigged with animations, converted for web glTF usage).
+   - Provenance reference: `assets/vendor/quaternius_monsters/` in `cairnfall-public` (CREDITS.md).
+
+6. **Three.js** (https://github.com/mrdoob/three.js)
+   - License: MIT License
+   - Copyright (c) 2010-2026 Three.js Authors
+   - Capabilities leveraged: WebGL rendering engine, PerspectiveCamera, directional/point lighting, GLTFLoader, and AnimationMixer for 3D desktop companion presentation.
+
+All project-specific modifications, security hardening (Windows DPAPI, fail-closed dry-run enforcement, central permission authority, WinSta0\default desktop routing), and the decoupled fantasy-creature companion layer are maintained independently within L.U.C.Y.
+
+

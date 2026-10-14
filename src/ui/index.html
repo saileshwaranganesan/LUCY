@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; font-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'self';">
+  <title>L.U.C.Y. — Autonomous Desktop Assistant</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Companion Sidebar -->
+    <aside class="companion-dock">
+      <div class="brand-header">
+        <span class="brand-badge">L.U.C.Y.</span>
+        <h1 class="brand-title">Assistant</h1>
+      </div>
+
+      <!-- Creature Viewport -->
+      <div class="creature-stage" id="creatureStage" title="Click or interact with Lucy Familiar">
+        <canvas id="creatureCanvas" width="280" height="280"></canvas>
+        <div class="fairy-docked-indicator" id="fairyDockedIndicator">
+          <div class="portal-glyph">🧚‍♀️✨</div>
+          <div style="font-size: 11px; color: var(--accent-cyan); font-weight: 600;">Lucy is floating on your desktop</div>
+          <button id="inlineReturnBtn" class="btn-action" style="font-size: 10px; padding: 4px 10px; background: rgba(0, 245, 212, 0.15); border: 1px solid rgba(0, 245, 212, 0.4);">↩️ Return to App</button>
+        </div>
+        <div class="speech-bubble" id="speechBubble">Sparkle! ✨ Ready for your instruction.</div>
+      </div>
+
+      <!-- Creature State Indicators -->
+      <div class="companion-state-bar">
+        <span class="state-tag">
+          <span class="status-dot" id="statusDot"></span>
+          <span id="statusLabel">IDLE</span>
+        </span>
+        <span style="color: var(--accent-cyan); font-weight: 600;" id="emotionLabel">Happy</span>
+      </div>
+
+      <div style="width: 100%; display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; gap: 8px;">
+          <button id="petBtn" class="btn-action" style="flex: 1; padding: 6px; font-size: 11px;">✨ Pet Lucy</button>
+          <button id="toggleDryRunBtn" class="btn-action" style="flex: 1; padding: 6px; font-size: 11px; background: rgba(255,255,255,0.08); box-shadow: none;">Dry-Run: OFF</button>
+        </div>
+        <button id="sidebarMemoryBtn" class="btn-action" style="width: 100%; padding: 6px; font-size: 11px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); box-shadow: none;">🧠 Memory & Continuity</button>
+        <button id="sidebarSettingsBtn" class="btn-action" style="width: 100%; padding: 6px; font-size: 11px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); box-shadow: none;">⚙️ Provider Settings</button>
+        <button id="toggleFloatingBtn" class="btn-action" style="width: 100%; padding: 6px; font-size: 11px; background: rgba(0, 245, 212, 0.12); border: 1px solid rgba(0, 245, 212, 0.3); color: var(--accent-cyan); box-shadow: none;" title="Float Lucy Fairy to desktop or return to app">🪟 Float Pet</button>
+      </div>
+    </aside>
+
+    <!-- Main Workspace Stage -->
+    <main class="main-stage">
+      <!-- HUD Header -->
+      <header class="hud-bar">
+        <div class="hud-metrics">
+          <div class="metric-item">
+            <span class="metric-label">AI Provider</span>
+            <span class="metric-value" id="hudProvider">Gemini (2.0 Flash)</span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-label">Permission Policy</span>
+            <span class="metric-value" id="hudPermission">Standard (Gated)</span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-label">Memory Usage</span>
+            <span class="metric-value" id="hudMemory">Tracking...</span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-label">Safety Mode</span>
+            <span class="metric-value" style="color: var(--accent-green);">No Paid Fallback</span>
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button id="toggleTtsBtn" class="btn-action" style="padding: 6px 12px; font-size: 11px; background: rgba(255,255,255,0.08); box-shadow: none; border: 1px solid var(--bg-card-border);" title="Toggle assistant spoken voice responses">🔊 Voice: ON</button>
+          <button id="hudMemoryBtn" class="btn-action" style="padding: 6px 12px; font-size: 11px; background: rgba(255,255,255,0.08); box-shadow: none; border: 1px solid var(--bg-card-border);" title="Manage persistent memory & task continuity">🧠 Memory</button>
+          <button id="hudSettingsBtn" class="btn-action" style="padding: 6px 14px; font-size: 12px; background: rgba(255,255,255,0.08); box-shadow: none; border: 1px solid var(--bg-card-border);">⚙️ Settings</button>
+        </div>
+      </header>
+
+      <!-- Task Execution Feed -->
+      <section class="task-feed" id="taskFeed">
+        <div class="task-feed-header">
+          <span>Activity & Verification Feed</span>
+          <span style="font-weight: 400; font-size: 11px;">Single Authority Coordinator</span>
+        </div>
+        <div class="log-entry" id="welcomeEntry">
+          <div class="log-meta">
+            <span>System Ready</span>
+            <span>Verified</span>
+          </div>
+          <div>L.U.C.Y. core initialized. The assistant is ready to execute authorized computer tasks with guaranteed verification receipts.</div>
+        </div>
+      </section>
+
+      <!-- Input Console -->
+      <footer class="command-console">
+        <input 
+          type="text" 
+          id="commandInput" 
+          class="command-input" 
+          placeholder="Ask Lucy to plan, inspect system, perform file operations, or execute tasks..." 
+          autocomplete="off"
+        />
+        <button id="cancelStreamBtn" class="btn-cancel" style="display: none; padding: 8px 14px; font-size: 12px; border-radius: var(--radius-sm); color: var(--accent-red);" title="Cancel in-progress AI response">🛑 Stop</button>
+        <button id="stopVoiceBtn" class="stop-voice-btn" style="display: none; padding: 8px 14px; font-size: 12px; border-radius: var(--radius-sm);" title="Stop assistant speech playback">⏹️ Stop Voice</button>
+        <button id="micBtn" class="btn-action mic-btn" title="Push-to-talk microphone input">🎙️ Mic</button>
+        <button id="sendBtn" class="btn-action">Execute</button>
+      </footer>
+    </main>
+  </div>
+
+  <!-- Interactive Permission Confirmation Modal -->
+  <div class="modal-overlay" id="permissionModal">
+    <div class="permission-modal">
+      <div class="modal-title">
+        <span>⚠️ Permission Authorization Required</span>
+      </div>
+      <div class="modal-body" id="permissionModalBody">
+        A consequential action is requesting permission to execute.
+      </div>
+      <div class="modal-actions">
+        <button id="denyPermissionBtn" class="btn-cancel">Deny & Stop</button>
+        <button id="approvePermissionBtn" class="btn-confirm">Authorize Action</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Provider Settings Modal -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="permission-modal" style="width: 520px; border-color: var(--accent-cyan); box-shadow: var(--glow-cyan);">
+      <div class="modal-title" style="color: var(--accent-cyan);">
+        <span>⚙️ AI Provider & Secret Settings</span>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 14px; background: transparent; padding: 0;">
+        <div style="font-size: 12px; color: var(--text-muted);">
+          Configure your active AI provider. API keys are encrypted at rest with <strong>Windows DPAPI (CurrentUser)</strong> and never displayed, logged, or sent in plaintext.
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Provider</label>
+          <select id="settingProvider" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;">
+            <option value="gemini">Google Gemini API (gemini-2.0-flash)</option>
+            <option value="openrouter">OpenRouter (Multi-model router)</option>
+            <option value="ollama">Local Ollama (Offline / Free)</option>
+            <option value="huggingface">Hugging Face (Serverless Inference API)</option>
+            <option value="custom-openai">Custom OpenAI-Compatible Endpoint</option>
+          </select>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Model Name</label>
+            <span id="modelDiscoveryBadge" style="font-size: 10px; color: var(--accent-cyan); display: none;"></span>
+          </div>
+          <input type="text" id="settingModel" list="modelDatalist" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;" placeholder="e.g. gemini-2.0-flash" />
+          <datalist id="modelDatalist"></datalist>
+        </div>
+
+        <div id="apiKeyGroup" style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">API Key</label>
+            <span id="keyStatusBadge" style="font-size: 11px; color: var(--text-muted);">Checking...</span>
+          </div>
+          <input type="password" id="settingApiKey" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;" placeholder="Enter new API key (leave blank to keep existing)" autocomplete="new-password" />
+          <div id="hfNotice" style="display: none; font-size: 10px; color: var(--text-muted); line-height: 1.3;">
+            🤗 Hugging Face User Access Token (read permissions). Serverless free tier available with rate limits. Dedicated endpoints may incur account fees.
+          </div>
+        </div>
+
+        <div id="localUrlGroup" style="display: none; flex-direction: column; gap: 6px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Local Service URL</label>
+            <button id="discoverOllamaBtn" class="btn-cancel" style="padding: 2px 8px; font-size: 10px; color: var(--accent-cyan); border-color: rgba(0, 242, 254, 0.4);">🔄 Discover Models</button>
+          </div>
+          <input type="text" id="settingLocalUrl" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;" placeholder="http://127.0.0.1:11434" value="http://127.0.0.1:11434" />
+          <div id="ollamaDiscoveryStatus" style="font-size: 11px; color: var(--text-dim); display: none;"></div>
+        </div>
+
+        <div style="background: rgba(0, 242, 254, 0.05); border: 1px solid rgba(0, 242, 254, 0.2); padding: 10px; border-radius: var(--radius-sm); font-size: 11px; color: var(--text-muted); line-height: 1.4;">
+          🛡️ <strong>Safety Guarantee:</strong> Automatic paid-provider fallback is disabled. If the selected provider is unavailable, the assistant reports the error directly instead of incurring unexpected charges.
+        </div>
+
+        <!-- Voice Customization Section -->
+        <div style="border-top: 1px solid var(--bg-card-border); padding-top: 12px; display: flex; flex-direction: column; gap: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <label style="font-size: 11px; text-transform: uppercase; color: var(--accent-pink); font-weight: 700;">🎙️ Voice Customization</label>
+              <button type="button" id="resetVoiceDefaultsBtn" class="btn-cancel" style="font-size: 10px; padding: 2px 6px; border-radius: 4px;" title="Reset voice pitch, rate, and selection to defaults">↺ Reset</button>
+            </div>
+            <label style="font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+              <input type="checkbox" id="settingTtsEnabled" checked style="accent-color: var(--accent-pink);" />
+              Speech Audio Output
+            </label>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Voice Selection</label>
+            <select id="settingVoiceSelect" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 10px; border-radius: var(--radius-sm); outline: none;">
+              <option value="">Default (Auto-select female/natural voice)</option>
+            </select>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Pitch</label>
+                <span id="voicePitchVal" style="font-size: 11px; color: var(--accent-pink); font-weight: 700;">1.05</span>
+              </div>
+              <input type="range" id="settingVoicePitch" min="0.5" max="1.5" step="0.05" value="1.05" style="accent-color: var(--accent-pink); width: 100%; cursor: pointer;" />
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Speed / Rate</label>
+                <span id="voiceRateVal" style="font-size: 11px; color: var(--accent-cyan); font-weight: 700;">1.02</span>
+              </div>
+              <input type="range" id="settingVoiceRate" min="0.5" max="1.5" step="0.05" value="1.02" style="accent-color: var(--accent-cyan); width: 100%; cursor: pointer;" />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions" style="margin-top: 14px;">
+        <button id="clearKeyBtn" class="btn-cancel" style="color: var(--accent-red); margin-right: auto;">Clear Stored Key</button>
+        <button id="cancelSettingsBtn" class="btn-cancel">Cancel</button>
+        <button id="saveSettingsBtn" class="btn-action" style="padding: 8px 20px;">Save & Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Memory & Task Continuity Modal -->
+  <div class="modal-overlay" id="memoryModal">
+    <div class="memory-modal">
+      <div class="modal-title" style="color: var(--accent-purple); justify-content: space-between;">
+        <span style="display: flex; align-items: center; gap: 8px;">🧠 Persistent Memory & Continuity</span>
+        <button id="closeMemoryModalBtn" class="btn-cancel" style="padding: 4px 10px; font-size: 14px;">✕</button>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <div class="memory-tabs">
+        <button id="tabMemoriesBtn" class="memory-tab-btn active">📚 Stored Memories</button>
+        <button id="tabContinuityBtn" class="memory-tab-btn">🔄 Task Continuity & Recovery</button>
+        <button id="tabAddMemoryBtn" class="memory-tab-btn">➕ Add Explicit Memory</button>
+      </div>
+
+      <!-- Tab 1: Stored Memories -->
+      <div class="tab-pane active" id="paneMemories">
+        <div class="memory-controls-bar">
+          <label style="font-size: 12px; display: flex; align-items: center; gap: 6px; color: var(--text-main); cursor: pointer;">
+            <input type="checkbox" id="toggleLongTermCheckbox" checked>
+            <span>Long-Term Memory Active</span>
+          </label>
+          <div class="cat-pills">
+            <button class="cat-pill active" data-cat="all">All</button>
+            <button class="cat-pill" data-cat="user_approved">User-Approved</button>
+            <button class="cat-pill" data-cat="conversation">Conversation</button>
+            <button class="cat-pill" data-cat="project">Project</button>
+            <button class="cat-pill" data-cat="working_data">Working Data</button>
+          </div>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <input type="text" id="memorySearchInput" placeholder="Filter memories..." style="background: rgba(14,20,38,0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 5px 10px; border-radius: var(--radius-sm); font-size: 11px; width: 140px; outline: none;" />
+            <button id="clearCategoryBtn" class="btn-cancel" style="padding: 4px 8px; font-size: 11px; color: var(--accent-red);">Clear Filtered</button>
+          </div>
+        </div>
+
+        <div id="memoryListContainer" style="display: flex; flex-direction: column; gap: 10px; overflow-y: auto; max-height: 400px;">
+          <!-- Loaded dynamically -->
+        </div>
+      </div>
+
+      <!-- Tab 2: Task Continuity & Recovery -->
+      <div class="tab-pane" id="paneContinuity">
+        <div style="background: rgba(0, 242, 254, 0.05); border: 1px solid rgba(0, 242, 254, 0.2); padding: 10px; border-radius: var(--radius-sm); font-size: 11px; color: var(--text-muted); line-height: 1.4;">
+          🛡️ <strong>Crash & Restart Recovery:</strong> Inspect recorded checkpoints before resuming. Completed actions are <strong>never repeated</strong>. Consequential actions (file writes, deletes, browser submissions) require explicit re-authorization.
+        </div>
+        <div id="interruptedTasksList" style="display: flex; flex-direction: column; gap: 10px; overflow-y: auto; max-height: 400px;">
+          <!-- Loaded dynamically -->
+        </div>
+      </div>
+
+      <!-- Tab 3: Add Explicit Memory -->
+      <div class="tab-pane" id="paneAddMemory">
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Category</label>
+            <select id="addMemoryCategory" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;">
+              <option value="user_approved">User-Approved (Facts, instructions, confirmed preferences)</option>
+              <option value="project">Project Memory (Decisions, architecture, requirements)</option>
+              <option value="working_data">Temporary Working Data (Auto-expiring cache)</option>
+            </select>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Key / Label</label>
+            <input type="text" id="addMemoryKey" placeholder="e.g. user_preferred_editor or project_stack" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;" />
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Content</label>
+            <textarea id="addMemoryContent" rows="4" placeholder="Enter facts, instructions, or project decisions to persist..." style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none; resize: vertical;"></textarea>
+          </div>
+
+          <div id="workingDataTtlGroup" style="display: none; flex-direction: column; gap: 6px;">
+            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Expiration TTL</label>
+            <select id="addMemoryTtl" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;">
+              <option value="3600000">1 Hour</option>
+              <option value="86400000">24 Hours</option>
+              <option value="604800000">7 Days</option>
+            </select>
+          </div>
+
+          <div style="background: rgba(157, 78, 221, 0.08); border: 1px solid rgba(157, 78, 221, 0.25); padding: 10px; border-radius: var(--radius-sm); font-size: 11px; color: var(--text-muted); line-height: 1.4;">
+            🛡️ <strong>Secret Protection:</strong> Passwords, API keys, and sensitive tokens are systematically redacted. Untrusted external sources cannot create user-approved memories.
+          </div>
+
+          <div class="modal-actions" style="margin-top: 6px;">
+            <button id="saveExplicitMemoryBtn" class="btn-action" style="padding: 8px 24px;">💾 Save Memory</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../voice/speech-text-cleaner.js"></script>
+  <script src="../voice/speech-recognition.js"></script>
+  <script src="../voice/speech-synthesis.js"></script>
+  <script src="../voice/voice-controller.js"></script>
+  <script src="companion-renderer.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

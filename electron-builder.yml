@@ -1,0 +1,54 @@
+appId: com.lucy.desktopassistant
+productName: L.U.C.Y.
+executableName: LUCY
+artifactName: ${productName}-Setup-${version}-win-${arch}.${ext}
+
+directories:
+  output: dist-release
+  buildResources: build
+
+files:
+  - "src/**/*"
+  - "package.json"
+  - "LICENSE"
+  - "NOTICE"
+  - "!**/tests/**"
+  - "!**/scripts/**"
+  - "!**/reference/**"
+  - "!**/scratch/**"
+  - "!**/docs/**"
+  - "!**/*.test.js"
+  - "!**/*.map"
+
+extraResources:
+  - from: "src/tools/native-uia/LucyUiaWorker.exe"
+    to: "native-uia/LucyUiaWorker.exe"
+
+asar: true
+asarUnpack:
+  - "src/tools/native-uia/LucyUiaWorker.exe"
+  - "src/companion/assets/**"
+  - "node_modules/playwright-core/**/*"
+  - "node_modules/sql.js/dist/sql-wasm.wasm"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: "L.U.C.Y."
+  deleteAppDataOnUninstall: false
+  runAfterFinish: false
+
+portable:
+  artifactName: ${productName}-Portable-${version}-win-${arch}.${ext}

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' file: blob:;">
+  <title>L.U.C.Y. — Fairy Companion</title>
+  <link rel="stylesheet" href="companion.css">
+</head>
+<body>
+  <div id="companionContainer">
+    <!-- Top Bar: Status Pill & Dismiss -->
+    <div class="top-bar">
+      <div class="status-pill" id="statusPill" title="L.U.C.Y. Assistant State">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">IDLE</span>
+      </div>
+      <button class="top-close-btn" id="closeBtn" title="Return companion to main app">✕</button>
+    </div>
+
+    <!-- Speech Dialogue Bubble -->
+    <div class="speech-bubble" id="speechBubble">
+      Sparkle! ✨ Ready for your instruction.
+    </div>
+
+    <!-- Fairy Canvas (Unified Celestial Familiar Renderer) -->
+    <div class="fairy-stage" id="fairyStage">
+      <canvas id="fairyCanvas" width="320" height="290"></canvas>
+    </div>
+
+    <!-- Sleek Glassmorphic Floating Interaction Dock -->
+    <div class="control-dock" id="controlDock">
+      <button class="dock-btn" id="petBtn" title="Pet Lucy (Affectionate reaction)">✋</button>
+      <button class="dock-btn" id="magicBtn" title="Magical sparkle interaction">✨</button>
+      <button class="dock-btn" id="talkBtn" title="Talk / Focus Assistant Console">💬</button>
+      <button class="dock-btn active" id="pinBtn" title="Always on top (Pinned)">📌</button>
+      <button class="dock-btn return-btn" id="returnBtn" title="Return to Main Application">↩️</button>
+    </div>
+  </div>
+
+  <script src="../ui/companion-renderer.js"></script>
+  <script src="companion-app.js"></script>
+</body>
+</html>
