@@ -57,6 +57,7 @@ class VoiceController {
         ttsEnabled = true,
         language = 'en-US',
         wakeWordEnabled = false,
+        wakeWordConfig = {},
         recognitionMode = RECOGNITION_MODES.AUTO,
         audioRecorder = null,
         whisperEngine = null,
@@ -67,6 +68,7 @@ class VoiceController {
         this.onInterimTranscript = onInterimTranscript;
         this.onFinalTranscript = onFinalTranscript;
         this.onError = onError;
+        this.onWakeWord = onWakeWord;
         this.voiceState = VOICE_STATES.IDLE;
         this.ttsEnabled = Boolean(ttsEnabled);
         this.currentSpeechId = 0;
@@ -74,6 +76,7 @@ class VoiceController {
         this.activeRecognitionEngine = 'web-speech'; // 'whisper' | 'web-speech'
         this.transcriptionAbortController = null;
         this._cachedWhisperStatus = null;
+        this._isWakeWordCapturing = false;
 
         // Initialize Speech Recognition (Web Speech API fallback)
         const makeRecognition = _createSpeechRecognition || (globalScope ? globalScope.createSpeechRecognition : null);
@@ -126,20 +129,6 @@ class VoiceController {
         }) : { supported: false, isSpeaking: false, speak: async () => false, stop: () => {} };
         this.synthesis.enabled = this.ttsEnabled;
 
-        // Initialize Wake-Word Engine (opt-in privacy default)
-        this.wakeWordEngine = _WakeWordEngine ? new _WakeWordEngine({
-            enabled: Boolean(wakeWordEnabled)
-        }) : null;
-
-        if (this.wakeWordEngine) {
-            this.wakeWordEngine.on('wakeWordDetected', (res) => {
-                if (typeof onWakeWord === 'function') {
-                    onWakeWord(res);
-                }
-                this.startListening();
-            });
-        }
-
         // Initialize Offline Whisper Recognition Engine
         if (whisperEngine) {
             this.whisperEngine = whisperEngine;
@@ -161,11 +150,36 @@ class VoiceController {
             this.whisperEngine = null;
         }
 
-        // Initialize Audio Recorder for offline microphone capture
+        // Initialize Audio Recorder for offline microphone capture and continuous wake-word streaming
         const makeAudioRecorder = audioRecorder || _createAudioRecorder;
         this.audioRecorder = (typeof makeAudioRecorder === 'function')
-            ? makeAudioRecorder({ globalScope })
+            ? makeAudioRecorder({
+                globalScope,
+                onStreamEnd: () => {
+                    this._stopWakeWordCapture();
+                }
+            })
             : (audioRecorder || null);
+
+        // Initialize Wake-Word Engine (opt-in privacy default)
+        const wwOpts = {
+            enabled: Boolean(wakeWordEnabled),
+            whisperEngine: this.whisperEngine,
+            ...wakeWordConfig
+        };
+        this.wakeWordEngine = _WakeWordEngine ? new _WakeWordEngine(wwOpts) : null;
+
+        if (this.wakeWordEngine) {
+            this.wakeWordEngine.on('wakeWordDetected', (res) => {
+                if (typeof this.onWakeWord === 'function') {
+                    this.onWakeWord(res);
+                }
+                this.startListening();
+            });
+            if (this.wakeWordEngine.enabled) {
+                this._syncWakeWordCapture();
+            }
+        }
     }
 
     get isRecognitionSupported() {
@@ -190,6 +204,14 @@ class VoiceController {
     setVoiceState(nextState, detail = {}) {
         this.voiceState = nextState;
         this.onStateChange({ voiceState: nextState, ...detail });
+        if (nextState === VOICE_STATES.IDLE) {
+            if (this.wakeWordEngine && this.wakeWordEngine.isPaused && !this.isSpeaking) {
+                this.wakeWordEngine.resume();
+            }
+            this._syncWakeWordCapture();
+        } else if (this.wakeWordEngine && !this.wakeWordEngine.isPaused) {
+            this.wakeWordEngine.pause();
+        }
     }
 
     setRecognitionMode(mode) {
@@ -225,6 +247,9 @@ class VoiceController {
         }
         if (this.isSpeaking) {
             this.stopSpeaking();
+        }
+        if (this.wakeWordEngine) {
+            this.wakeWordEngine.pause();
         }
 
         const isOfflineAvailable = this.isWhisperAvailable();
@@ -378,7 +403,13 @@ class VoiceController {
             return res;
         } finally {
             if (this.wakeWordEngine) {
-                this.wakeWordEngine.resume();
+                // Anti-echo debounce: delay resume slightly to ensure speaker reverberation dissipates
+                setTimeout(() => {
+                    if (this.wakeWordEngine && !this.isSpeaking && this.voiceState === VOICE_STATES.IDLE) {
+                        this.wakeWordEngine.resume();
+                        this._syncWakeWordCapture();
+                    }
+                }, 400);
             }
         }
     }
@@ -389,11 +420,11 @@ class VoiceController {
     stopSpeaking() {
         this.currentSpeechId++;
         this.synthesis.stop();
-        if (this.wakeWordEngine) {
-            this.wakeWordEngine.resume();
-        }
         if (this.voiceState === VOICE_STATES.SPEAKING) {
             this.setVoiceState(VOICE_STATES.IDLE);
+        } else if (this.wakeWordEngine && !this.isSpeaking && this.voiceState === VOICE_STATES.IDLE) {
+            this.wakeWordEngine.resume();
+            this._syncWakeWordCapture();
         }
     }
 
@@ -453,17 +484,109 @@ class VoiceController {
     }
 
     getWakeWordStatus() {
-        return this.wakeWordEngine ? this.wakeWordEngine.getPrivacyState() : { enabled: false, supported: false };
+        if (!this.wakeWordEngine) {
+            return { enabled: false, supported: false };
+        }
+        return {
+            ...this.wakeWordEngine.getPrivacyState(),
+            isStreaming: Boolean(this._isWakeWordCapturing),
+            licenceInfo: this.wakeWordEngine.getLicenceInfo()
+        };
     }
 
     setWakeWordEnabled(enabled) {
         if (!this.wakeWordEngine) return false;
         if (enabled) {
             this.wakeWordEngine.enable();
+            this._syncWakeWordCapture();
         } else {
             this.wakeWordEngine.disable();
+            this._stopWakeWordCapture();
         }
         return this.wakeWordEngine.enabled;
+    }
+
+    muteWakeWord() {
+        if (!this.wakeWordEngine) return false;
+        const res = this.wakeWordEngine.mute();
+        this._stopWakeWordCapture();
+        return res;
+    }
+
+    unmuteWakeWord() {
+        if (!this.wakeWordEngine) return false;
+        const res = this.wakeWordEngine.unmute();
+        this._syncWakeWordCapture();
+        return res;
+    }
+
+    pauseWakeWord() {
+        if (!this.wakeWordEngine) return false;
+        return this.wakeWordEngine.pause();
+    }
+
+    resumeWakeWord() {
+        if (!this.wakeWordEngine) return false;
+        const res = this.wakeWordEngine.resume();
+        this._syncWakeWordCapture();
+        return res;
+    }
+
+    _syncWakeWordCapture() {
+        if (!this.wakeWordEngine || !this.wakeWordEngine.enabled || this.wakeWordEngine.isMuted || this.wakeWordEngine.isPaused) {
+            this._stopWakeWordCapture();
+            return;
+        }
+
+        if (this.voiceState !== VOICE_STATES.IDLE || this.isSpeaking) {
+            return;
+        }
+
+        this._startWakeWordCapture();
+    }
+
+    _startWakeWordCapture() {
+        if (!this.audioRecorder || typeof this.audioRecorder.startContinuousCapture !== 'function') {
+            return;
+        }
+
+        if (this._isWakeWordCapturing) {
+            return;
+        }
+
+        this._isWakeWordCapturing = true;
+
+        Promise.resolve(this.audioRecorder.startContinuousCapture({
+            onAudioFrame: (frame) => {
+                if (this.voiceState !== VOICE_STATES.IDLE || this.isSpeaking) {
+                    return;
+                }
+                if (!this.wakeWordEngine || !this.wakeWordEngine.enabled || this.wakeWordEngine.isMuted || this.wakeWordEngine.isPaused) {
+                    return;
+                }
+                try {
+                    this.wakeWordEngine.processInput({ audioFrame: frame });
+                } catch (err) {
+                    this._stopWakeWordCapture();
+                    this.onError(err);
+                }
+            }
+        })).catch((err) => {
+            this._isWakeWordCapturing = false;
+            if (this.wakeWordEngine) {
+                this.wakeWordEngine.disable();
+            }
+            this.onError(err);
+        });
+    }
+
+    _stopWakeWordCapture() {
+        this._isWakeWordCapturing = false;
+        if (this.audioRecorder && typeof this.audioRecorder.stopContinuousCapture === 'function') {
+            try {
+                this.audioRecorder.stopContinuousCapture();
+            } catch (_) {}
+        }
     }
 
     getWhisperStatus() {
@@ -473,8 +596,12 @@ class VoiceController {
     dispose() {
         this.cancelListening();
         this.stopSpeaking();
+        this._stopWakeWordCapture();
         if (this.wakeWordEngine && typeof this.wakeWordEngine.dispose === 'function') {
             this.wakeWordEngine.dispose();
+        }
+        if (this.audioRecorder && typeof this.audioRecorder.cleanup === 'function') {
+            this.audioRecorder.cleanup();
         }
         if (this.recognition && typeof this.recognition.dispose === 'function') {
             this.recognition.dispose();

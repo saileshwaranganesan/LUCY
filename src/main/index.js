@@ -608,7 +608,9 @@ ipcMain.handle('lucy:getVoiceConfig', async () => {
         volume: 1.0,
         voiceName: '',
         preferredVoiceName: '',
-        ttsEnabled: true
+        ttsEnabled: true,
+        wakeWordEnabled: false,
+        wakeWordSensitivity: 0.5
     };
     if (!voiceConfigFile || !fs.existsSync(voiceConfigFile)) {
         return { ok: true, config: defaults };
@@ -633,7 +635,9 @@ ipcMain.handle('lucy:setVoiceConfig', async (_event, config = {}) => {
         volume: 1.0,
         voiceName: '',
         preferredVoiceName: '',
-        ttsEnabled: true
+        ttsEnabled: true,
+        wakeWordEnabled: false,
+        wakeWordSensitivity: 0.5
     };
     if (config.resetToDefaults !== true && voiceConfigFile && fs.existsSync(voiceConfigFile)) {
         try {

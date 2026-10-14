@@ -91,22 +91,28 @@ test('REQ-028: Wake-Word Detection with Explicit Privacy Controls & Verified Lic
     });
 
     await t.test('processes local PCM audio frame in-memory without network', () => {
+        const { synthesizeHeyLucy } = require('../../src/voice/acoustic-synthesizer');
         const engine = new WakeWordEngine({
             enabled: true,
-            confidenceThreshold: 0.5,
+            confidenceThreshold: 0.6,
             cooldownMs: 0
         });
 
-        // Simulate a PCM buffer with sinusoidal acoustic energy
-        const pcmFrame = new Float32Array(512);
-        for (let i = 0; i < pcmFrame.length; i++) {
-            pcmFrame[i] = Math.sin(i / 10) * 0.8;
-        }
+        // Authentic local PCM audio frame representing spoken wake phrase
+        const pcmFrame = synthesizeHeyLucy();
 
         const res = engine.processInput({ audioFrame: pcmFrame });
-        assert.ok(res !== null);
+        assert.ok(res !== null, 'Genuine acoustic wake phrase must be detected');
         assert.equal(res.keyword, 'hey lucy');
-        assert.ok(res.confidence >= 0.5);
+        assert.ok(res.confidence >= 0.6);
+
+        // Pure sinusoidal tone or non-speech energy must NOT falsely activate the detector
+        const sineNoise = new Float32Array(512);
+        for (let i = 0; i < sineNoise.length; i++) {
+            sineNoise[i] = Math.sin(i / 10) * 0.8;
+        }
+        const falseTrigger = engine.processInput({ audioFrame: sineNoise });
+        assert.equal(falseTrigger, null, 'Arbitrary acoustic energy must not trigger false wake-word detection');
 
         engine.dispose();
     });

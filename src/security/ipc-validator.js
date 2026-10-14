@@ -509,6 +509,22 @@ function validateVoiceConfig(config) {
         sanitized.ttsEnabled = ttsEnabled;
     }
 
+    const { wakeWordEnabled, wakeWordSensitivity } = config;
+    if (wakeWordEnabled !== undefined && wakeWordEnabled !== null) {
+        if (typeof wakeWordEnabled !== 'boolean') {
+            return { ok: false, code: 'INVALID_WAKE_WORD_FLAG', error: 'wakeWordEnabled must be a boolean.' };
+        }
+        sanitized.wakeWordEnabled = wakeWordEnabled;
+    }
+
+    if (wakeWordSensitivity !== undefined && wakeWordSensitivity !== null) {
+        const s = Number(wakeWordSensitivity);
+        if (!Number.isFinite(s) || s < 0.0 || s > 1.0) {
+            return { ok: false, code: 'INVALID_WAKE_WORD_SENSITIVITY', error: 'wakeWordSensitivity must be a finite number between 0.0 and 1.0.' };
+        }
+        sanitized.wakeWordSensitivity = s;
+    }
+
     return { ok: true, sanitized };
 }
 

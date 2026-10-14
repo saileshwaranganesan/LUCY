@@ -1,15 +1,19 @@
 'use strict';
 
 /**
- * Microphone Audio Capture and WAV Encoder for L.U.C.Y. Offline Speech Recognition (REQ-027)
+ * Microphone Audio Capture and WAV Encoder for L.U.C.Y. (REQ-027, REQ-028)
  * 
  * Captures microphone audio, downsamples/converts to 16kHz 16-bit mono PCM,
  * and packages into a standard 44-byte RIFF WAV header for whisper.cpp.
+ * Supports continuous streaming for local wake-word detection (REQ-028).
  * 
  * Guarantees:
  * 1. 100% local, zero network streaming.
  * 2. Strict 16kHz mono 16-bit PCM format guaranteed for whisper.cpp compatibility.
- * 3. Graceful handling of denied microphone permissions, device unplugging, and cancellation.
+ * 3. Seamless transition between wake-word listening and push-to-talk recording
+ *    without duplicate microphone streams or device contention.
+ * 4. Graceful handling of denied microphone permissions, device unplugging, and cancellation.
+ * 5. Complete resource disposal on stop or failure.
  */
 
 function encodeWavPcm16(samples, sampleRate = 16000) {
@@ -97,12 +101,17 @@ class AudioRecorder {
     constructor({
         globalScope = (typeof globalThis !== 'undefined' ? globalThis : null),
         sampleRate = 16000,
-        onAudioLevel = null
+        onAudioLevel = null,
+        onAudioFrame = null,
+        onStreamEnd = null
     } = {}) {
         this.globalScope = globalScope;
         this.sampleRate = sampleRate;
         this.onAudioLevel = onAudioLevel;
+        this.onAudioFrame = onAudioFrame;
+        this.onStreamEnd = onStreamEnd;
         this.isRecording = false;
+        this.isStreaming = false;
         this.mediaStream = null;
         this.audioContext = null;
         this.sourceNode = null;
@@ -117,55 +126,136 @@ class AudioRecorder {
         return Boolean(nav && nav.mediaDevices && typeof nav.mediaDevices.getUserMedia === 'function');
     }
 
-    async start() {
-        if (this.isRecording) return true;
+    get isCapturing() {
+        return this.isRecording || this.isStreaming;
+    }
+
+    /**
+     * Initializes hardware microphone media stream if not already active.
+     */
+    async _ensureCapturePipeline() {
+        if (this.mediaStream && this.audioContext && this.processorNode) {
+            return true;
+        }
+
+        if (this._pipelineInitPromise) {
+            return this._pipelineInitPromise;
+        }
+
         if (!this.supported) {
             throw new Error('Microphone audio capture is not supported in this runtime environment.');
         }
+
+        this._pipelineInitPromise = (async () => {
+            try {
+                const stream = await this.globalScope.navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: this.sampleRate,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    }
+                });
+
+                this.mediaStream = stream;
+
+                // Monitor stream track ending (device unplugged or revoked)
+                const audioTracks = stream.getAudioTracks ? stream.getAudioTracks() : [];
+                if (audioTracks.length > 0) {
+                    audioTracks[0].onended = () => {
+                        this.cleanup();
+                        if (typeof this.onStreamEnd === 'function') {
+                            this.onStreamEnd();
+                        }
+                    };
+                }
+
+                const AudioCtx = this.globalScope.AudioContext || this.globalScope.webkitAudioContext;
+                this.audioContext = new AudioCtx({ sampleRate: this.sampleRate });
+                this.sourceNode = this.audioContext.createMediaStreamSource(stream);
+
+                const bufferSize = 2048;
+                this.processorNode = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
+
+                this.processorNode.onaudioprocess = (e) => {
+                    const channelData = e.inputBuffer.getChannelData(0);
+                    const chunk = new Float32Array(channelData.length);
+                    chunk.set(channelData);
+
+                    // Accumulate chunks during active recording
+                    if (this.isRecording) {
+                        this.audioChunks.push(chunk);
+                        this.totalSamples += chunk.length;
+                    }
+
+                    // Continuous stream callback (e.g. for wake-word engine)
+                    if (typeof this.onAudioFrame === 'function') {
+                        this.onAudioFrame(chunk);
+                    }
+
+                    if (typeof this.onAudioLevel === 'function') {
+                        let sum = 0;
+                        for (let i = 0; i < chunk.length; i++) {
+                            sum += chunk[i] * chunk[i];
+                        }
+                        const rms = Math.sqrt(sum / chunk.length);
+                        this.onAudioLevel(rms);
+                    }
+                };
+
+                this.sourceNode.connect(this.processorNode);
+                this.processorNode.connect(this.audioContext.destination);
+
+                return true;
+            } finally {
+                this._pipelineInitPromise = null;
+            }
+        })();
+
+        return this._pipelineInitPromise;
+    }
+
+    /**
+     * Start continuous background microphone streaming (for wake-word detection).
+     * @param {object} [options]
+     * @param {Function} [options.onAudioFrame]
+     */
+    async startContinuousCapture({ onAudioFrame = null } = {}) {
+        if (onAudioFrame) {
+            this.onAudioFrame = onAudioFrame;
+        }
+        this.isStreaming = true;
+        try {
+            await this._ensureCapturePipeline();
+            return true;
+        } catch (err) {
+            this.cleanup();
+            throw err;
+        }
+    }
+
+    /**
+     * Stop continuous background streaming.
+     */
+    stopContinuousCapture() {
+        this.isStreaming = false;
+        this.onAudioFrame = null;
+        if (!this.isRecording) {
+            this.cleanup();
+        }
+    }
+
+    /**
+     * Start recording an utterance (Push-to-talk / speech intake).
+     */
+    async start() {
+        if (this.isRecording) return true;
 
         this.audioChunks = [];
         this.totalSamples = 0;
 
         try {
-            const stream = await this.globalScope.navigator.mediaDevices.getUserMedia({
-                audio: {
-                    channelCount: 1,
-                    sampleRate: this.sampleRate,
-                    echoCancellation: true,
-                    noiseSuppression: true
-                }
-            });
-
-            this.mediaStream = stream;
-            const AudioCtx = this.globalScope.AudioContext || this.globalScope.webkitAudioContext;
-            this.audioContext = new AudioCtx({ sampleRate: this.sampleRate });
-            this.sourceNode = this.audioContext.createMediaStreamSource(stream);
-
-            // Use ScriptProcessorNode or AudioWorklet for raw PCM sample capture
-            const bufferSize = 4096;
-            this.processorNode = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
-
-            this.processorNode.onaudioprocess = (e) => {
-                if (!this.isRecording) return;
-                const channelData = e.inputBuffer.getChannelData(0);
-                const chunk = new Float32Array(channelData.length);
-                chunk.set(channelData);
-                this.audioChunks.push(chunk);
-                this.totalSamples += chunk.length;
-
-                if (typeof this.onAudioLevel === 'function') {
-                    let sum = 0;
-                    for (let i = 0; i < chunk.length; i++) {
-                        sum += chunk[i] * chunk[i];
-                    }
-                    const rms = Math.sqrt(sum / chunk.length);
-                    this.onAudioLevel(rms);
-                }
-            };
-
-            this.sourceNode.connect(this.processorNode);
-            this.processorNode.connect(this.audioContext.destination);
-
+            await this._ensureCapturePipeline();
             this.isRecording = true;
             return true;
         } catch (err) {
@@ -174,6 +264,9 @@ class AudioRecorder {
         }
     }
 
+    /**
+     * Stop utterance recording and return 16kHz mono WAV buffer.
+     */
     stop() {
         if (!this.isRecording) {
             return null;
@@ -188,7 +281,13 @@ class AudioRecorder {
             offset += chunk.length;
         }
 
-        this.cleanup();
+        this.audioChunks = [];
+        this.totalSamples = 0;
+
+        // Clean up pipeline if not continuously streaming
+        if (!this.isStreaming) {
+            this.cleanup();
+        }
 
         // Encode to 16kHz 16-bit mono WAV
         const wavBuffer = encodeWavPcm16(flattened, this.sampleRate);
@@ -199,11 +298,17 @@ class AudioRecorder {
         this.isRecording = false;
         this.audioChunks = [];
         this.totalSamples = 0;
-        this.cleanup();
+        if (!this.isStreaming) {
+            this.cleanup();
+        }
     }
 
     cleanup() {
         this.isRecording = false;
+        this.isStreaming = false;
+        this.audioChunks = [];
+        this.totalSamples = 0;
+
         if (this.processorNode) {
             try { this.processorNode.disconnect(); } catch (_) {}
             this.processorNode = null;

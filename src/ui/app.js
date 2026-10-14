@@ -56,6 +56,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const settingVoiceRate = document.getElementById('settingVoiceRate');
     const voicePitchVal = document.getElementById('voicePitchVal');
     const voiceRateVal = document.getElementById('voiceRateVal');
+    const settingWakeWordEnabled = document.getElementById('settingWakeWordEnabled');
+    const wakeWordOptionsGroup = document.getElementById('wakeWordOptionsGroup');
+    const settingWakeWordSensitivity = document.getElementById('settingWakeWordSensitivity');
+    const wakeWordSensitivityVal = document.getElementById('wakeWordSensitivityVal');
 
     // Memory & Continuity Elements
     const hudMemoryBtn = document.getElementById('hudMemoryBtn');
@@ -95,6 +99,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (typeof createVoiceController === 'function') {
         voiceController = createVoiceController({
             globalScope: window,
+            onWakeWord: (result) => {
+                showBubble(`Heard "${result.keyword}"! How can I help?`);
+                appendFeedEntry('Voice Activation', `Wake phrase detected: "${result.keyword}" (${(result.confidence * 100).toFixed(0)}% confidence).`, 'normal', 'Wake-Word');
+                renderer.setVisualState({ emotion: 'listening' });
+            },
             onStateChange: ({ voiceState, text }) => {
                 if (voiceState === 'listening') {
                     if (micBtn) {
@@ -821,6 +830,12 @@ document.addEventListener('DOMContentLoaded', () => {
         window.lucyIpc.getVoiceConfig().then((res) => {
             if (res && res.config && voiceController) {
                 voiceController.setVoiceConfig(res.config);
+                if (res.config.wakeWordEnabled !== undefined) {
+                    voiceController.setWakeWordEnabled(res.config.wakeWordEnabled);
+                }
+                if (res.config.wakeWordSensitivity !== undefined && voiceController.wakeWordEngine) {
+                    voiceController.wakeWordEngine.setSensitivity(res.config.wakeWordSensitivity);
+                }
             }
         }).catch(() => {});
     }
@@ -849,6 +864,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     if (settingTtsEnabled) {
                         settingTtsEnabled.checked = vc.ttsEnabled !== false;
+                    }
+                    if (settingWakeWordEnabled) {
+                        settingWakeWordEnabled.checked = vc.wakeWordEnabled === true;
+                        if (wakeWordOptionsGroup) {
+                            wakeWordOptionsGroup.style.display = settingWakeWordEnabled.checked ? 'flex' : 'none';
+                        }
+                    }
+                    if (settingWakeWordSensitivity) {
+                        settingWakeWordSensitivity.value = vc.wakeWordSensitivity ?? 0.5;
+                        if (wakeWordSensitivityVal) {
+                            wakeWordSensitivityVal.textContent = Number(vc.wakeWordSensitivity ?? 0.5).toFixed(2);
+                        }
                     }
                     populateVoiceOptions(vc.voiceName || vc.preferredVoiceName || '');
                 }
@@ -901,7 +928,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 rate: parseFloat(settingVoiceRate.value) || 1.02,
                 voiceName: settingVoiceSelect ? settingVoiceSelect.value : '',
                 preferredVoiceName: settingVoiceSelect ? settingVoiceSelect.value : '',
-                ttsEnabled: settingTtsEnabled ? settingTtsEnabled.checked : true
+                ttsEnabled: settingTtsEnabled ? settingTtsEnabled.checked : true,
+                wakeWordEnabled: settingWakeWordEnabled ? settingWakeWordEnabled.checked : false,
+                wakeWordSensitivity: settingWakeWordSensitivity ? parseFloat(settingWakeWordSensitivity.value) || 0.5 : 0.5
             };
             if (window.lucyIpc && typeof window.lucyIpc.setVoiceConfig === 'function') {
                 const voiceRes = await window.lucyIpc.setVoiceConfig(voicePayload);
@@ -913,6 +942,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             if (voiceController && typeof voiceController.setVoiceConfig === 'function') {
                 voiceController.setVoiceConfig(voicePayload);
+                if (typeof voiceController.setWakeWordEnabled === 'function') {
+                    voiceController.setWakeWordEnabled(voicePayload.wakeWordEnabled);
+                    if (voiceController.wakeWordEngine) {
+                        voiceController.wakeWordEngine.setSensitivity(voicePayload.wakeWordSensitivity);
+                    }
+                }
             }
             appendFeedEntry('Voice Updated', `Voice set to pitch ${voicePayload.pitch}, rate ${voicePayload.rate}.`, 'normal', 'Audio Config');
         }
@@ -921,6 +956,19 @@ document.addEventListener('DOMContentLoaded', () => {
         showBubble('Settings updated safely!');
         renderer.setVisualState({ emotion: 'happy' });
     });
+
+    if (settingWakeWordEnabled) {
+        settingWakeWordEnabled.addEventListener('change', () => {
+            if (wakeWordOptionsGroup) {
+                wakeWordOptionsGroup.style.display = settingWakeWordEnabled.checked ? 'flex' : 'none';
+            }
+        });
+    }
+    if (settingWakeWordSensitivity && wakeWordSensitivityVal) {
+        settingWakeWordSensitivity.addEventListener('input', () => {
+            wakeWordSensitivityVal.textContent = Number(settingWakeWordSensitivity.value).toFixed(2);
+        });
+    }
 
     clearKeyBtn.addEventListener('click', async () => {
         const provider = settingProvider.value;
