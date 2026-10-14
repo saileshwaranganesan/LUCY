@@ -25,7 +25,8 @@ test('Production Packaging & Installer Verification Suite', async (t) => {
         assert.ok(content.includes('perMachine: false'), 'Must specify per-user non-admin installation');
         assert.ok(content.includes('deleteAppDataOnUninstall: false'), 'Must protect user data on uninstall');
         assert.ok(content.includes('LucyUiaWorker.exe'), 'Must unpack LucyUiaWorker.exe from asar');
-        assert.ok(content.includes('src/companion/assets'), 'Must unpack companion model assets');
+        assert.ok(!content.includes('src/companion/assets'), 'Obsolete companion dragon assets must not be unpacked');
+        assert.ok(content.includes('playwright-core'), 'Must unpack playwright-core runtime');
     });
 
     await t.test('Production installer binary exists with valid size and checksum', () => {

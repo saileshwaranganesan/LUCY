@@ -23,7 +23,7 @@ This project incorporates architectural patterns, evaluation methodologies, and 
 
 5. **Quaternius — Low-Poly Animated Monsters** (https://quaternius.com / https://quaternius.itch.io/lowpoly-animated-monsters)
    - License: Creative Commons Zero v1.0 Universal (CC0 1.0 - Public Domain Dedication)
-   - Asset reused: `dragon.glb` (Low-poly animated fantasy dragon, rigged with animations, converted for web glTF usage).
+   - Historical Asset: `dragon.glb` (deprecated and removed; replaced by canonical Celestial Familiar Fairy companion).
    - Provenance reference: `assets/vendor/quaternius_monsters/` in `cairnfall-public` (CREDITS.md).
 
 6. **Three.js** (https://github.com/mrdoob/three.js)

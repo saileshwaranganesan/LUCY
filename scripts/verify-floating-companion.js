@@ -160,26 +160,25 @@ async function runVerification() {
         await companionClient.send('Runtime.enable');
         await companionClient.send('Page.enable');
 
-        // 6. Inspect 3D WebGL scene and model
-        console.log('\n5. Inspecting 3D WebGL Scene & Quaternius Dragon Model...');
-        // Wait up to 5s for model load to settle
+        // 6. Inspect Celestial Fairy Familiar
+        console.log('\n5. Inspecting Celestial Familiar Fairy & Particle Systems...');
         let isModelReady = false;
         let modelStats = null;
         for (let i = 0; i < 20; i++) {
             await sleep(300);
             modelStats = await companionClient.eval(`
                 (() => {
-                    const app = window.companionApp;
-                    if (!app) return { ready: false };
+                    const renderer = window.fairyRenderer || window.companionRenderer;
+                    const canvas = document.getElementById('fairyCanvas');
+                    if (!renderer) return { ready: false };
                     return {
-                        ready: Boolean(app.model && app.scene),
-                        hasMixer: Boolean(app.mixer),
-                        activeAnimation: app.activeAction ? app.activeAction.getClip().name : 'none',
-                        hasParticles: Boolean(app.particles),
-                        usingFallback: Boolean(app.usingFallback),
+                        ready: Boolean(renderer.running && canvas),
+                        running: Boolean(renderer.running),
+                        emotion: renderer.state.emotion,
+                        orbitParticles: renderer.orbitParticles ? renderer.orbitParticles.length : 0,
+                        burstParticles: renderer.burstParticles ? renderer.burstParticles.length : 0,
                         speechText: document.getElementById('speechBubble')?.textContent?.trim() || '',
-                        statusText: document.getElementById('statusText')?.textContent?.trim() || '',
-                        lightIntensity: app.moodLight ? app.moodLight.intensity : 0
+                        statusText: document.getElementById('statusText')?.textContent?.trim() || ''
                     };
                 })()
             `);
@@ -190,57 +189,43 @@ async function runVerification() {
         }
 
         const modelLoadDuration = Date.now() - clickTime;
-        console.log(`   Model load status: ${isModelReady ? 'SUCCESS' : 'FAILED'}`);
+        console.log(`   Fairy load status: ${isModelReady ? 'SUCCESS' : 'FAILED'}`);
         console.log(`   Initial load & render duration: ${modelLoadDuration} ms`);
-        console.log(`   Active animation clip: "${modelStats.activeAnimation}" (Skeletal Idle)`);
-        console.log(`   Animation Mixer active: ${modelStats.hasMixer}`);
-        console.log(`   Orbital particles active: ${modelStats.hasParticles}`);
-        console.log(`   2D Fallback active: ${modelStats.usingFallback} (Using primary 3D WebGL)`);
+        console.log(`   Active emotion: "${modelStats.emotion}"`);
+        console.log(`   Renderer running: ${modelStats.running}`);
+        console.log(`   Orbital stardust particles: ${modelStats.orbitParticles}`);
         console.log(`   Dialogue Bubble: "${modelStats.speechText}"`);
         console.log(`   Status Pill: "${modelStats.statusText}"`);
 
-        // 7. Test Companion Physical Interaction (Pet / Click)
-        console.log('\n6. Testing physical pet interaction on floating companion...');
-        await companionClient.eval('window.companionApp.playPetFlourish()');
+        // 7. Test Companion Physical Interaction (Pet Button)
+        console.log('\n6. Testing physical pet interaction on floating fairy...');
+        await companionClient.eval('document.getElementById("petBtn")?.click()');
         await sleep(600);
 
         const petState = await companionClient.eval(`
             (() => {
+                const renderer = window.fairyRenderer || window.companionRenderer;
                 return {
                     speechText: document.getElementById('speechBubble')?.textContent?.trim() || '',
                     statusText: document.getElementById('statusText')?.textContent?.trim() || '',
-                    emotion: window.companionApp.currentEmotion
+                    emotion: renderer ? renderer.state.emotion : ''
                 };
             })()
         `);
         console.log(`   Pet reaction emotion: "${petState.emotion}"`);
         console.log(`   Speech bubble response: "${petState.speechText}"`);
 
-        // 8. Test Coordinator State Synchronization
-        console.log('\n7. Testing coordinator state event synchronization...');
-        await companionClient.eval('window.companionApp.setEmotion("listening", "Listening attentively...")');
-        await sleep(300);
-        let syncStatus = await companionClient.eval('document.getElementById("statusText")?.textContent');
-        console.log(`   Listening state status pill: "${syncStatus}" (LISTENING)`);
-
-        await companionClient.eval('window.companionApp.setEmotion("working", "Executing desktop action...")');
-        await sleep(300);
-        syncStatus = await companionClient.eval('document.getElementById("statusText")?.textContent');
-        console.log(`   Working state status pill: "${syncStatus}" (WORKING)`);
-
-        await companionClient.eval('window.companionApp.setEmotion("speaking", "Speaking response...")');
-        await sleep(300);
-        syncStatus = await companionClient.eval('document.getElementById("statusText")?.textContent');
-        const isSpeaking = await companionClient.eval('window.companionApp.isSpeaking');
-        console.log(`   Speaking state status pill: "${syncStatus}" (SPEAKING), isSpeaking: ${isSpeaking}`);
-
-        await companionClient.eval('window.companionApp.setEmotion("happy", "Task completed with sparkle! ✨")');
-        await sleep(300);
+        // 8. Test Magic Sparkle Interaction
+        console.log('\n7. Testing magic sparkle interaction...');
+        await companionClient.eval('document.getElementById("magicBtn")?.click()');
+        await sleep(600);
+        const magicEmotion = await companionClient.eval('(window.fairyRenderer || window.companionRenderer)?.state?.emotion');
+        console.log(`   Magic reaction emotion: "${magicEmotion}"`);
 
         // 9. Capture Screenshots
         console.log('\n8. Capturing visual evidence artifacts...');
         const compScreenshot = await companionClient.captureScreenshot();
-        const compScreenshotPath = path.join(ARTIFACTS_DIR, 'lucy_3d_floating_companion.png');
+        const compScreenshotPath = path.join(ARTIFACTS_DIR, 'lucy_floating_fairy_companion.png');
         fs.writeFileSync(compScreenshotPath, compScreenshot);
         console.log(`   Saved companion window screenshot: ${compScreenshotPath} (${compScreenshot.length} bytes)`);
 
@@ -249,19 +234,19 @@ async function runVerification() {
         fs.writeFileSync(mainScreenshotPath, mainScreenshot);
         console.log(`   Saved main window screenshot: ${mainScreenshotPath} (${mainScreenshot.length} bytes)`);
 
-        // 10. Test Window Hide / Show Toggling
-        console.log('\n9. Testing window toggle hide/show behavior...');
-        await companionClient.eval('document.getElementById("dockBtn").click()');
-        await sleep(800);
+        // 10. Test Window Return / Docking behavior
+        console.log('\n9. Testing window dock/return behavior...');
+        await companionClient.eval('document.getElementById("returnBtn")?.click()');
+        await sleep(1000);
 
         const dockedBtnText = await mainClient.eval('document.getElementById("toggleFloatingBtn")?.textContent');
-        console.log(`   After closing companion dock button, sidebar button: "${dockedBtnText}" (Float 3D Pet)`);
+        console.log(`   After clicking return button, sidebar button: "${dockedBtnText}"`);
 
         // Re-open
         await mainClient.eval('document.getElementById("toggleFloatingBtn").click()');
-        await sleep(800);
+        await sleep(1000);
         const reopenedBtnText = await mainClient.eval('document.getElementById("toggleFloatingBtn")?.textContent');
-        console.log(`   After re-clicking float button, sidebar button: "${reopenedBtnText}" (Dock 2D Pet)`);
+        console.log(`   After re-clicking float button, sidebar button: "${reopenedBtnText}"`);
 
         // Performance measurements
         const totalDuration = Date.now() - startTime;

@@ -21,6 +21,7 @@ class FloatingCompanionWindow {
         this.mainWindow = options.mainWindow || null;
         this.companionBridge = options.companionBridge || null;
         this.coordinator = options.coordinator || null;
+        this.browserWindowConstructor = options.BrowserWindow || BrowserWindow;
         this.window = null;
         this.isShown = false;
         this.isPinned = true;
@@ -96,7 +97,8 @@ class FloatingCompanionWindow {
             defaultY = this.lastPosition ? this.lastPosition.y : Math.max(20, screenHeight - winHeight - 30);
         } catch (_) {}
 
-        this.window = new BrowserWindow({
+        const WinCtor = this.browserWindowConstructor || BrowserWindow;
+        this.window = new WinCtor({
             width: 320,
             height: 380,
             x: defaultX,
@@ -327,6 +329,7 @@ class FloatingCompanionWindow {
             this.window.destroy();
             this.window = null;
         }
+        this.isShown = false;
     }
 }
 

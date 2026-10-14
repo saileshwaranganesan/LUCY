@@ -135,6 +135,9 @@ function createWindow() {
 
     mainWindow.on('closed', () => {
         mainWindow = null;
+        if (floatingCompanion) {
+            try { floatingCompanion.destroy(); } catch (_) {}
+        }
         for (const [auditId, resolve] of pendingPermissionCallbacks.entries()) {
             try { resolve(false); } catch (_) {}
         }

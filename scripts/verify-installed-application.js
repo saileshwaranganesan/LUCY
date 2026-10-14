@@ -108,6 +108,7 @@ async function runInstalledAppVerification() {
     // Verify resources
     const resDir = path.join(process.env.LOCALAPPDATA, 'Programs', 'LUCY', 'resources');
     const uiaWorkerPath = path.join(resDir, 'native-uia', 'LucyUiaWorker.exe');
+    const whisperBinPath = path.join(resDir, 'bin', 'whisper-cli.exe');
     const dragonModelPath = path.join(resDir, 'app.asar.unpacked', 'src', 'companion', 'assets', 'dragon.glb');
 
     console.log('\n[Step 2] Validating required runtime resources in installed package:');
@@ -116,10 +117,14 @@ async function runInstalledAppVerification() {
     }
     console.log(`  ✓ LucyUiaWorker.exe present in resources/native-uia (${fs.statSync(uiaWorkerPath).size} bytes)`);
 
-    if (!fs.existsSync(dragonModelPath)) {
-        throw new Error(`dragon.glb missing in app.asar.unpacked: ${dragonModelPath}`);
+    if (fs.existsSync(whisperBinPath)) {
+        console.log(`  ✓ whisper-cli.exe present in resources/bin (${fs.statSync(whisperBinPath).size} bytes)`);
     }
-    console.log(`  ✓ dragon.glb 3D mesh present in app.asar.unpacked (${fs.statSync(dragonModelPath).size} bytes)`);
+
+    if (fs.existsSync(dragonModelPath)) {
+        throw new Error(`Obsolete dragon.glb still present in installed package: ${dragonModelPath}`);
+    }
+    console.log('  ✓ Confirmed obsolete dragon.glb is NOT present in runtime assets');
 
     // Launch installed app
     console.log('\n[Step 3] Launching installed application with remote debugging port 9223...');
@@ -230,31 +235,31 @@ async function runInstalledAppVerification() {
         await companionClient.send('Runtime.enable');
         await companionClient.send('Log.enable').catch(() => {});
 
-        // Check if model loaded and WebGL scene is active
-        console.log('  Polling for 3D dragon mesh loading inside companion window...');
+        // Check if Celestial Fairy Familiar loaded and active
+        console.log('  Polling for Celestial Fairy Familiar inside companion window...');
         let companionStatus = null;
         for (let i = 0; i < 30; i++) {
             companionStatus = await companionClient.eval(`(() => {
-                const app = window.companionApp || window.__companionApp;
+                const renderer = window.fairyRenderer || window.companionRenderer;
+                const canvas = document.getElementById('fairyCanvas');
                 return {
-                    hasThreeCanvas: Boolean(document.getElementById('threeCanvas')),
-                    hasFallbackCanvas: Boolean(document.getElementById('fallbackCanvas')),
-                    modelLoaded: Boolean(app && app.model),
-                    animationsCount: app && app.animations ? Object.keys(app.animations).length : 0,
-                    usingFallback: Boolean(app && app.usingFallback),
+                    hasFairyCanvas: Boolean(canvas),
+                    rendererRunning: Boolean(renderer && renderer.running),
+                    emotion: renderer ? renderer.state.emotion : 'none',
+                    orbitParticles: renderer && renderer.orbitParticles ? renderer.orbitParticles.length : 0,
                     statusText: document.getElementById('statusText') ? document.getElementById('statusText').textContent : ''
                 };
             })()`);
 
-            if (companionStatus.modelLoaded || companionStatus.usingFallback) break;
+            if (companionStatus.rendererRunning) break;
             await sleep(500);
         }
 
-        console.log('  Companion 3D Status:', JSON.stringify(companionStatus, null, 2));
-        if (!companionStatus.modelLoaded && !companionStatus.usingFallback) {
-            throw new Error('Neither 3D model nor fallback loaded in companion window');
+        console.log('  Companion Fairy Status:', JSON.stringify(companionStatus, null, 2));
+        if (!companionStatus.rendererRunning) {
+            throw new Error('CelestialFamiliarRenderer failed to start in companion window');
         }
-        console.log('  ✓ 3D Fantasy Dragon loaded and rendering WebGL in packaged application.');
+        console.log('  ✓ Celestial Fairy Familiar loaded and rendering in packaged application.');
 
         // Trigger companion pet flourish
         const petResult = await companionClient.eval('window.companionIpc.petCompanion()');

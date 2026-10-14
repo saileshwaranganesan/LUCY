@@ -31,7 +31,6 @@ extraResources:
 asar: true
 asarUnpack:
   - "src/tools/native-uia/LucyUiaWorker.exe"
-  - "src/companion/assets/**"
   - "node_modules/playwright-core/**/*"
   - "node_modules/sql.js/dist/sql-wasm.wasm"
 
