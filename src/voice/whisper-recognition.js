@@ -145,11 +145,12 @@ class WhisperOfflineRecognitionEngine {
 
         try {
             const isWindowsBatch = process.platform === 'win32' && /\.(cmd|bat)$/i.test(this.binaryPath);
+            const spawnCommand = isWindowsBatch ? (process.env.ComSpec || 'cmd.exe') : this.binaryPath;
+            const spawnArgs = isWindowsBatch ? ['/d', '/s', '/c', this.binaryPath, ...args] : args;
             const transcript = await new Promise((resolve, reject) => {
-                const proc = spawn(this.binaryPath, args, {
+                const proc = spawn(spawnCommand, spawnArgs, {
                     stdio: ['ignore', 'pipe', 'pipe'],
-                    windowsHide: true,
-                    shell: isWindowsBatch
+                    windowsHide: true
                 });
 
                 let stdout = '';

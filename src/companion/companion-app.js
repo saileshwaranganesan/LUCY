@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const renderer = new CelestialFamiliarRenderer(fairyCanvas);
     renderer.start();
     window.fairyRenderer = renderer;
+    window.companionRenderer = renderer;
 
     // Show initial welcoming speech bubble
     showBubble('Sparkle! ✨ I am right here beside you.');

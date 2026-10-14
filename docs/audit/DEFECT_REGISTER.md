@@ -151,8 +151,8 @@
   - Automated test suite `tests/packaging/release-trust-verification.test.js` passes 6/6 tests.
   - Verified detection of tampered bytes (`hash_mismatch`) and missing files (`missing_file`).
   - Production artifacts verified:
-    - `L.U.C.Y-Setup-0.1.0-win-x64.exe`: `c4e32e0dd1fbda82e5e95f4831552f4b5e9a14edbb6766ec3a846106e382737c`
-    - `L.U.C.Y-Portable-0.1.0-win-x64.exe`: `3e0112d017acf50ed563de7464ed36fe836169ca0bf87fa60f5a5f1356d1ada8`
+    - `L.U.C.Y-Setup-0.1.0-win-x64.exe`: `79d0df160154e59376209c11cfd08dec401bcc17988ebbe3eb4b9dfbe1551a7f`
+    - `L.U.C.Y-Portable-0.1.0-win-x64.exe`: `b0734214d26116562b970a90310f9b3c8afb715536bc3ff98efef7078278662d`
 
 ---
 
