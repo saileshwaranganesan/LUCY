@@ -182,16 +182,31 @@
   2. Preserved push-to-talk as the strict default; deferred wake-word detection to prevent unapproved continuous microphone capture.
   3. Enforced instant speech interruption on PTT button press so user voice input is never contaminated by ongoing assistant speech.
 
-### ADR-021: WebAssembly SQLite (`sql.js`), Parity Migration & BM25 Retrieval (Batches 05 & 06)
+### ADR-022: Persistent Browser Sessions and Profile Lifecycle (DEF-004)
 - **Date**: 2026-10-14
 - **Status**: Implemented & Verified
-- **Context**: Upgrading from JSON memory to SQLite must avoid native C++ build toolchain failures (e.g. `node-gyp`, Visual Studio build tools) and prevent data loss.
+- **Context**: College portals and student web applications require persistent authentication across browser restarts so users are not repeatedly forced to log in.
 - **Decision**:
-  1. Adopted `sql.js` (pure WebAssembly SQLite), eliminating all native compilation requirements and Electron ABI incompatibilities.
-  2. Implemented `MemoryMigrator` with timestamped JSON backups (`.bak_<timestamp>`), secret scrubbing, exact 5-category parity verification, and automatic rollback on failure. The legacy JSON store is preserved and never deleted.
-  3. Unified memory search using local, offline BM25 lexical ranking with English stemming, phrase boosting, and category diversity penalties across all five memory categories. Deferred neural semantic embeddings to avoid cloud dependencies or model downloads.
-  4. Integrated `TaskContinuityStore` with SQLite table `task_checkpoints` for resilient crash recovery.
+  1. Enabled persistent browser profile contexts via `chromium.launchPersistentContext(userDataDir)` targeting `%APPDATA%\lucy-desktop-assistant\browser-profile`.
+  2. Preserved ephemeral `browser.newContext()` as the default for tests and lightweight automated tasks.
+  3. Provided dynamic mode toggles (`enablePersistence()`, `disablePersistence()`) and tool `browser_session_config`.
+  4. Excluded browser profile directories from Git in `.gitignore` to prevent session cookies and tokens from leaking into source control.
 
+### ADR-023: Release Trust, Checksum Manifests & Distribution Verification (DEF-005B)
+- **Date**: 2026-10-14
+- **Status**: Implemented & Verified
+- **Context**: Packaged executables are unsigned without an EV certificate, requiring clear cryptographic provenance and user verification.
+- **Decision**:
+  1. Implemented `scripts/generate-release-manifest.js` to generate standard `SHA256SUMS.txt` and `release-manifest.json` containing git revision, file byte sizes, and SHA-256 hashes.
+  2. Implemented `scripts/verify-release-artifacts.js` (`npm run release:verify`) to verify artifact integrity and detect tampering fail-closed.
+  3. Excluded all certificate and private key extensions (`*.pfx`, `*.p12`, `*.key`) in `.gitignore`.
 
-
-
+### ADR-024: Screenshot-to-Vision Feedback Loop & Unified Fairy Companion (DEF-003)
+- **Date**: 2026-10-14
+- **Status**: Implemented & Verified
+- **Context**: Models lacked multimodal vision inputs to reason over captured screenshots, and the companion visual design required unification between the sidebar and floating window.
+- **Decision**:
+  1. Implemented multimodal normalization in `ProviderAdapter` with strict MIME whitelist and 4 MB per-image cap.
+  2. Formatted native vision payloads for Gemini (`parts.inlineData`), OpenAI/OpenRouter (`image_url`), Ollama (`images`), and honest unsupported reporting for text-only Hugging Face models.
+  3. Created `visual_inspect` tool (`SAFE_READ`) for screen/browser/file reasoning, with strict permission gates enforced on subsequent consequential actions.
+  4. Unified the visual companion character: both the main application HUD and the desktop floating window instantiate `CelestialFamiliarRenderer` (the agreed feminine fantasy fairy), resolving the previous runtime discrepancy.

@@ -12,10 +12,10 @@
 | :--- | :--- | :---: | :--- | :---: | :---: |
 | **DEF-001** | Task Planner Regex Precedence & Literal Content Extraction | **High (P1)** | Natural Language Planning & Execution | High (100%) | **Resolved (Workstream 1B — `tests/core/def-001-reproduction.test.js`)** |
 | **DEF-002** | Absence of Native Tool/Function Calling Schemas | **High (P1)** | Model-to-Tool Dispatch & Reliability | High (100%) | **Resolved (Workstream 1B — `tests/core/def-002-structured-tool-calling.test.js`)** |
-| **DEF-003** | Missing Screenshot-to-Vision Multimodal Feedback Loop | **Medium (P2)** | Desktop & Web Visual Verification | High (100%) | Confirmed: Models accept text only, no image inputs |
+| **DEF-003** | Missing Screenshot-to-Vision Multimodal Feedback Loop | **Medium (P2)** | Desktop & Web Visual Verification | High (100%) | **Resolved (`tests/core/def-003-vision-loop.test.js`)** |
 | **DEF-005A** | Workspace Missing Version Control (No Git Repository) | **Medium (P2)** | Configuration & Change Safety | High (100%) | **Resolved (Workstream 1A — commit `16d88a86`)** |
 | **DEF-005B** | Unsigned Windows Executables & Release Trust Verification | **Low (P3)** | Distribution & SmartScreen Trust | High (100%) | **Resolved (`scripts/verify-release-artifacts.js`, `tests/packaging/release-trust-verification.test.js`)** |
-| **DEF-006** | Orphaned Background Packaged App Process (`LUCY.exe`) | **Low (P3)** | Process Contention & Port Safety | High (100%) | Confirmed via PowerShell `Get-Process` |
+| **DEF-006** | Orphaned Background Packaged App Process (`LUCY.exe`) | **Low (P3)** | Process Contention & Port Safety | High (100%) | **Mitigated (Single-instance lock & procedural termination)** |
 
 ---
 
@@ -72,27 +72,22 @@
 ### DEF-003: Missing Screenshot-to-Vision Multimodal Feedback Loop
 
 - **Severity:** Medium (P2)
-- **Component:** `src/providers/provider-adapter.js` (lines 126–260), `src/tools/desktop-app-tools.js`
+- **Status:** **Resolved (`tests/core/def-003-vision-loop.test.js`)**
+- **Component:** `src/providers/provider-adapter.js`, `src/tools/visual-tools.js`, `src/core/task-planner.js`, `src/core/task-coordinator.js`, `src/tools/browser-manager.js`, `src/tools/desktop-app-tools.js`
 - **Requirement Linked:** REQ-012, REQ-013
 - **Description:**
-  Both `desktop_take_screenshot` and `browser_screenshot` successfully capture visual PNG buffers and write them to disk. However, `ProviderAdapter.complete()` only accepts an array of `{ role: string, content: string }`. There is zero support for passing base64 images (`inlineData` in Gemini or `image_url` in OpenAI format).
-  As a result, L.U.C.Y. cannot "see" the screen. She can capture an image, but cannot ask the model: *"Where is the Submit button in this screenshot?"* or *"Did the application display an error dialog?"*.
-- **Reproduction Steps:**
-  1. Inspect `_callGemini` lines 218–220:
-     ```javascript
-     parts: [{ text: msg.content }]
-     ```
-  2. Inspect `_callOpenAiCompatible` lines 280–285:
-     ```javascript
-     content: msg.content
-     ```
-  3. No property exists for image parts or binary buffers.
-- **Expected Behavior:**
-  The provider layer should support multimodal messages with base64 image parts to enable visual grounding and post-action verification.
-- **Actual Behavior:**
-  Screenshots are saved as local artifacts without any visual intelligence loop.
-- **Smallest Safe Correction:**
-  Extend `ProviderAdapter` message normalization to support `{ role, content, images: [{ mimeType, data }] }`, formatting `inlineData` for Gemini and `image_url` for OpenAI-compatible endpoints.
+  Both `desktop_take_screenshot` and `browser_screenshot` previously captured visual PNG buffers and wrote them to disk without forwarding base64 images into the model reasoning pipeline.
+- **Remediation Implementation:**
+  1. Implemented multimodal message normalization (`_normalizeMultimodalMessage`) in `ProviderAdapter`, parsing OpenAI content arrays, strings, and raw image arrays into uniform `{ mimeType, base64, dataUri }` structures.
+  2. Enforced strict MIME allowlist (`image/png`, `image/jpeg`, `image/webp`, `image/gif`) and 4 MB per-image payload cap fail-closed before network dispatch.
+  3. Added native vision payload formatting for Google Gemini (`parts: [{ inlineData: { mimeType, data: base64 } }, { text }]`), OpenAI/OpenRouter (`content: [{ type: 'image_url' }, { type: 'text' }]`), Ollama (`images: [base64]`), and honest unsupported reporting for text-only Hugging Face models.
+  4. Upgraded `browserManager.screenshot()` and `desktopManager.takeScreenshot()` to return base64 and data URIs.
+  5. Implemented central `visual_inspect` tool (`SAFE_READ`) resolving images from base64, files, or dynamic window/browser captures, executing through the configured vision provider.
+  6. Enhanced `TaskPlanner` with intent recognition for visual understanding, compound screenshot + inspect tasks, and visual action chaining.
+  7. Enforced interactive permission gates on subsequent consequential actions while allowing visual inspections to execute safely.
+- **Verification Evidence:**
+  - Automated test suite `tests/core/def-003-vision-loop.test.js` passes 10/10 tests covering normalization, validation, provider encoding, tool execution, intent decomposition, and permission gates.
+  - Full application test suite `npm test` passes 281/281 tests with 0 failures.
 
 ---
 
@@ -155,8 +150,8 @@
   - Automated test suite `tests/packaging/release-trust-verification.test.js` passes 6/6 tests.
   - Verified detection of tampered bytes (`hash_mismatch`) and missing files (`missing_file`).
   - Production artifacts verified:
-    - `L.U.C.Y-Setup-0.1.0-win-x64.exe`: `3fa5ed3ef606969d98bf83725c329dfee5c91147db535d42ba5f07810a8b6744`
-    - `L.U.C.Y-Portable-0.1.0-win-x64.exe`: `29f5a22a0431f22733cbd7e25141c123cac8202b04d1247b81e2cb0aee01b7e8`
+    - `L.U.C.Y-Setup-0.1.0-win-x64.exe`: `d5b1cd9690ee8b39eae084945e2e8ac0d9ef1f0a2375635f46defc2221f2f059`
+    - `L.U.C.Y-Portable-0.1.0-win-x64.exe`: `3d7650d089f49d62b72ad255a9d8741e5793740251a999e7522eca6028ca481c`
 
 ---
 
