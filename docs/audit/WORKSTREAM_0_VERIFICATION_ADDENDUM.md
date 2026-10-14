@@ -334,3 +334,59 @@ Workstream 1 is **authorized to proceed** subject to strict sequencing:
    Add environment-based isolation guards to `MemoryStore`, `TaskContinuityStore`, and `SqliteMemoryAdapter` so that no future test can write to `data/memory/` under any circumstance.
 4. **Step 4: Execute Workstream 1 Implementation Tasks:**  
    Proceed to TaskPlanner compound intent remediation ([`DEF-001`](file:///c:/Users/admin/Desktop/LUCY/docs/audit/DEFECT_REGISTER.md#L26) / `BL-002`).
+
+---
+
+## 9. Workstream 1A Execution Evidence: Safe Baseline & Test Isolation Completed
+
+**Execution Date:** 2026-10-14  
+**Workstream:** 1A (Safe Baseline and Test Isolation)  
+**Status:** FULLY VERIFIED & COMPLETE  
+
+### 9.1 Git Baseline Establishment
+- **Initial State:** Git confirmed uninitialized (`fatal: not a git repository`).
+- **Hardened `.gitignore`:** Added root-anchored rules (`/data/`, `/dist-release/`, `/scratch/`, `/in.txt`, `*.tmp_*`, `*.bak_*`, `*.sqlite*`). Root anchoring `/data/` preserved required vendor assets in `src/companion/vendor/three/addons/tsl/lighting/data/`.
+- **Baseline Commit:** `16d88a86c1e5b0c678c285687bd8ddb3d922d8fd` (`chore: establish baseline repository tracking with hardened .gitignore`).
+- **Staged File Count:** 623 files (all production code, tests, documentation, vendor assets). Zero sensitive files or user data staged. Resolves **DEF-005**.
+
+### 9.2 Reconciliation of Temporary Files (165 vs 166 Explained)
+The previous audit observed a discrepancy between the 166 total count and the itemized count of 154 SQLite and 11 Checkpoint files (165).  
+Forensic inspection of the exact filesystem records confirmed:
+- `data/memory/lucy-memory.sqlite.tmp_*`: **154 files**
+- `data/memory/task-checkpoints.json.tmp_*`: **11 files**
+- `data/memory/memory-store.json.tmp_1791921415737`: **1 file** (218,784 bytes)
+- **Sum Total:** 154 + 11 + 1 = **166 files** (12,247,953 bytes).  
+The discrepancy was an inadvertent omission of the single `memory-store.json.tmp_*` file in the prior text summary.
+
+### 9.3 Test Isolation Implementation & Hardening
+1. **Environment Detection:** Created `isTestEnvironment()` in [`src/memory/memory-constants.js`](file:///c:/Users/admin/Desktop/LUCY/src/memory/memory-constants.js) checking `NODE_ENV === 'test'`, `process.env.NODE_TEST_CONTEXT`, `process.env.LUCY_TEST_ENVIRONMENT`, and `process.execArgv` for `--test`.
+2. **Fail-Fast Guard:** Added `assertStorageIsolation(componentName, options, paramNames)` which throws `[TestIsolationViolation]` if instantiated in a test environment without an explicit isolated directory or `process.env.LUCY_MEMORY_DIR`.
+3. **Storage Components Protected:**
+   - [`src/memory/memory-store.js`](file:///c:/Users/admin/Desktop/LUCY/src/memory/memory-store.js): Constructor protected; `save()` cleans up `tempPath` in `finally` on failure.
+   - [`src/memory/sqlite-adapter.js`](file:///c:/Users/admin/Desktop/LUCY/src/memory/sqlite-adapter.js): Constructor protected; `saveToDisk()` cleans up `tempPath` in `finally` on failure.
+   - [`src/memory/task-continuity-store.js`](file:///c:/Users/admin/Desktop/LUCY/src/memory/task-continuity-store.js): Constructor protected; `save()` cleans up `tempPath` in `finally` on failure.
+   - [`src/core/task-coordinator.js`](file:///c:/Users/admin/Desktop/LUCY/src/core/task-coordinator.js): Forwards `memoryDir` / `storeDir` / `storagePath` to `MemoryStore` and `TaskContinuityStore`.
+4. **Test Call Sites Isolated:** Updated `tests/core/natural-language-eval.test.js`, `tests/flow/end-to-end-pipeline.test.js`, and `tests/memory/sqlite-memory.test.js` to supply explicit test-sandboxed directories.
+5. **Dedicated Regression Suite:** Created [`tests/memory/test-isolation-guard.test.js`](file:///c:/Users/admin/Desktop/LUCY/tests/memory/test-isolation-guard.test.js) containing 8 tests verifying that unisolated instantiation throws `[TestIsolationViolation]` and isolated instantiation succeeds.
+
+### 9.4 Verification Evidence & Data Integrity (Before vs After)
+
+| Metric / Store | Pre-Test Baseline | Post-Full-Suite Verification | Mutation Delta |
+| :--- | :--- | :--- | :---: |
+| `lucy-memory.sqlite` SHA-256 | `929f8136dad946bd155c53154ad4a96d17c9d6d6e795d6be62841f8d7bb8f130` | `929f8136dad946bd155c53154ad4a96d17c9d6d6e795d6be62841f8d7bb8f130` | **0 (IDENTICAL)** |
+| `lucy-memory.sqlite` Size | 217,088 bytes | 217,088 bytes | **0 bytes** |
+| `lucy-memory.sqlite` Memories | 442 (406 conv, 25 approved, 11 project) | 442 (406 conv, 25 approved, 11 project) | **0 records** |
+| `lucy-memory.sqlite` Checkpoints | 14 checkpoints | 14 checkpoints | **0 records** |
+| `memory-store.json` SHA-256 | `3650f90ed0367e7bdaadf4a833af014717633b3945cbc8bf1c89e3a533bb3012` | `3650f90ed0367e7bdaadf4a833af014717633b3945cbc8bf1c89e3a533bb3012` | **0 (IDENTICAL)** |
+| `memory-store.json` Memories | 442 memories | 442 memories | **0 records** |
+| `task-checkpoints.json` SHA-256 | `35860ef6bfa2bb402877410cf87653b5bfc53a305a27973117ae4dfd6903b92f` | `35860ef6bfa2bb402877410cf87653b5bfc53a305a27973117ae4dfd6903b92f` | **0 (IDENTICAL)** |
+| `task-checkpoints.json` Tasks | 124 tasks | 124 tasks | **0 records** |
+| Orphaned `.tmp_*` files | 166 files | 166 files | **0 files** |
+
+### 9.5 Full Test Suite Run Results
+- **Command:** `npm test` (`node --test tests/**/*.test.js`)
+- **Total Tests:** 244 (235 previous + 9 in `test-isolation-guard.test.js`)
+- **Pass Rate:** 244 passed, 0 failed, 0 cancelled, 0 skipped
+- **Exit Code:** 0
+- **Duration:** 7.93s
+

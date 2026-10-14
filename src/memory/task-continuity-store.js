@@ -3,6 +3,8 @@
 const fs = require('fs');
 const path = require('path');
 
+const { assertStorageIsolation } = require('./memory-constants.js');
+
 const TASK_STATUSES = Object.freeze({
     IN_PROGRESS: 'in_progress',
     INTERRUPTED: 'interrupted',
@@ -13,8 +15,8 @@ const TASK_STATUSES = Object.freeze({
 
 class TaskContinuityStore {
     constructor(options = {}) {
-        this.storeDir = options.storeDir || path.resolve(__dirname, '../../data/memory');
-        this.filePath = path.join(this.storeDir, 'task-checkpoints.json');
+        this.storeDir = assertStorageIsolation('TaskContinuityStore', options, ['storeDir', 'memoryDir']);
+        this.filePath = options.filePath || path.join(this.storeDir, 'task-checkpoints.json');
         this.tasks = new Map();
         this.sqliteAdapter = options.sqliteAdapter || null;
 
@@ -79,6 +81,8 @@ class TaskContinuityStore {
     }
 
     save() {
+        let tempPath = null;
+        let success = false;
         try {
             this._ensureDir();
             const payload = {
@@ -86,13 +90,18 @@ class TaskContinuityStore {
                 updatedAt: new Date().toISOString(),
                 tasks: Object.fromEntries(this.tasks)
             };
-            const tempPath = `${this.filePath}.tmp_${Date.now()}`;
+            tempPath = `${this.filePath}.tmp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
             fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), 'utf8');
             fs.renameSync(tempPath, this.filePath);
+            success = true;
             return true;
         } catch (err) {
             console.error('Failed to save task checkpoints:', err.message);
             return false;
+        } finally {
+            if (!success && tempPath && fs.existsSync(tempPath)) {
+                try { fs.unlinkSync(tempPath); } catch {}
+            }
         }
     }
 

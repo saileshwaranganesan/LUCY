@@ -521,7 +521,7 @@ test('Batch 05 - SQLite Persistent Memory & Safe Migration', async (t) => {
         await store.initSqlite();
         assert.equal(store.sqliteActive, true);
 
-        const coordinator = new TaskCoordinator({ memoryStore: store });
+        const coordinator = new TaskCoordinator({ memoryStore: store, memoryDir: consumerDir });
 
         // 1. Add memory via coordinator
         const added = coordinator.addMemory({

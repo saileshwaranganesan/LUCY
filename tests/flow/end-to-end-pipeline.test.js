@@ -42,7 +42,8 @@ test('Phase C: Complete Verified End-to-End Pipeline & Single Authority Architec
         statusManager,
         permissionAuthority: permissionAuth,
         toolRegistry,
-        providerAdapter
+        providerAdapter,
+        memoryDir: path.join(testDir, 'memory')
     });
     coordinator.setCompanionBridge(companionBridge);
 

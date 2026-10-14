@@ -36,10 +36,62 @@ function hasSecretLikeContent(text) {
     return SECRET_PATTERN.test(text);
 }
 
+function isTestEnvironment() {
+    return (
+        process.env.NODE_ENV === 'test' ||
+        Boolean(process.env.NODE_TEST_CONTEXT) ||
+        Boolean(process.env.LUCY_TEST_ENVIRONMENT) ||
+        (Array.isArray(process.execArgv) && process.execArgv.some(arg => typeof arg === 'string' && arg.startsWith('--test')))
+    );
+}
+
+function resolveIsolatedStorageDir(options = {}, paramNames = ['memoryDir', 'storeDir']) {
+    for (const param of paramNames) {
+        if (options[param] && typeof options[param] === 'string') {
+            return options[param];
+        }
+    }
+    if (options.storagePath && typeof options.storagePath === 'string') {
+        const path = require('path');
+        return path.dirname(options.storagePath);
+    }
+    if (options.dbPath && typeof options.dbPath === 'string') {
+        const path = require('path');
+        return path.dirname(options.dbPath);
+    }
+    if (options.filePath && typeof options.filePath === 'string') {
+        const path = require('path');
+        return path.dirname(options.filePath);
+    }
+    if (process.env.LUCY_MEMORY_DIR && typeof process.env.LUCY_MEMORY_DIR === 'string') {
+        return process.env.LUCY_MEMORY_DIR;
+    }
+    return null;
+}
+
+function assertStorageIsolation(componentName, options = {}, paramNames = ['memoryDir', 'storeDir']) {
+    const resolved = resolveIsolatedStorageDir(options, paramNames);
+    if (resolved) {
+        return resolved;
+    }
+    if (isTestEnvironment() && !process.env.LUCY_ALLOW_LIVE_STORAGE_TESTS) {
+        throw new Error(
+            `[TestIsolationViolation] ${componentName} instantiated during test execution without an explicit isolated storage directory. ` +
+            `Must pass options.${paramNames[0]} or set process.env.LUCY_MEMORY_DIR.`
+        );
+    }
+    const path = require('path');
+    return path.resolve(__dirname, '../../data/memory');
+}
+
 module.exports = {
     MEMORY_CATEGORIES,
     MEMORY_TYPES,
     MEMORY_SOURCES,
     redactSecrets,
-    hasSecretLikeContent
+    hasSecretLikeContent,
+    isTestEnvironment,
+    resolveIsolatedStorageDir,
+    assertStorageIsolation
 };
+

@@ -32,9 +32,13 @@ class TaskCoordinator {
             model: this.providerAdapter?.model || 'default'
         });
         this.conversationHistory = [];
-        this.companionBridge = options.companionBridge || null;
-        this.memoryStore = options.memoryStore || new MemoryStore();
-        this.taskContinuityStore = options.taskContinuityStore || new TaskContinuityStore();
+        const storageOptions = {};
+        if (options.memoryDir) storageOptions.memoryDir = options.memoryDir;
+        if (options.storeDir) storageOptions.storeDir = options.storeDir;
+        if (options.storagePath) storageOptions.storagePath = options.storagePath;
+
+        this.memoryStore = options.memoryStore || new MemoryStore(storageOptions);
+        this.taskContinuityStore = options.taskContinuityStore || new TaskContinuityStore(storageOptions);
         this.activeTasks = new Map(); // taskId -> AbortController
     }
 

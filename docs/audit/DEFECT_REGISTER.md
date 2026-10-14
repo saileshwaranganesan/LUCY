@@ -14,7 +14,7 @@
 | **DEF-002** | Absence of Native Tool/Function Calling Schemas | **High (P1)** | Model-to-Tool Dispatch & Reliability | High (100%) | Confirmed via `ProviderAdapter` & `TaskPlanner` inspection |
 | **DEF-003** | Missing Screenshot-to-Vision Multimodal Feedback Loop | **Medium (P2)** | Desktop & Web Visual Verification | High (100%) | Confirmed: Models accept text only, no image inputs |
 | **DEF-004** | Ephemeral Playwright Browser Contexts (No Persistent Auth) | **Medium (P2)** | Web Workflows & User Portal Logins | High (100%) | Confirmed: `newContext()` used without `userDataDir` |
-| **DEF-005** | Workspace Missing Version Control (No Git Repository) | **Medium (P2)** | Configuration & Change Safety | High (100%) | Confirmed via `git status` exit code 1 |
+| **DEF-005** | Workspace Missing Version Control (No Git Repository) | **Medium (P2)** | Configuration & Change Safety | High (100%) | **Resolved (Workstream 1A — commit `16d88a86`)** |
 | **DEF-006** | Orphaned Background Packaged App Process (`LUCY.exe`) | **Low (P3)** | Process Contention & Port Safety | High (100%) | Confirmed via PowerShell `Get-Process` |
 
 ---

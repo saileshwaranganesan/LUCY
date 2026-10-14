@@ -12,13 +12,14 @@ const {
     MEMORY_TYPES,
     MEMORY_SOURCES,
     redactSecrets,
-    hasSecretLikeContent
+    hasSecretLikeContent,
+    assertStorageIsolation
 } = require('./memory-constants.js');
 
 class MemoryStore {
     constructor(options = {}) {
-        this.memoryDir = options.memoryDir || path.resolve(__dirname, '../../data/memory');
-        this.filePath = path.join(this.memoryDir, 'memory-store.json');
+        this.memoryDir = assertStorageIsolation('MemoryStore', options, ['memoryDir', 'storeDir']);
+        this.filePath = options.storagePath || path.join(this.memoryDir, 'memory-store.json');
         this.longTermEnabled = options.longTermEnabled !== false;
         this.sqliteAdapter = options.sqliteAdapter || null;
         this.sqliteActive = Boolean(this.sqliteAdapter && this.sqliteAdapter.initialized);
@@ -92,6 +93,8 @@ class MemoryStore {
     }
 
     save() {
+        let tempPath = null;
+        let success = false;
         try {
             this._ensureDir();
             const payload = {
@@ -100,13 +103,18 @@ class MemoryStore {
                 longTermEnabled: this.longTermEnabled,
                 memories: this.memories
             };
-            const tempPath = `${this.filePath}.tmp_${Date.now()}`;
+            tempPath = `${this.filePath}.tmp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
             fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), 'utf8');
             fs.renameSync(tempPath, this.filePath);
+            success = true;
             return true;
         } catch (err) {
             console.error('Failed to save memory store to disk:', err.message);
             return false;
+        } finally {
+            if (!success && tempPath && fs.existsSync(tempPath)) {
+                try { fs.unlinkSync(tempPath); } catch {}
+            }
         }
     }
 

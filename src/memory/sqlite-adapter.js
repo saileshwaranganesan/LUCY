@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const initSqlJs = require('sql.js');
-const { MEMORY_CATEGORIES, redactSecrets } = require('./memory-constants.js');
+const { MEMORY_CATEGORIES, redactSecrets, assertStorageIsolation } = require('./memory-constants.js');
 const { rankMemoryDocuments } = require('./lexical-retriever.js');
 
 /**
@@ -14,7 +14,7 @@ const { rankMemoryDocuments } = require('./lexical-retriever.js');
  */
 class SqliteMemoryAdapter {
     constructor(options = {}) {
-        this.memoryDir = options.memoryDir || path.resolve(__dirname, '../../data/memory');
+        this.memoryDir = assertStorageIsolation('SqliteMemoryAdapter', options, ['memoryDir', 'storeDir']);
         this.dbPath = options.dbPath || path.join(this.memoryDir, 'lucy-memory.sqlite');
         this.SQL = null;
         this.db = null;
@@ -150,6 +150,7 @@ class SqliteMemoryAdapter {
     saveToDisk() {
         if (!this.db) return false;
         let tempPath = null;
+        let success = false;
         try {
             const data = this.db.export();
             if (!data || data.length === 0) {
@@ -159,13 +160,15 @@ class SqliteMemoryAdapter {
             tempPath = `${this.dbPath}.tmp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
             fs.writeFileSync(tempPath, buffer);
             fs.renameSync(tempPath, this.dbPath);
+            success = true;
             return true;
         } catch (err) {
             console.error('[SqliteMemoryAdapter] Failed to save DB to disk:', err.message);
-            if (tempPath && fs.existsSync(tempPath)) {
+            return false;
+        } finally {
+            if (!success && tempPath && fs.existsSync(tempPath)) {
                 try { fs.unlinkSync(tempPath); } catch {}
             }
-            return false;
         }
     }
 

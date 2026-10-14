@@ -55,7 +55,8 @@ test('REQ-033: Natural Language Task Interpretation Evaluation Set', async (t) =
         permissionAuthority: permissionAuth,
         toolRegistry,
         providerAdapter,
-        planner
+        planner,
+        memoryDir: path.join(testDir, 'memory')
     });
 
     t.after(() => {
@@ -218,7 +219,8 @@ test('REQ-033: Natural Language Task Interpretation Evaluation Set', async (t) =
         const testCoordinator = new TaskCoordinator({
             permissionAuthority: permissionAuth,
             toolRegistry,
-            planner: customPlanner
+            planner: customPlanner,
+            memoryDir: path.join(testDir, 'memory')
         });
 
         const outcome = await testCoordinator.executeRequest('run flaky workflow');
