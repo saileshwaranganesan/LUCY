@@ -19,6 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const http = require('http');
 const crypto = require('crypto');
 const { execSync } = require('child_process');
 
@@ -87,22 +88,86 @@ function verifyModelIntegrity() {
     return { ok: true, path: targetPath, sha256, sha1, sizeBytes: stat.size };
 }
 
-function downloadFile(url, destPath) {
+function downloadFile(url, destPath, options = {}) {
     return new Promise((resolve, reject) => {
-        const req = https.get(url, (res) => {
-            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                return downloadFile(res.headers.location, destPath).then(resolve).catch(reject);
+        const partPath = `${destPath}.part`;
+        let startBytes = 0;
+        if (options.resumable !== false && fs.existsSync(partPath)) {
+            try {
+                startBytes = fs.statSync(partPath).size;
+            } catch (_) {
+                startBytes = 0;
             }
-            if (res.statusCode !== 200) {
+        }
+
+        const headers = options.headers ? { ...options.headers } : {};
+        if (startBytes > 0) {
+            headers['Range'] = `bytes=${startBytes}-`;
+        }
+
+        const client = url.startsWith('http:') ? http : https;
+        const req = client.get(url, { headers }, (res) => {
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                return downloadFile(res.headers.location, destPath, options).then(resolve).catch(reject);
+            }
+
+            if (res.statusCode === 416) {
+                // Range Not Satisfiable, restart download from scratch
+                try { fs.unlinkSync(partPath); } catch (_) {}
+                return downloadFile(url, destPath, { ...options, resumable: false }).then(resolve).catch(reject);
+            }
+
+            if (res.statusCode !== 200 && res.statusCode !== 206) {
                 return reject(new Error(`HTTP ${res.statusCode} from ${url}`));
             }
-            const fileStream = fs.createWriteStream(destPath);
-            res.pipe(fileStream);
-            fileStream.on('finish', () => {
-                fileStream.close(resolve);
+
+            const isResume = (res.statusCode === 206);
+            let downloadedBytes = isResume ? startBytes : 0;
+            let totalBytes = null;
+
+            if (res.headers['content-range']) {
+                const match = res.headers['content-range'].match(/\/(\d+)/);
+                if (match) totalBytes = parseInt(match[1], 10);
+            } else if (res.headers['content-length']) {
+                totalBytes = parseInt(res.headers['content-length'], 10) + (isResume ? startBytes : 0);
+            }
+
+            const writeFlag = isResume ? 'a' : 'w';
+            const fileStream = fs.createWriteStream(partPath, { flags: writeFlag });
+
+            res.on('data', (chunk) => {
+                downloadedBytes += chunk.length;
+                if (typeof options.onProgress === 'function') {
+                    const percent = totalBytes ? Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)) : null;
+                    options.onProgress({
+                        downloadedBytes,
+                        totalBytes,
+                        percent
+                    });
+                }
             });
-            fileStream.on('error', reject);
+
+            res.pipe(fileStream);
+
+            fileStream.on('finish', () => {
+                fileStream.close(() => {
+                    try {
+                        if (fs.existsSync(destPath)) {
+                            fs.unlinkSync(destPath);
+                        }
+                        fs.renameSync(partPath, destPath);
+                        resolve({ destPath, sizeBytes: downloadedBytes });
+                    } catch (err) {
+                        reject(err);
+                    }
+                });
+            });
+
+            fileStream.on('error', (err) => {
+                reject(err);
+            });
         });
+
         req.on('error', reject);
     });
 }
@@ -208,9 +273,22 @@ if (require.main === module) {
     });
 }
 
+function getOfflineVoiceStatus() {
+    const binary = verifyBinaryIntegrity();
+    const model = verifyModelIntegrity();
+    return {
+        binary,
+        model,
+        offlineReady: Boolean(binary && binary.ok && model && model.ok)
+    };
+}
+
 module.exports = {
     PROVISION_CONFIG,
+    computeHash,
+    downloadFile,
     verifyBinaryIntegrity,
     verifyModelIntegrity,
+    getOfflineVoiceStatus,
     provisionAll
 };

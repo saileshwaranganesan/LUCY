@@ -31,6 +31,11 @@ This project incorporates architectural patterns, evaluation methodologies, and 
    - Copyright (c) 2010-2026 Three.js Authors
    - Capabilities leveraged: WebGL rendering engine, PerspectiveCamera, directional/point lighting, GLTFLoader, and AnimationMixer for 3D desktop companion presentation.
 
+7. **whisper.cpp** (https://github.com/ggml-org/whisper.cpp)
+   - License: MIT License
+   - Copyright (c) 2023-2026 Georgi Gerganov and whisper.cpp contributors
+   - Capabilities leveraged: Offline local speech recognition, ggml quantization, and Windows x64 inference runtime.
+
 All project-specific modifications, security hardening (Windows DPAPI, fail-closed dry-run enforcement, central permission authority, WinSta0\default desktop routing), and the decoupled fantasy-creature companion layer are maintained independently within L.U.C.Y.
 
 

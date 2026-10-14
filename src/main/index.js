@@ -161,7 +161,7 @@ function initAssistantBackend() {
         ? path.join(userDataDir, 'memory')
         : (process.env.LUCY_MEMORY_DIR || path.resolve(__dirname, '../../data/memory'));
 
-    const secureStoreDir = path.join(process.env.APPDATA || os.homedir(), 'LUCY', 'secure');
+    const secureStoreDir = process.env.LUCY_SECURE_STORE_DIR || path.join(process.env.APPDATA || os.homedir(), 'LUCY', 'secure');
 
     const workspaceRoot = process.env.LUCY_WORKSPACE_DIR || (
         isPackaged

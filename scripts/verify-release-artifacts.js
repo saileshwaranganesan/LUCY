@@ -38,17 +38,19 @@ function verifyReleaseArtifacts(options = {}) {
     const sha256FilePath = path.join(distDir, 'SHA256SUMS.txt');
     const manifestFilePath = path.join(distDir, 'release-manifest.json');
 
-    const expectedHashes = new Map(); // filename -> { sha256, type, sizeBytes }
+    const expectedHashes = new Map(); // filename -> { expectedSha256, expectedSize, type, lastModified }
+    let parsedManifest = null;
 
     if (fs.existsSync(manifestFilePath)) {
         try {
-            const manifest = JSON.parse(fs.readFileSync(manifestFilePath, 'utf8'));
-            if (Array.isArray(manifest.artifacts)) {
-                for (const art of manifest.artifacts) {
+            parsedManifest = JSON.parse(fs.readFileSync(manifestFilePath, 'utf8'));
+            if (Array.isArray(parsedManifest.artifacts)) {
+                for (const art of parsedManifest.artifacts) {
                     expectedHashes.set(art.filename, {
-                        expectedSha256: art.sha256.toLowerCase(),
+                        expectedSha256: art.sha256 ? art.sha256.toLowerCase() : '',
                         expectedSize: art.sizeBytes,
-                        type: art.type
+                        type: art.type,
+                        lastModified: art.lastModified
                     });
                 }
             }
@@ -80,7 +82,37 @@ function verifyReleaseArtifacts(options = {}) {
     const results = [];
     let allValid = true;
 
+    // Check Git source revision match if requested
+    if (options.expectedCommit && parsedManifest && parsedManifest.sourceRevision) {
+        const manifestCommit = parsedManifest.sourceRevision.commit;
+        if (manifestCommit !== options.expectedCommit) {
+            allValid = false;
+            results.push({
+                filename: 'release-manifest.json',
+                verified: false,
+                status: 'source_revision_mismatch',
+                error: `Source revision mismatch! Expected commit ${options.expectedCommit}, but manifest records ${manifestCommit}`
+            });
+        }
+    }
+
+    const manifestRecordedTime = (parsedManifest && parsedManifest.sourceRevision && parsedManifest.sourceRevision.recordedAt)
+        ? new Date(parsedManifest.sourceRevision.recordedAt).getTime()
+        : null;
+
     for (const [filename, expected] of expectedHashes.entries()) {
+        // Security check: Path traversal prevention
+        if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+            allValid = false;
+            results.push({
+                filename,
+                verified: false,
+                status: 'invalid_filename_traversal',
+                error: `Security violation: path traversal detected in artifact filename: ${filename}`
+            });
+            continue;
+        }
+
         const fullPath = path.join(distDir, filename);
 
         if (!fs.existsSync(fullPath)) {
@@ -95,6 +127,19 @@ function verifyReleaseArtifacts(options = {}) {
         }
 
         const stat = fs.statSync(fullPath);
+
+        // Stale manifest check: If artifact was modified significantly AFTER manifest was generated
+        if (options.checkStaleManifest && manifestRecordedTime && stat.mtimeMs > (manifestRecordedTime + 5000)) {
+            allValid = false;
+            results.push({
+                filename,
+                verified: false,
+                status: 'stale_manifest',
+                error: `Artifact modification time (${stat.mtime.toISOString()}) is newer than manifest recordedAt (${new Date(manifestRecordedTime).toISOString()}). Manifest is stale.`
+            });
+            continue;
+        }
+
         const actualSha256 = computeSha256(fullPath).toLowerCase();
         const hashMatches = (actualSha256 === expected.expectedSha256);
 
@@ -126,12 +171,19 @@ function verifyReleaseArtifacts(options = {}) {
         });
     }
 
+    // Verify required runtime assets presence in manifest
+    const runtimeAssets = parsedManifest && Array.isArray(parsedManifest.requiredRuntimeAssets)
+        ? parsedManifest.requiredRuntimeAssets
+        : [];
+
     return {
         ok: allValid,
         distDir,
         totalChecked: expectedHashes.size,
         passedCount: results.filter((r) => r.verified).length,
         failedCount: results.filter((r) => !r.verified).length,
+        runtimeAssetsCount: runtimeAssets.length,
+        manifest: parsedManifest,
         results
     };
 }
