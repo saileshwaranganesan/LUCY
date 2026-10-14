@@ -9,7 +9,9 @@ const TASK_STATUSES = Object.freeze({
     IN_PROGRESS: 'in_progress',
     INTERRUPTED: 'interrupted',
     COMPLETED: 'completed',
+    PARTIALLY_COMPLETED: 'partially_completed',
     FAILED: 'failed',
+    CANCELLED: 'cancelled',
     DISCARDED: 'discarded'
 });
 
@@ -177,6 +179,15 @@ class TaskContinuityStore {
             this.save();
         }
         return task;
+    }
+
+    /**
+     * Get checkpoint by taskId
+     * @param {string} taskId
+     * @returns {Object|null}
+     */
+    getCheckpoint(taskId) {
+        return this.tasks.get(taskId) || null;
     }
 
     /**

@@ -36,6 +36,7 @@ const UNSUPPORTED_DOMAINS = [
 
 const { classifyTextIntent } = require('./content-discriminator.js');
 const { validateToolArguments } = require('../tools/schema-validator.js');
+const { RISK_TIERS } = require('../security/permission-authority.js');
 
 class TaskPlanner {
     constructor(options = {}) {
@@ -1395,8 +1396,9 @@ Respond strictly in JSON if tool execution is required:
             return plan;
         }
 
-        // If no tool list was provided (e.g. standalone test), preserve proposed steps
+        // If no tool list was provided (e.g. standalone test), enrich proposed steps if not already enriched
         if (!availableTools || availableTools.length === 0) {
+            plan.steps = plan.steps.map((step, i) => this._enrichStepMetadata(step, i, null));
             return plan;
         }
 
@@ -1439,17 +1441,66 @@ Respond strictly in JSON if tool execution is required:
                 };
             }
 
-            validatedSteps.push({
-                index: i + 1,
-                title: step.title || `Execute ${step.toolId}`,
-                toolId: step.toolId,
-                params: step.params || {},
-                expectedOutcome: step.expectedOutcome || `Completed ${step.toolId}`
-            });
+            validatedSteps.push(this._enrichStepMetadata(step, i, tool));
         }
 
         plan.steps = validatedSteps;
         return plan;
+    }
+
+    _enrichStepMetadata(step, index, tool) {
+        const stepId = step.id || `step_${index + 1}`;
+        const riskTier = tool?.riskTier || (
+            step.toolId?.startsWith('file_write') || step.toolId?.startsWith('file_delete') || step.toolId?.startsWith('desktop_launch')
+                ? RISK_TIERS.CONSEQUENTIAL
+                : (step.riskTier || RISK_TIERS.SAFE_READ)
+        );
+        const isConsequential = (
+            riskTier === RISK_TIERS.CONSEQUENTIAL ||
+            riskTier === RISK_TIERS.WORKSPACE_WRITE ||
+            riskTier === RISK_TIERS.CRITICAL
+        );
+        const requiresAuthorization = (
+            riskTier === RISK_TIERS.CONSEQUENTIAL ||
+            riskTier === RISK_TIERS.CRITICAL
+        );
+
+        let dependsOn = [];
+        if (Array.isArray(step.dependsOn)) {
+            dependsOn = [...step.dependsOn];
+        } else if (index > 0) {
+            dependsOn = [`step_${index}`];
+        }
+
+        let verificationStrategy = step.verificationStrategy;
+        if (!verificationStrategy) {
+            if (step.toolId === 'file_write') verificationStrategy = 'file_integrity';
+            else if (step.toolId === 'file_read') verificationStrategy = 'read_receipt';
+            else if (step.toolId === 'file_delete') verificationStrategy = 'disk_deletion';
+            else if (step.toolId === 'desktop_launch_app') verificationStrategy = 'process_running';
+            else if (step.toolId === 'desktop_type_text') verificationStrategy = 'ui_automation';
+            else if (step.toolId === 'desktop_click_element') verificationStrategy = 'ui_automation';
+            else if (step.toolId === 'browser_navigate') verificationStrategy = 'http_status';
+            else if (step.toolId === 'browser_extract') verificationStrategy = 'content_extraction';
+            else if (step.toolId === 'visual_inspect') verificationStrategy = 'visual_confirmation';
+            else if (step.toolId === 'student_generate_study_guide') verificationStrategy = 'file_integrity';
+            else verificationStrategy = 'tool_receipt';
+        }
+
+        return {
+            id: stepId,
+            index: index + 1,
+            title: step.title || `Execute ${step.toolId}`,
+            toolId: step.toolId,
+            params: step.params || {},
+            expectedOutcome: step.expectedOutcome || `Completed ${step.toolId}`,
+            dependsOn,
+            inputs: Array.isArray(step.inputs) ? step.inputs : Object.keys(step.params || {}),
+            outputs: Array.isArray(step.outputs) ? step.outputs : ['result'],
+            isConsequential,
+            requiresAuthorization,
+            verificationStrategy
+        };
     }
 
     _extractJson(text) {

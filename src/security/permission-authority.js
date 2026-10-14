@@ -178,7 +178,10 @@ class PermissionAuthority {
                     promptReason,
                     timeoutMs
                 });
-                resolve({ approved: Boolean(userApproved) });
+                const isApproved = (userApproved && typeof userApproved === 'object')
+                    ? Boolean(userApproved.confirmed ?? userApproved.approved)
+                    : Boolean(userApproved);
+                resolve({ approved: isApproved });
             } catch (err) {
                 reject(err);
             }

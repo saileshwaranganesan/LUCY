@@ -58,11 +58,11 @@ test('MemoryStore: Enforces 5 separated categories and persists across store rel
             type: MEMORY_TYPES.CONFIRMED_FACT
         });
 
-        // Add temporary working data with short TTL (250ms)
+        // Add temporary working data with short TTL (500ms)
         const mem3 = store.addMemory({
             category: MEMORY_CATEGORIES.WORKING_DATA,
             content: 'Temporary scratchpad for calculation: sum=42',
-            ttlMs: 250
+            ttlMs: 500
         });
 
         assert.equal(store.memories.length, 3);
@@ -90,7 +90,7 @@ test('MemoryStore: Enforces 5 separated categories and persists across store rel
                 const workingMemories = reloadedStore.getMemories({ category: MEMORY_CATEGORIES.WORKING_DATA });
                 assert.equal(workingMemories.length, 0);
                 resolve();
-            }, 300);
+            }, 600);
         });
     } finally {
         fs.rmSync(testDir, { recursive: true, force: true });

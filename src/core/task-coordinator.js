@@ -1,27 +1,44 @@
 'use strict';
 
-const { TaskStatusManager, TASK_STATES } = require('./task-status.js');
+const { TaskStatusManager, TASK_STATES, DuplicateTaskExecutionError } = require('./task-status.js');
 const { TaskPlanner } = require('./task-planner.js');
 const { ContextBudgetManager } = require('./context-budget.js');
 const { MemoryStore, MEMORY_CATEGORIES, MEMORY_TYPES, MEMORY_SOURCES } = require('../memory/memory-store.js');
 const { TaskContinuityStore, TASK_STATUSES } = require('../memory/task-continuity-store.js');
+const { ResultVerifier } = require('./result-verifier.js');
+const { TaskRecoveryEngine, FAILURE_TYPES, RECOVERY_STRATEGIES } = require('./recovery-engine.js');
+const { RISK_TIERS } = require('../security/permission-authority.js');
 
 /**
  * TaskCoordinator
  * The sole authoritative brain of L.U.C.Y.
  * Orchestrates the full lifecycle:
- * Request -> Interpretation -> Task Plan -> Permission Check -> Tool Execution -> Verification -> User Response.
+ * Request -> Interpretation -> Task Plan -> Dependency Check -> Tool Execution -> Verification -> Recovery -> User Response.
  * 
- * Workstream 07 Enhancements:
- * 1. Supports request cancellation via AbortController and cancelTask(taskId).
- * 2. Supports streaming via options.onChunk for incremental AI responses (REQ-029).
- * 3. Handles rich natural language planner outcomes: clarifications, prompt injection blocks, unsupported capabilities (REQ-033).
- * 4. Model-aware bounded context budgeting (REQ-032).
+ * Integrated Architecture:
+ * 1. Unified Execution State Machine:
+ *    - Centralized states: created -> planning -> ready -> running -> executing_tool -> verifying -> recovering -> completed / partially_completed / failed / cancelled.
+ *    - Duplicate task prevention (DuplicateTaskExecutionError).
+ *    - Exception-safe finally cleanup ensuring tasks never remain orphaned in running states.
+ * 2. Dependency-Aware Step Execution:
+ *    - Prerequisite checking before consequential steps execute.
+ *    - Parameter interpolation across step outputs.
+ *    - Safe parallel execution for independent, read-only steps.
+ * 3. Result Verification:
+ *    - Deterministic and evidence-based checks via ResultVerifier.
+ *    - False-success prevention: absent/inconclusive evidence never treated as success.
+ * 4. Intelligent Failure Recovery:
+ *    - Failure classification: transient, invalid_input, unavailable_capability, permission_denied, cancelled, fatal.
+ *    - Bounded retries (max 2) with backoff for transient failures.
+ *    - Fail-closed behavior for permission denials and cancellations.
+ *    - Structured recovery receipts preserving audit continuity.
  */
 class TaskCoordinator {
     constructor(options = {}) {
-        this.statusManager = options.statusManager || new TaskStatusManager();
         this.permissionAuthority = options.permissionAuthority;
+        this.workspaceRoot = options.workspaceRoot || options.permissionAuthority?.workspaceRoot || process.cwd();
+        this.desktopManager = options.desktopManager || null;
+        this.statusManager = options.statusManager || new TaskStatusManager();
         this.toolRegistry = options.toolRegistry;
         this.providerAdapter = options.providerAdapter;
         this.planner = options.planner || new TaskPlanner({
@@ -31,6 +48,15 @@ class TaskCoordinator {
         this.budgetManager = options.budgetManager || new ContextBudgetManager({
             model: this.providerAdapter?.model || 'default'
         });
+        this.resultVerifier = options.resultVerifier || new ResultVerifier({
+            workspaceRoot: this.workspaceRoot,
+            desktopManager: this.desktopManager
+        });
+        this.recoveryEngine = options.recoveryEngine || new TaskRecoveryEngine({
+            maxRetries: options.maxRetries ?? 2,
+            baseBackoffMs: options.baseBackoffMs ?? 50
+        });
+
         this.conversationHistory = [];
         const storageOptions = {};
         if (options.memoryDir) storageOptions.memoryDir = options.memoryDir;
@@ -65,13 +91,190 @@ class TaskCoordinator {
         const controller = this.activeTasks.get(taskId);
         if (controller) {
             controller.abort(reason);
-            this.statusManager.failTask(`Task ${taskId} was cancelled: ${reason}`);
+            if (this.statusManager.canTransition(TASK_STATES.CANCELLED)) {
+                this.statusManager.transition(TASK_STATES.CANCELLED, { reason });
+            } else {
+                this.statusManager.failTask(`Task ${taskId} was cancelled: ${reason}`);
+            }
             if (this.companionBridge) {
                 this.companionBridge.setEmotion('worried', 'Task cancelled');
             }
             return { ok: true, taskId, cancelled: true };
         }
         return { ok: false, taskId, error: 'Task not found or already completed' };
+    }
+
+    /**
+     * Resolve template parameters from previous step outputs (e.g. {{step_1.result.path}})
+     * @param {Object} params
+     * @param {Array<Object>} executedSteps
+     * @returns {Object}
+     */
+    _resolveStepParams(params, executedSteps) {
+        if (!params || typeof params !== 'object') return params;
+        const resolved = { ...params };
+        for (const [key, value] of Object.entries(resolved)) {
+            if (typeof value === 'string' && value.includes('{{') && value.includes('}}')) {
+                resolved[key] = value.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (match, pathStr) => {
+                    const parts = pathStr.split('.');
+                    const stepKey = parts[0];
+                    const matchedStep = executedSteps.find(
+                        (s) => s.id === stepKey || `step_${s.index}` === stepKey
+                    );
+                    if (!matchedStep) return match;
+
+                    const remainingParts = parts.slice(1);
+                    let curr = matchedStep;
+
+                    for (let k = 0; k < remainingParts.length; k++) {
+                        const part = remainingParts[k];
+                        while (curr && typeof curr === 'object' && !(part in curr) && curr.result) {
+                            curr = curr.result;
+                        }
+                        if (curr && typeof curr === 'object' && part in curr) {
+                            curr = curr[part];
+                        } else {
+                            return match;
+                        }
+                    }
+
+                    return curr !== undefined ? String(curr) : match;
+                });
+            }
+        }
+        return resolved;
+    }
+
+    /**
+     * Execute and verify a single step, with bounded failure recovery
+     * @param {Object} step
+     * @param {number} stepIndex
+     * @param {Object} context
+     * @returns {Promise<Object>} stepReceipt
+     */
+    async _executeAndVerifyStep(step, stepIndex, { resolvedParams, dryRun, abortController, taskId, plan }) {
+        const stepId = step.id || `step_${stepIndex}`;
+
+        this.statusManager.recordStepStart(stepId, {
+            toolId: step.toolId,
+            params: resolvedParams,
+            title: step.title
+        });
+
+        this.statusManager.transition(TASK_STATES.EXECUTING_TOOL, {
+            step: stepIndex,
+            totalSteps: plan.steps.length,
+            currentTool: step.toolId
+        });
+
+        if (this.companionBridge) {
+            this.companionBridge.setEmotion('focused', `Executing step ${stepIndex}: ${step.title}`);
+        }
+
+        // 1. Initial tool execution
+        let toolResult = await this.toolRegistry.execute(step.toolId, resolvedParams, { dryRun });
+
+        if (abortController.signal.aborted) {
+            throw new Error('Task execution was cancelled by user.');
+        }
+
+        // 2. Result Verification
+        this.statusManager.transition(TASK_STATES.VERIFYING, {
+            step: stepIndex,
+            toolResult
+        });
+
+        let verification = await this.resultVerifier.verify(step, toolResult, {
+            dryRun,
+            workspaceRoot: this.workspaceRoot
+        });
+
+        let attempts = 0;
+        let recoveryReceipt = null;
+
+        // 3. Intelligent Bounded Recovery Loop
+        let isSuccess = toolResult.ok && verification.verified;
+        if (!isSuccess) {
+            const initialFailure = !toolResult.ok ? toolResult : verification;
+            let failureClassification = this.recoveryEngine.classifyFailure(initialFailure);
+
+            // Bounded recovery loop: never retries permission denials or cancellations
+            while (!isSuccess && this.recoveryEngine.canRecover(step, failureClassification, attempts)) {
+                attempts++;
+                this.statusManager.transition(TASK_STATES.RECOVERING, {
+                    step: stepIndex,
+                    attempt: attempts,
+                    strategy: failureClassification.suggestedStrategy,
+                    reason: failureClassification.reason
+                });
+
+                const backoff = this.recoveryEngine.getBackoffDelay(attempts - 1);
+                if (backoff > 0) {
+                    await new Promise((r) => setTimeout(r, backoff));
+                }
+
+                if (abortController.signal.aborted) {
+                    throw new Error('Task execution was cancelled by user during recovery.');
+                }
+
+                this.statusManager.transition(TASK_STATES.EXECUTING_TOOL, {
+                    step: stepIndex,
+                    attempt: attempts,
+                    currentTool: step.toolId
+                });
+
+                toolResult = await this.toolRegistry.execute(step.toolId, resolvedParams, { dryRun });
+
+                this.statusManager.transition(TASK_STATES.VERIFYING, {
+                    step: stepIndex,
+                    attempt: attempts,
+                    toolResult
+                });
+
+                verification = await this.resultVerifier.verify(step, toolResult, {
+                    dryRun,
+                    workspaceRoot: this.workspaceRoot
+                });
+
+                isSuccess = toolResult.ok && verification.verified;
+                if (!isSuccess) {
+                    failureClassification = this.recoveryEngine.classifyFailure(!toolResult.ok ? toolResult : verification);
+                }
+            }
+
+            if (attempts > 0) {
+                recoveryReceipt = this.recoveryEngine.createRecoveryReceipt({
+                    stepId,
+                    failureType: failureClassification.type,
+                    reason: failureClassification.reason,
+                    attempts,
+                    strategy: failureClassification.suggestedStrategy,
+                    recovered: isSuccess,
+                    finalStatus: isSuccess ? 'recovered' : 'failed'
+                });
+            }
+        }
+
+        const stepReceipt = {
+            id: stepId,
+            index: stepIndex,
+            title: step.title,
+            toolId: step.toolId,
+            params: resolvedParams,
+            result: toolResult,
+            verified: isSuccess,
+            verification,
+            recovery: recoveryReceipt
+        };
+
+        if (isSuccess) {
+            this.statusManager.recordStepCompletion(stepId, toolResult, verification);
+        } else {
+            const failureReason = toolResult.error || verification.reason || 'Verification failed';
+            this.statusManager.recordStepFailure(stepId, failureReason, verification);
+        }
+
+        return stepReceipt;
     }
 
     /**
@@ -85,6 +288,12 @@ class TaskCoordinator {
      */
     async executeRequest(userRequest, options = {}) {
         const taskId = options.taskId || `task_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+        // Prevent duplicate execution of the exact same active task
+        if (this.activeTasks.has(taskId)) {
+            throw new DuplicateTaskExecutionError(`Task with id '${taskId}' is already actively executing.`);
+        }
+
         const dryRun = Boolean(options.dryRun || process.env.LUCY_DRY_RUN === 'true');
 
         const abortController = new AbortController();
@@ -158,6 +367,8 @@ class TaskCoordinator {
             this.companionBridge.setEmotion('thinking', 'Processing your instruction');
         }
 
+        const executedSteps = [];
+
         try {
             if (abortController.signal.aborted) {
                 throw new Error('Task was cancelled before planning.');
@@ -174,8 +385,6 @@ class TaskCoordinator {
                 signal: abortController.signal,
                 onChunk: options.onChunk
             });
-
-            this.statusManager.transition(TASK_STATES.PLANNING, { plan });
 
             if (abortController.signal.aborted) {
                 throw new Error('Task was cancelled during planning.');
@@ -274,12 +483,16 @@ class TaskCoordinator {
             // Handle user cancellation during planning
             if (plan.type === 'cancelled') {
                 const cancelText = plan.replyText || 'Task was cancelled by user.';
-                this.statusManager.failTask(cancelText);
+                if (this.statusManager.canTransition(TASK_STATES.CANCELLED)) {
+                    this.statusManager.transition(TASK_STATES.CANCELLED, { reason: cancelText });
+                } else {
+                    this.statusManager.failTask(cancelText);
+                }
                 this.taskContinuityStore.saveCheckpoint({
                     taskId,
                     userRequest,
                     plan,
-                    status: TASK_STATUSES.FAILED,
+                    status: TASK_STATUSES.CANCELLED,
                     error: cancelText,
                     dryRun
                 });
@@ -341,77 +554,72 @@ class TaskCoordinator {
                 };
             }
 
-            // 3. Execution Pipeline: Step-by-Step with Permission Check & Verification
-            const executedSteps = [];
+            // 3. Execution Pipeline: Transition to READY then RUNNING
+            this.statusManager.transition(TASK_STATES.READY, { plan });
+            this.statusManager.transition(TASK_STATES.RUNNING);
+
             const completedStepDescriptions = [];
             const verifiedFacts = [];
 
-            for (let i = 0; i < plan.steps.length; i++) {
+            let i = 0;
+            while (i < plan.steps.length) {
                 if (abortController.signal.aborted) {
                     throw new Error('Task execution was cancelled by user.');
                 }
 
-                const step = plan.steps[i];
+                const currentStep = plan.steps[i];
                 const stepIndex = i + 1;
 
-                this.statusManager.transition(TASK_STATES.EXECUTING_TOOL, {
-                    step: stepIndex,
-                    totalSteps: plan.steps.length,
-                    currentTool: step.toolId
+                // Dependency Check: verify prerequisites have succeeded
+                const dependsOn = Array.isArray(currentStep.dependsOn)
+                    ? currentStep.dependsOn
+                    : (i > 0 ? [`step_${i}`] : []);
+
+                const failedOrMissingPrereqs = dependsOn.filter((depId) => {
+                    const found = executedSteps.find((s) => s.id === depId || `step_${s.index}` === depId);
+                    return !found || !found.verified || found.result?.ok === false;
                 });
 
-                if (this.companionBridge) {
-                    this.companionBridge.setEmotion('focused', `Executing step ${stepIndex}: ${step.title}`);
-                }
+                if (failedOrMissingPrereqs.length > 0) {
+                    const failureReason = `Prerequisite step(s) failed or incomplete: ${failedOrMissingPrereqs.join(', ')}`;
+                    const stepReceipt = {
+                        id: currentStep.id || `step_${stepIndex}`,
+                        index: stepIndex,
+                        title: currentStep.title,
+                        toolId: currentStep.toolId,
+                        params: currentStep.params,
+                        result: { ok: false, error: failureReason, status: 'prerequisite_failed' },
+                        verified: false,
+                        verification: { status: 'failed', verified: false, reason: failureReason }
+                    };
+                    executedSteps.push(stepReceipt);
+                    this.statusManager.recordStepFailure(stepReceipt.id, failureReason, stepReceipt.verification);
 
-                // Execute tool via ToolRegistry (which enforces permissions and dry-run internally)
-                const toolResult = await this.toolRegistry.execute(step.toolId, step.params, { dryRun });
+                    const hasPriorSuccess = executedSteps.slice(0, -1).some((s) => s.verified);
+                    const terminalState = hasPriorSuccess ? TASK_STATES.PARTIALLY_COMPLETED : TASK_STATES.FAILED;
+                    const terminalStatus = hasPriorSuccess ? TASK_STATUSES.PARTIALLY_COMPLETED : TASK_STATUSES.FAILED;
 
-                if (abortController.signal.aborted) {
-                    throw new Error('Task execution was cancelled by user.');
-                }
-
-                // 4. Result Verification: Never claim success without verification
-                this.statusManager.transition(TASK_STATES.VERIFYING, {
-                    step: stepIndex,
-                    toolResult
-                });
-
-                const stepReceipt = {
-                    index: stepIndex,
-                    title: step.title,
-                    toolId: step.toolId,
-                    params: step.params,
-                    result: toolResult,
-                    verified: toolResult.ok && Boolean(toolResult.verification?.verified)
-                };
-
-                executedSteps.push(stepReceipt);
-
-                // Update checkpoint after step execution
-                this.taskContinuityStore.saveCheckpoint({
-                    taskId,
-                    userRequest,
-                    plan,
-                    currentStepIndex: stepIndex,
-                    completedSteps: executedSteps,
-                    status: toolResult.ok ? TASK_STATUSES.IN_PROGRESS : TASK_STATUSES.FAILED,
-                    dryRun,
-                    error: toolResult.ok ? null : toolResult.error
-                });
-
-                if (!toolResult.ok) {
-                    // Honest error reporting and halt
-                    const failureReason = toolResult.error || 'Tool execution did not succeed';
-                    this.statusManager.failTask(failureReason);
+                    this.statusManager.transition(terminalState, { error: failureReason, executedSteps });
+                    this.taskContinuityStore.saveCheckpoint({
+                        taskId,
+                        userRequest,
+                        plan,
+                        currentStepIndex: stepIndex,
+                        completedSteps: executedSteps,
+                        status: terminalStatus,
+                        dryRun,
+                        error: failureReason
+                    });
 
                     if (this.companionBridge) {
-                        this.companionBridge.setEmotion('worried', `Step ${stepIndex} stopped: ${failureReason}`);
+                        this.companionBridge.setEmotion('worried', `Step ${stepIndex} blocked: ${failureReason}`);
                     }
 
                     return {
                         ok: false,
                         status: 'failed',
+                        lifecycleState: terminalState,
+                        partiallyCompleted: hasPriorSuccess,
                         taskId,
                         userRequest,
                         failedStep: stepReceipt,
@@ -422,13 +630,155 @@ class TaskCoordinator {
                     };
                 }
 
-                completedStepDescriptions.push(`Step ${stepIndex} (${step.title}): ${toolResult.status}`);
-                if (toolResult.result) {
-                    verifiedFacts.push(`${step.toolId}: ${JSON.stringify(toolResult.result).slice(0, 160)}`);
+                // Check for safe parallel execution:
+                // Only batch if explicitly permitted by option or step, and both are read-only with no mutual dependencies
+                const canBatchWithNext = Boolean(
+                    (options.allowParallel || currentStep.parallel) &&
+                    !currentStep.isConsequential &&
+                    i + 1 < plan.steps.length &&
+                    !plan.steps[i + 1].isConsequential &&
+                    !(plan.steps[i + 1].dependsOn || []).includes(currentStep.id || `step_${stepIndex}`) &&
+                    !(currentStep.dependsOn || []).includes(plan.steps[i + 1].id || `step_${stepIndex + 1}`)
+                );
+
+                if (canBatchWithNext) {
+                    const nextStep = plan.steps[i + 1];
+                    const nextIndex = i + 2;
+
+                    const p1 = this._executeAndVerifyStep(currentStep, stepIndex, {
+                        resolvedParams: this._resolveStepParams(currentStep.params, executedSteps),
+                        dryRun,
+                        abortController,
+                        taskId,
+                        plan
+                    });
+                    const p2 = this._executeAndVerifyStep(nextStep, nextIndex, {
+                        resolvedParams: this._resolveStepParams(nextStep.params, executedSteps),
+                        dryRun,
+                        abortController,
+                        taskId,
+                        plan
+                    });
+
+                    const [receipt1, receipt2] = await Promise.all([p1, p2]);
+                    executedSteps.push(receipt1, receipt2);
+
+                    const batchFailed = !receipt1.verified || !receipt2.verified;
+                    if (batchFailed) {
+                        const failedReceipt = !receipt1.verified ? receipt1 : receipt2;
+                        const failureReason = failedReceipt.result?.error || failedReceipt.verification?.reason || 'Tool execution did not succeed';
+                        const hasPriorSuccess = executedSteps.filter((s) => s !== failedReceipt).some((s) => s.verified);
+                        const terminalState = hasPriorSuccess ? TASK_STATES.PARTIALLY_COMPLETED : TASK_STATES.FAILED;
+                        const terminalStatus = hasPriorSuccess ? TASK_STATUSES.PARTIALLY_COMPLETED : TASK_STATUSES.FAILED;
+
+                        this.statusManager.transition(terminalState, { error: failureReason, executedSteps });
+                        this.taskContinuityStore.saveCheckpoint({
+                            taskId,
+                            userRequest,
+                            plan,
+                            currentStepIndex: failedReceipt.index,
+                            completedSteps: executedSteps,
+                            status: terminalStatus,
+                            dryRun,
+                            error: failureReason
+                        });
+
+                        return {
+                            ok: false,
+                            status: 'failed',
+                            lifecycleState: terminalState,
+                            partiallyCompleted: hasPriorSuccess,
+                            taskId,
+                            userRequest,
+                            failedStep: failedReceipt,
+                            executedSteps,
+                            error: failureReason,
+                            dryRun,
+                            verification: { verified: false, failureReason }
+                        };
+                    }
+
+                    completedStepDescriptions.push(`Step ${stepIndex} (${currentStep.title}): ${receipt1.result.status || 'completed'}`);
+                    completedStepDescriptions.push(`Step ${nextIndex} (${nextStep.title}): ${receipt2.result.status || 'completed'}`);
+                    if (receipt1.result.result) verifiedFacts.push(`${currentStep.toolId}: ${JSON.stringify(receipt1.result.result).slice(0, 160)}`);
+                    if (receipt2.result.result) verifiedFacts.push(`${nextStep.toolId}: ${JSON.stringify(receipt2.result.result).slice(0, 160)}`);
+
+                    this.taskContinuityStore.saveCheckpoint({
+                        taskId,
+                        userRequest,
+                        plan,
+                        currentStepIndex: nextIndex,
+                        completedSteps: executedSteps,
+                        status: TASK_STATUSES.IN_PROGRESS,
+                        dryRun,
+                        error: null
+                    });
+
+                    i += 2;
+                    continue;
                 }
+
+                // Standard single step execution
+                const resolvedParams = this._resolveStepParams(currentStep.params, executedSteps);
+                const stepReceipt = await this._executeAndVerifyStep(currentStep, stepIndex, {
+                    resolvedParams,
+                    dryRun,
+                    abortController,
+                    taskId,
+                    plan
+                });
+
+                executedSteps.push(stepReceipt);
+
+                // Update checkpoint after step execution
+                this.taskContinuityStore.saveCheckpoint({
+                    taskId,
+                    userRequest,
+                    plan,
+                    currentStepIndex: stepIndex,
+                    completedSteps: executedSteps,
+                    status: stepReceipt.verified ? TASK_STATUSES.IN_PROGRESS : TASK_STATUSES.FAILED,
+                    dryRun,
+                    error: stepReceipt.verified ? null : (stepReceipt.result?.error || stepReceipt.verification?.reason)
+                });
+
+                if (!stepReceipt.verified) {
+                    // Honest error reporting and halt
+                    const failureReason = stepReceipt.result?.error || stepReceipt.verification?.reason || 'Tool execution did not succeed';
+                    const hasPriorSuccess = executedSteps.slice(0, -1).some((s) => s.verified);
+                    const terminalState = hasPriorSuccess ? TASK_STATES.PARTIALLY_COMPLETED : TASK_STATES.FAILED;
+                    const terminalStatus = hasPriorSuccess ? TASK_STATUSES.PARTIALLY_COMPLETED : TASK_STATUSES.FAILED;
+
+                    this.statusManager.transition(terminalState, { error: failureReason, executedSteps });
+
+                    if (this.companionBridge) {
+                        this.companionBridge.setEmotion('worried', `Step ${stepIndex} stopped: ${failureReason}`);
+                    }
+
+                    return {
+                        ok: false,
+                        status: 'failed',
+                        lifecycleState: terminalState,
+                        partiallyCompleted: hasPriorSuccess,
+                        taskId,
+                        userRequest,
+                        failedStep: stepReceipt,
+                        executedSteps,
+                        error: failureReason,
+                        dryRun,
+                        verification: { verified: false, failureReason }
+                    };
+                }
+
+                completedStepDescriptions.push(`Step ${stepIndex} (${currentStep.title}): ${stepReceipt.result.status || 'completed'}`);
+                if (stepReceipt.result.result) {
+                    verifiedFacts.push(`${currentStep.toolId}: ${JSON.stringify(stepReceipt.result.result).slice(0, 160)}`);
+                }
+
+                i++;
             }
 
-            // 5. Task Completion & Synthesis
+            // 4. Task Completion & Synthesis
             const visualStep = executedSteps.find((s) => s.toolId === 'visual_inspect' && (s.result?.analysis || s.result?.result?.analysis));
             const visualAnalysis = visualStep ? (visualStep.result?.analysis || visualStep.result?.result?.analysis) : null;
             const completionSummary = visualAnalysis
@@ -476,6 +826,7 @@ class TaskCoordinator {
             return {
                 ok: true,
                 status: 'completed',
+                lifecycleState: TASK_STATES.COMPLETED,
                 taskId,
                 userRequest,
                 replyText: visualAnalysis || completionSummary,
@@ -496,11 +847,20 @@ class TaskCoordinator {
             const finalStatus = isCancelled ? 'cancelled' : 'failed';
             const errorMsg = isCancelled ? 'Task was cancelled by user.' : err.message;
 
-            this.statusManager.failTask(errorMsg);
+            if (isCancelled) {
+                if (this.statusManager.canTransition(TASK_STATES.CANCELLED)) {
+                    this.statusManager.transition(TASK_STATES.CANCELLED, { reason: errorMsg });
+                } else {
+                    this.statusManager.failTask(errorMsg);
+                }
+            } else {
+                this.statusManager.failTask(errorMsg);
+            }
+
             this.taskContinuityStore.saveCheckpoint({
                 taskId,
                 userRequest,
-                status: isCancelled ? TASK_STATUSES.FAILED : TASK_STATUSES.FAILED,
+                status: isCancelled ? TASK_STATUSES.CANCELLED : TASK_STATUSES.FAILED,
                 dryRun,
                 error: errorMsg
             });
@@ -516,6 +876,7 @@ class TaskCoordinator {
                 userRequest,
                 cancelled: isCancelled,
                 error: errorMsg,
+                executedSteps,
                 dryRun,
                 verification: { verified: false, error: errorMsg }
             };
