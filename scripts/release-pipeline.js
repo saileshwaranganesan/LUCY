@@ -136,7 +136,7 @@ async function executeReleasePipeline(options = {}) {
     // STAGE 3: Build Native Worker
     // -------------------------------------------------------------------------
     console.log('\n[STAGE 3] Building Native Windows UI Automation Worker...');
-    const builtWorkerExe = ensureWorkerBuilt(false);
+    const builtWorkerExe = ensureWorkerBuilt(true);
     if (!fs.existsSync(builtWorkerExe)) {
         throw new Error(`Native worker binary missing after build: ${builtWorkerExe}`);
     }

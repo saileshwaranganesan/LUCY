@@ -195,9 +195,18 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
     // 2. INTEGRATION TESTS (REAL LOCAL APPS)
     // ==========================================
 
+    function clearNotepadSessionState() {
+        if (process.platform !== 'win32') return;
+        try {
+            const { execSync } = require('node:child_process');
+            execSync('powershell -Command "Stop-Process -Name notepad -Force -ErrorAction SilentlyContinue; Get-ChildItem -Path \'$env:LOCALAPPDATA\\Packages\\Microsoft.WindowsNotepad_8wekyb3d8bbwe\\LocalState\' -Recurse -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue"', { stdio: 'ignore' });
+        } catch (_) {}
+    }
+
     let realManager = null;
 
     suite.before(() => {
+        clearNotepadSessionState();
         realManager = new DesktopAutomationManager();
     });
 
@@ -205,6 +214,7 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
         if (realManager) {
             realManager.cleanup();
         }
+        clearNotepadSessionState();
     });
 
     await suite.test('Integration: Native UIA Worker Handshake and Discovery', async () => {
@@ -271,7 +281,7 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
         assert.ok(typeof shot.base64 === 'string' && shot.base64.length > 500);
 
         // 7. Close Notepad with savePolicy: dont_save for authorized test changes
-        const closeRes = await realManager.closeApp({ pid: notepadApp.pid }, { savePolicy: 'dont_save' });
+        const closeRes = await realManager.closeApp('Notepad', { savePolicy: 'dont_save' });
         assert.ok(closeRes);
         assert.equal(closeRes.closed, true);
     });
@@ -323,7 +333,7 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
 
         // 1. Launch with named file
         await realManager.launchApp('notepad.exe', `"${tmpFile}"`);
-        await new Promise(r => setTimeout(r, 1200));
+        await new Promise(r => setTimeout(r, 1500));
 
         // 2. Type dirty changes
         await realManager.typeText('Notepad', 'Changes to cancel');
@@ -381,9 +391,11 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
     });
 
     await suite.test('Integration: Notepad Clean Close with No Unsaved Changes', async () => {
+        clearNotepadSessionState();
+        await new Promise(r => setTimeout(r, 600));
         const launchRes = await realManager.launchApp('notepad.exe');
         assert.ok(launchRes.appId);
-        await new Promise(r => setTimeout(r, 1200));
+        await new Promise(r => setTimeout(r, 1500));
 
         const closeRes = await realManager.closeApp('Notepad');
         assert.ok(closeRes);

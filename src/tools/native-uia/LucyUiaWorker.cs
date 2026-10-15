@@ -477,6 +477,16 @@ namespace Lucy.DesktopAutomation
                             {
                                 try
                                 {
+                                    if (targetHwnd != IntPtr.Zero && IsWindow(targetHwnd))
+                                    {
+                                        ForceForegroundWindow(targetHwnd);
+                                        Thread.Sleep(60);
+                                    }
+                                }
+                                catch { }
+
+                                try
+                                {
                                     if (p != null && !p.HasExited) p.CloseMainWindow();
                                 }
                                 catch { }
@@ -532,6 +542,29 @@ namespace Lucy.DesktopAutomation
                                         break;
                                     }
                                 }
+                                if (!exitedAfterDiscard && targetHwnd != IntPtr.Zero && IsWindow(targetHwnd))
+                                {
+                                    try
+                                    {
+                                        ForceForegroundWindow(targetHwnd);
+                                        Thread.Sleep(50);
+                                        keybd_event(0x12, 0, 0, UIntPtr.Zero);
+                                        keybd_event(0x73, 0, 0, UIntPtr.Zero);
+                                        Thread.Sleep(30);
+                                        keybd_event(0x73, 0, 2, UIntPtr.Zero);
+                                        keybd_event(0x12, 0, 2, UIntPtr.Zero);
+                                    }
+                                    catch { }
+                                    for (int d = 0; d < 15; d++)
+                                    {
+                                        Thread.Sleep(100);
+                                        if (!IsWindow(targetHwnd) || !IsWindowVisible(targetHwnd))
+                                        {
+                                            exitedAfterDiscard = true;
+                                            break;
+                                        }
+                                    }
+                                }
                                 SendSuccess(reqId, new Dictionary<string, object>
                                 {
                                     { "closed", exitedAfterDiscard },
@@ -551,6 +584,29 @@ namespace Lucy.DesktopAutomation
                                 bool winGone = (targetHwnd != IntPtr.Zero && (!IsWindow(targetHwnd) || !IsWindowVisible(targetHwnd)));
                                 bool procGone = (targetHwnd == IntPtr.Zero && p != null && p.HasExited);
                                 bool isGone = targetHwnd != IntPtr.Zero ? winGone : procGone;
+                                if (!isGone && targetHwnd != IntPtr.Zero && IsWindow(targetHwnd))
+                                {
+                                    try
+                                    {
+                                        ForceForegroundWindow(targetHwnd);
+                                        Thread.Sleep(50);
+                                        keybd_event(0x12, 0, 0, UIntPtr.Zero);
+                                        keybd_event(0x73, 0, 0, UIntPtr.Zero);
+                                        Thread.Sleep(30);
+                                        keybd_event(0x73, 0, 2, UIntPtr.Zero);
+                                        keybd_event(0x12, 0, 2, UIntPtr.Zero);
+                                    }
+                                    catch { }
+                                    for (int d = 0; d < 15; d++)
+                                    {
+                                        Thread.Sleep(100);
+                                        if (!IsWindow(targetHwnd) || !IsWindowVisible(targetHwnd))
+                                        {
+                                            isGone = true;
+                                            break;
+                                        }
+                                    }
+                                }
                                 SendSuccess(reqId, new Dictionary<string, object>
                                 {
                                     { "closed", isGone },
@@ -1096,32 +1152,20 @@ namespace Lucy.DesktopAutomation
 
         public static DialogInfo DetectDialog(int pid, AutomationElement mainWin)
         {
-            try
-            {
-                AutomationElementCollection topWins = AutomationElement.RootElement.FindAll(TreeScope.Children, Condition.TrueCondition);
-                foreach (AutomationElement w in topWins)
-                {
-                    try
-                    {
-                        if (pid > 0 && w.Current.ProcessId != pid) continue;
-                        string cls = w.Current.ClassName ?? "";
-                        if (cls == "#32770" || (mainWin != null && !w.Equals(mainWin)))
-                        {
-                            var info = InspectDialogElement(w);
-                            if (info != null && info.AvailableActions.Count > 0)
-                            {
-                                info.TopLevelWindow = w;
-                                return info;
-                            }
-                        }
-                    }
-                    catch { }
-                }
-            }
-            catch { }
-
+            // 1. Inspect mainWin for embedded ContentDialog (e.g. Windows 11 WinUI 3 Notepad)
             if (mainWin != null)
             {
+                try
+                {
+                    var directInfo = InspectDialogElement(mainWin);
+                    if (directInfo != null && (directInfo.ActionButtons.ContainsKey("dont_save") || directInfo.ActionButtons.ContainsKey("save")))
+                    {
+                        directInfo.TopLevelWindow = mainWin;
+                        return directInfo;
+                    }
+                }
+                catch { }
+
                 try
                 {
                     AutomationElementCollection descendants = mainWin.FindAll(TreeScope.Descendants,
@@ -1139,7 +1183,7 @@ namespace Lucy.DesktopAutomation
                             if (cls == "#32770" || autoId.IndexOf("ContentDialog", StringComparison.OrdinalIgnoreCase) >= 0 || autoId.IndexOf("Dialog", StringComparison.OrdinalIgnoreCase) >= 0)
                             {
                                 var info = InspectDialogElement(d);
-                                if (info != null && info.AvailableActions.Count > 0)
+                                if (info != null && (info.ActionButtons.ContainsKey("dont_save") || info.ActionButtons.ContainsKey("save")))
                                 {
                                     info.TopLevelWindow = mainWin;
                                     return info;
@@ -1148,16 +1192,42 @@ namespace Lucy.DesktopAutomation
                         }
                         catch { }
                     }
-
-                    var directInfo = InspectDialogElement(mainWin);
-                    if (directInfo != null && directInfo.ActionButtons.ContainsKey("dont_save"))
-                    {
-                        directInfo.TopLevelWindow = mainWin;
-                        return directInfo;
-                    }
                 }
                 catch { }
             }
+
+            // 2. Check top-level windows for modal dialogs (#32770 or separate dialog windows)
+            try
+            {
+                AutomationElementCollection topWins = AutomationElement.RootElement.FindAll(TreeScope.Children, Condition.TrueCondition);
+                foreach (AutomationElement w in topWins)
+                {
+                    try
+                    {
+                        if (mainWin != null && w.Equals(mainWin)) continue;
+
+                        int wPid = w.Current.ProcessId;
+                        string cls = w.Current.ClassName ?? "";
+
+                        // If pid is specified and differs, only consider it if it's explicitly a #32770 dialog
+                        if (pid > 0 && wPid != pid && cls != "#32770") continue;
+
+                        var info = InspectDialogElement(w);
+                        if (info != null)
+                        {
+                            bool hasSaveOrDiscard = info.ActionButtons.ContainsKey("dont_save") || info.ActionButtons.ContainsKey("save");
+                            bool isWin32Dialog = cls == "#32770" && info.AvailableActions.Count > 0;
+                            if (hasSaveOrDiscard || isWin32Dialog)
+                            {
+                                info.TopLevelWindow = w;
+                                return info;
+                            }
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
 
             return null;
         }

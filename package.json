@@ -5,7 +5,7 @@
   "main": "src/main/index.js",
   "scripts": {
     "start": "electron .",
-    "build:worker": "node src/tools/native-uia/build-worker.js",
+    "build:worker": "node src/tools/native-uia/build-worker.js --force",
     "provision:whisper": "node scripts/provision-whisper.js",
     "verify:whisper": "node scripts/provision-whisper.js --verify-only",
     "package:dir": "npm run build:worker && npm run provision:whisper && electron-builder --win --dir",
