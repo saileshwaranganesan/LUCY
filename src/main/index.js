@@ -593,9 +593,21 @@ ipcMain.handle('lucy:toggleCompanionWindow', async (_event, options = {}) => {
     return { ok: true, isOpen };
 });
 
+ipcMain.handle('lucy:summonCompanionWindow', async () => {
+    if (!floatingCompanion) return { ok: false, summoned: false };
+    floatingCompanion.summonToFront();
+    return { ok: true, summoned: true, isOpen: true };
+});
+
+ipcMain.handle('lucy:setCompanionPin', async (_event, isPinned) => {
+    if (!floatingCompanion) return { ok: false, isPinned: false };
+    const pinned = floatingCompanion.setPinned(isPinned);
+    return { ok: true, isPinned: pinned };
+});
+
 ipcMain.handle('lucy:getCompanionStatus', async () => {
-    if (!floatingCompanion) return { ok: false, isOpen: false };
-    return { ok: true, isOpen: floatingCompanion.isOpen() };
+    if (!floatingCompanion) return { ok: false, isOpen: false, isPinned: true };
+    return { ok: true, ...floatingCompanion.getStatus() };
 });
 
 ipcMain.on('lucy:sendVoiceState', (_event, voiceData) => {

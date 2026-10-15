@@ -3,22 +3,23 @@
 /**
  * CelestialFamiliarRenderer
  * Unified high-fidelity canvas rendering engine for L.U.C.Y.'s cute, feminine,
- * luminous fairy companion.
+ * fantasy fairy companion.
  * 
- * Features:
- * - Luminous pearlescent face with rosy blush and expressive look-at-mouse tracking.
- * - Captivating chibi/anime eyes with rich iridescent iris gradients, dual sparkles, and blinking.
- * - Slender arching antennae with glowing pearls that bob with spring physics.
- * - Petite feminine fairy silhouette with a glowing heart/crystal emblem on her chest.
- * - Layered translucent petal skirt that sways in the magical breeze.
- * - Multi-layered double iridescent fairy wings with cyan-lavender-pearl gradients & veins.
- * - Orbiting stardust motes, dynamic trailing particle ribbons, and burst effects for Pet & Magic.
- * - Seamless animation lifecycle: Idle, Pet, Magic, Takeoff, Landing, Speaking, Thinking, Working, etc.
+ * Target Aesthetic:
+ * - Cute chibi proportions with a balanced, rounded silhouette.
+ * - Soft celestial palette: soft sky cyan, ethereal lavender, lilac violet,
+ *   petal rose pink, and starlight champagne gold.
+ * - Elegant 4-winged gossamer fairy wings with translucent iridescence & glowing veins.
+ * - Soft layered celestial hair bangs, twin delicate side curls, and pointed fairy ears.
+ * - Luminous starlight fairy tiara / circlet with a glowing pulsing star crystal.
+ * - Expressive chibi anime eyes with deep iris gradients, dual catchlights, and look-at tracking.
+ * - Layered translucent flower petal dress and glowing heart/star brooch.
+ * - Subtle ambient stardust motes and particle ribbons.
  */
 class CelestialFamiliarRenderer {
     constructor(canvas, options = {}) {
         this.canvas = canvas;
-        this.ctx = canvas.getContext('2d');
+        this.ctx = canvas ? canvas.getContext('2d') : null;
         this.options = options;
 
         this.state = {
@@ -33,6 +34,7 @@ class CelestialFamiliarRenderer {
             hoverPhase: 0,
             wingPhase: 0,
             skirtSway: 0,
+            hairSway: 0,
             antennaeSway: 0,
             // Action animations
             actionTimer: 0,
@@ -57,13 +59,13 @@ class CelestialFamiliarRenderer {
         this.orbitParticles = [];
         for (let i = 0; i < 32; i++) {
             this.orbitParticles.push({
-                x: (Math.random() - 0.5) * 160,
-                y: (Math.random() - 0.5) * 160,
-                radius: Math.random() * 2.2 + 0.8,
+                x: (Math.random() - 0.5) * 120,
+                y: (Math.random() - 0.5) * 120,
+                radius: Math.random() * 1.8 + 0.6,
                 angle: Math.random() * Math.PI * 2,
-                speed: (Math.random() * 0.015 + 0.008) * (Math.random() > 0.5 ? 1 : -1),
-                distance: Math.random() * 70 + 25,
-                alpha: Math.random() * 0.7 + 0.3,
+                speed: (Math.random() * 0.012 + 0.006) * (Math.random() > 0.5 ? 1 : -1),
+                distance: Math.random() * 52 + 22,
+                alpha: Math.random() * 0.6 + 0.3,
                 pulseSpeed: Math.random() * 2 + 1
             });
         }
@@ -99,7 +101,6 @@ class CelestialFamiliarRenderer {
             this.state.emotion = visualState.emotion;
         }
 
-        // Trigger special bursts on state changes
         if (this.state.emotion === 'pet' && prevEmotion !== 'pet') {
             this.triggerPetBurst();
         } else if (this.state.emotion === 'magic' && prevEmotion !== 'magic') {
@@ -114,19 +115,20 @@ class CelestialFamiliarRenderer {
     triggerPetBurst() {
         this.state.actionTimer = 0;
         this.state.actionDuration = 1.6;
+        this.burstParticles = [];
         for (let i = 0; i < 24; i++) {
             const angle = (i / 24) * Math.PI * 2;
-            const speed = Math.random() * 2.5 + 1.5;
+            const speed = Math.random() * 2.2 + 1.2;
             this.burstParticles.push({
                 x: 0,
                 y: -10,
                 vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed - 0.5,
-                radius: Math.random() * 3 + 1.5,
+                vy: Math.sin(angle) * speed - 0.4,
+                radius: Math.random() * 2.8 + 1.4,
                 alpha: 1,
                 decay: 0.02 + Math.random() * 0.02,
-                color: Math.random() > 0.4 ? '#ff69b4' : '#ffd166',
-                shape: Math.random() > 0.5 ? 'heart' : 'sparkle'
+                color: Math.random() > 0.4 ? '#ff85a1' : '#ffd166',
+                shape: Math.random() > 0.45 ? 'heart' : 'sparkle'
             });
         }
     }
@@ -137,17 +139,17 @@ class CelestialFamiliarRenderer {
         this.state.spinAngle = 0;
         for (let i = 0; i < 36; i++) {
             const angle = Math.random() * Math.PI * 2;
-            const dist = Math.random() * 40 + 10;
-            const speed = Math.random() * 3 + 2;
+            const dist = Math.random() * 35 + 10;
+            const speed = Math.random() * 2.6 + 1.6;
             this.burstParticles.push({
                 x: Math.cos(angle) * dist,
                 y: Math.sin(angle) * dist,
                 vx: Math.cos(angle + Math.PI / 2) * speed * 0.7,
-                vy: Math.sin(angle + Math.PI / 2) * speed * 0.7 - 1.2,
-                radius: Math.random() * 3.5 + 1.5,
+                vy: Math.sin(angle + Math.PI / 2) * speed * 0.7 - 0.9,
+                radius: Math.random() * 3 + 1.2,
                 alpha: 1,
                 decay: 0.018 + Math.random() * 0.02,
-                color: ['#00f5d4', '#ffd166', '#b388ff', '#ffffff'][i % 4],
+                color: ['#70d6ff', '#ffd166', '#b388ff', '#ff85a1'][i % 4],
                 shape: 'sparkle'
             });
         }
@@ -161,7 +163,7 @@ class CelestialFamiliarRenderer {
     triggerLanding() {
         this.state.actionTimer = 0;
         this.state.actionDuration = 1.0;
-        this.state.transitionOffset = -140;
+        this.state.transitionOffset = -120;
     }
 
     start() {
@@ -191,35 +193,32 @@ class CelestialFamiliarRenderer {
         this.state.currentEyeY += (this.state.eyeTargetY - this.state.currentEyeY) * Math.min(1, dt * 8);
 
         // Hover & wing frequencies adapt dynamically
-        let hoverSpeed = 2.4;
-        let hoverAmp = 9;
-        let wingSpeed = 14;
+        let hoverSpeed = 2.2;
+        let hoverAmp = 7;
+        let wingSpeed = 12;
 
         if (this.state.emotion === 'takeoff') {
-            wingSpeed = 28;
+            wingSpeed = 24;
             this.state.actionTimer += dt;
             const prog = Math.min(1, this.state.actionTimer / this.state.actionDuration);
-            // Rise upward and fade
-            this.state.transitionOffset = -prog * 180;
-            this.state.opacity = Math.max(0, 1 - prog * 1.5);
-            // Spawn launch trail
-            if (Math.random() < 0.6) {
+            this.state.transitionOffset = -prog * 150;
+            this.state.opacity = Math.max(0, 1 - prog * 1.4);
+            if (Math.random() < 0.5) {
                 this.trailParticles.push({
-                    x: (Math.random() - 0.5) * 30,
-                    y: 20,
-                    vx: (Math.random() - 0.5) * 1.5,
-                    vy: Math.random() * 2 + 1,
-                    radius: Math.random() * 3 + 1,
+                    x: (Math.random() - 0.5) * 24,
+                    y: 18,
+                    vx: (Math.random() - 0.5) * 1.2,
+                    vy: Math.random() * 1.8 + 0.8,
+                    radius: Math.random() * 2.5 + 1,
                     alpha: 1,
                     decay: 0.03
                 });
             }
         } else if (this.state.emotion === 'landing') {
-            wingSpeed = 22;
+            wingSpeed = 20;
             this.state.actionTimer += dt;
             const prog = Math.min(1, this.state.actionTimer / this.state.actionDuration);
-            // Decelerate downward into position
-            this.state.transitionOffset = (1 - prog) * -120;
+            this.state.transitionOffset = (1 - prog) * -100;
             this.state.opacity = Math.min(1, prog * 1.8);
             if (prog >= 1) {
                 this.state.emotion = 'happy';
@@ -231,40 +230,41 @@ class CelestialFamiliarRenderer {
             this.state.opacity = 1;
 
             if (this.state.emotion === 'speaking') {
-                hoverSpeed = 3.2;
-                wingSpeed = 16;
-            } else if (this.state.emotion === 'working') {
                 hoverSpeed = 2.8;
-                wingSpeed = 18;
+                wingSpeed = 15;
+            } else if (this.state.emotion === 'working') {
+                hoverSpeed = 2.5;
+                wingSpeed = 16;
             } else if (this.state.emotion === 'pet') {
-                hoverSpeed = 3.5;
-                hoverAmp = 12;
-                wingSpeed = 20;
+                hoverSpeed = 3.2;
+                hoverAmp = 9;
+                wingSpeed = 18;
             } else if (this.state.emotion === 'magic') {
-                wingSpeed = 24;
+                wingSpeed = 22;
                 this.state.actionTimer += dt;
-                this.state.spinAngle += dt * Math.PI * 4;
+                this.state.spinAngle += dt * Math.PI * 3.5;
                 if (this.state.actionTimer >= this.state.actionDuration) {
                     this.state.emotion = 'happy';
                     this.state.spinAngle = 0;
                 }
             } else if (this.state.emotion === 'sleep') {
-                hoverSpeed = 1.2;
-                hoverAmp = 4;
-                wingSpeed = 6;
+                hoverSpeed = 1.0;
+                hoverAmp = 3.5;
+                wingSpeed = 5;
             }
         }
 
         this.state.hoverPhase = Math.sin(sec * hoverSpeed) * hoverAmp;
         this.state.wingPhase = Math.sin(sec * wingSpeed);
-        this.state.skirtSway = Math.sin(sec * (hoverSpeed * 1.1) + 0.4) * 5;
-        this.state.antennaeSway = Math.sin(sec * (hoverSpeed * 0.9) - 0.3) * 3;
+        this.state.skirtSway = Math.sin(sec * (hoverSpeed * 1.1) + 0.4) * 4;
+        this.state.hairSway = Math.sin(sec * (hoverSpeed * 0.95) - 0.2) * 2.5;
+        this.state.antennaeSway = this.state.hairSway;
 
-        // Blinking cycle every ~3.6s
+        // Blinking cycle every ~3.8s
         this.state.blinkTimer += dt;
-        if (this.state.blinkTimer > 3.6 && this.state.emotion !== 'sleep') {
-            this.state.blinkProgress = Math.sin((this.state.blinkTimer - 3.6) * Math.PI * 6.5);
-            if (this.state.blinkTimer > 3.9) {
+        if (this.state.blinkTimer > 3.8 && this.state.emotion !== 'sleep') {
+            this.state.blinkProgress = Math.sin((this.state.blinkTimer - 3.8) * Math.PI * 6.5);
+            if (this.state.blinkTimer > 4.1) {
                 this.state.blinkTimer = Math.random() * 0.6;
                 this.state.blinkProgress = 0;
             }
@@ -293,14 +293,14 @@ class CelestialFamiliarRenderer {
         }
 
         // Idle stardust spawn behind fairy in flight or hover
-        if (Math.random() < 0.25) {
+        if (Math.random() < 0.2) {
             this.trailParticles.push({
-                x: (Math.random() - 0.5) * 40,
-                y: 25 + Math.random() * 10,
-                vx: (Math.random() - 0.5) * 0.8,
-                vy: Math.random() * 1 + 0.3,
-                radius: Math.random() * 2 + 0.8,
-                alpha: 0.8,
+                x: (Math.random() - 0.5) * 30,
+                y: 18 + Math.random() * 8,
+                vx: (Math.random() - 0.5) * 0.6,
+                vy: Math.random() * 0.8 + 0.2,
+                radius: Math.random() * 1.6 + 0.6,
+                alpha: 0.75,
                 decay: 0.025
             });
         }
@@ -311,105 +311,125 @@ class CelestialFamiliarRenderer {
             case 'happy':
             case 'pet':
                 return {
-                    core: '#00f5d4',
+                    core: '#ff85a1',
                     accent: '#ffd166',
-                    aura: 'rgba(0, 245, 212, 0.42)',
-                    eyes: '#48cae4',
-                    wingsInner: 'rgba(0, 245, 212, 0.55)',
-                    wingsOuter: 'rgba(179, 136, 255, 0.4)',
-                    dress: 'rgba(0, 245, 212, 0.6)'
+                    aura: 'rgba(255, 133, 161, 0.35)',
+                    eyes: '#ff70a6',
+                    wingsInner: 'rgba(255, 133, 161, 0.52)',
+                    wingsOuter: 'rgba(255, 209, 102, 0.45)',
+                    dress: 'rgba(255, 133, 161, 0.6)',
+                    hair: '#f5d0fe',
+                    hairAccent: '#c084fc'
                 };
             case 'speaking':
             case 'talking':
                 return {
-                    core: '#38ef7d',
-                    accent: '#00f5d4',
-                    aura: 'rgba(56, 239, 125, 0.5)',
-                    eyes: '#80ed99',
-                    wingsInner: 'rgba(56, 239, 125, 0.55)',
-                    wingsOuter: 'rgba(72, 202, 228, 0.4)',
-                    dress: 'rgba(56, 239, 125, 0.6)'
+                    core: '#70d6ff',
+                    accent: '#ffd166',
+                    aura: 'rgba(112, 214, 255, 0.36)',
+                    eyes: '#70d6ff',
+                    wingsInner: 'rgba(112, 214, 255, 0.52)',
+                    wingsOuter: 'rgba(179, 136, 255, 0.44)',
+                    dress: 'rgba(112, 214, 255, 0.6)',
+                    hair: '#ddd6fe',
+                    hairAccent: '#9d4edd'
                 };
             case 'listening':
                 return {
                     core: '#ff70a6',
                     accent: '#ffd166',
-                    aura: 'rgba(255, 112, 166, 0.5)',
+                    aura: 'rgba(255, 112, 166, 0.38)',
                     eyes: '#ff9ebb',
-                    wingsInner: 'rgba(255, 112, 166, 0.55)',
-                    wingsOuter: 'rgba(179, 136, 255, 0.4)',
-                    dress: 'rgba(255, 112, 166, 0.6)'
+                    wingsInner: 'rgba(255, 112, 166, 0.52)',
+                    wingsOuter: 'rgba(196, 181, 253, 0.42)',
+                    dress: 'rgba(255, 112, 166, 0.6)',
+                    hair: '#fbcfe8',
+                    hairAccent: '#f472b6'
                 };
             case 'thinking':
             case 'focused':
                 return {
                     core: '#b388ff',
-                    accent: '#00f5d4',
-                    aura: 'rgba(179, 136, 255, 0.5)',
-                    eyes: '#d8b4fe',
-                    wingsInner: 'rgba(179, 136, 255, 0.55)',
-                    wingsOuter: 'rgba(72, 202, 228, 0.45)',
-                    dress: 'rgba(179, 136, 255, 0.6)'
+                    accent: '#70d6ff',
+                    aura: 'rgba(179, 136, 255, 0.38)',
+                    eyes: '#c084fc',
+                    wingsInner: 'rgba(179, 136, 255, 0.52)',
+                    wingsOuter: 'rgba(112, 214, 255, 0.44)',
+                    dress: 'rgba(179, 136, 255, 0.6)',
+                    hair: '#ddd6fe',
+                    hairAccent: '#8b5cf6'
                 };
             case 'working':
                 return {
-                    core: '#06d6a0',
+                    core: '#38bdf8',
                     accent: '#ffd166',
-                    aura: 'rgba(6, 214, 160, 0.48)',
-                    eyes: '#70e000',
-                    wingsInner: 'rgba(6, 214, 160, 0.55)',
-                    wingsOuter: 'rgba(0, 245, 212, 0.4)',
-                    dress: 'rgba(6, 214, 160, 0.6)'
+                    aura: 'rgba(56, 189, 248, 0.36)',
+                    eyes: '#38bdf8',
+                    wingsInner: 'rgba(56, 189, 248, 0.52)',
+                    wingsOuter: 'rgba(179, 136, 255, 0.42)',
+                    dress: 'rgba(56, 189, 248, 0.58)',
+                    hair: '#c4b5fd',
+                    hairAccent: '#818cf8'
                 };
             case 'worried':
                 return {
-                    core: '#ff8da1',
-                    accent: '#ffb703',
-                    aura: 'rgba(255, 141, 161, 0.4)',
-                    eyes: '#ffccd5',
-                    wingsInner: 'rgba(255, 141, 161, 0.45)',
-                    wingsOuter: 'rgba(255, 183, 3, 0.35)',
-                    dress: 'rgba(255, 141, 161, 0.5)'
+                    core: '#fb7185',
+                    accent: '#fed7aa',
+                    aura: 'rgba(251, 113, 133, 0.32)',
+                    eyes: '#fda4af',
+                    wingsInner: 'rgba(251, 113, 133, 0.45)',
+                    wingsOuter: 'rgba(254, 215, 170, 0.35)',
+                    dress: 'rgba(251, 113, 133, 0.5)',
+                    hair: '#e2e8f0',
+                    hairAccent: '#cbd5e1'
                 };
             case 'curious':
                 return {
                     core: '#ffd166',
-                    accent: '#00f5d4',
-                    aura: 'rgba(255, 209, 102, 0.48)',
-                    eyes: '#ffeaa7',
-                    wingsInner: 'rgba(255, 209, 102, 0.55)',
-                    wingsOuter: 'rgba(255, 112, 166, 0.4)',
-                    dress: 'rgba(255, 209, 102, 0.6)'
+                    accent: '#70d6ff',
+                    aura: 'rgba(255, 209, 102, 0.38)',
+                    eyes: '#fef08a',
+                    wingsInner: 'rgba(255, 209, 102, 0.52)',
+                    wingsOuter: 'rgba(179, 136, 255, 0.42)',
+                    dress: 'rgba(255, 209, 102, 0.6)',
+                    hair: '#fef08a',
+                    hairAccent: '#f59e0b'
                 };
             case 'magic':
                 return {
                     core: '#ffd166',
-                    accent: '#00f5d4',
-                    aura: 'rgba(255, 215, 0, 0.6)',
+                    accent: '#f472b6',
+                    aura: 'rgba(255, 209, 102, 0.48)',
                     eyes: '#ffffff',
-                    wingsInner: 'rgba(255, 215, 0, 0.65)',
-                    wingsOuter: 'rgba(0, 245, 212, 0.6)',
-                    dress: 'rgba(255, 215, 0, 0.7)'
+                    wingsInner: 'rgba(255, 209, 102, 0.62)',
+                    wingsOuter: 'rgba(244, 114, 182, 0.52)',
+                    dress: 'rgba(255, 209, 102, 0.65)',
+                    hair: '#fdf4ff',
+                    hairAccent: '#e879f9'
                 };
             case 'sleep':
                 return {
-                    core: '#708090',
-                    accent: '#a0aec0',
-                    aura: 'rgba(112, 128, 144, 0.25)',
+                    core: '#94a3b8',
+                    accent: '#cbd5e1',
+                    aura: 'rgba(148, 163, 184, 0.2)',
                     eyes: '#cbd5e1',
-                    wingsInner: 'rgba(112, 128, 144, 0.3)',
-                    wingsOuter: 'rgba(74, 85, 104, 0.25)',
-                    dress: 'rgba(112, 128, 144, 0.35)'
+                    wingsInner: 'rgba(148, 163, 184, 0.28)',
+                    wingsOuter: 'rgba(100, 116, 139, 0.22)',
+                    dress: 'rgba(148, 163, 184, 0.32)',
+                    hair: '#94a3b8',
+                    hairAccent: '#64748b'
                 };
-            default:
+            default: // idle
                 return {
-                    core: '#00f5d4',
+                    core: '#70d6ff',
                     accent: '#ffd166',
-                    aura: 'rgba(0, 245, 212, 0.38)',
-                    eyes: '#48cae4',
-                    wingsInner: 'rgba(0, 245, 212, 0.5)',
-                    wingsOuter: 'rgba(179, 136, 255, 0.4)',
-                    dress: 'rgba(0, 245, 212, 0.55)'
+                    aura: 'rgba(112, 214, 255, 0.3)',
+                    eyes: '#70d6ff',
+                    wingsInner: 'rgba(112, 214, 255, 0.48)',
+                    wingsOuter: 'rgba(179, 136, 255, 0.42)',
+                    dress: 'rgba(179, 136, 255, 0.55)',
+                    hair: '#c4b5fd',
+                    hairAccent: '#8b5cf6'
                 };
         }
     }
@@ -421,8 +441,12 @@ class CelestialFamiliarRenderer {
         this.ctx.clearRect(0, 0, width, height);
 
         const cx = width / 2;
-        const cy = height * 0.48 + this.state.hoverPhase + this.state.transitionOffset;
+        const cy = height * 0.52 + this.state.hoverPhase + this.state.transitionOffset;
         const palette = this._getColorPalette();
+
+        // Calculate responsive scale factor so character remains compact,
+        // proportionate, and completely within canvas bounds with zero distortion.
+        const baseScale = Math.min(width / 240, height / 220);
 
         this.ctx.save();
         if (this.state.opacity < 1) {
@@ -430,296 +454,442 @@ class CelestialFamiliarRenderer {
         }
 
         // Apply scale & spin transformations during special actions
+        this.ctx.translate(cx, cy);
+        this.ctx.scale(baseScale, baseScale);
+
         if (this.state.spinAngle !== 0) {
-            this.ctx.translate(cx, cy);
             this.ctx.rotate(this.state.spinAngle);
-            this.ctx.translate(-cx, -cy);
         }
 
-        // 1. Draw Orbiting Star Particles
-        this._renderOrbitParticles(cx, cy, palette, time);
+        // 1. Draw Orbiting Star Particles (scaled relative to character)
+        this._renderOrbitParticles(palette, time);
 
         // 2. Draw Trailing Stardust Ribbon
-        this._renderTrailingParticles(cx, cy);
+        this._renderTrailingParticles();
 
-        // 3. Multi-Layered Iridescent Fairy Wings (Drawn behind body)
-        this._renderFairyWings(cx, cy, palette);
+        // 3. Multi-Layered Gossamer Fairy Wings (Drawn behind body)
+        this._renderFairyWings(palette);
 
         // 4. Ethereal Soft Outer Aura
-        this._renderSoftAura(cx, cy, palette);
+        this._renderSoftAura(palette);
 
-        // 5. Petite Fairy Dress / Petal Skirt
-        this._renderPetalDress(cx, cy, palette);
+        // 5. Back Hair Volume (Soft feminine silhouette framing head & shoulders)
+        this._renderBackHair(palette);
 
-        // 6. Luminous Fairy Torso & Glowing Heart Gem
-        this._renderFairyTorso(cx, cy, palette);
+        // 6. Petite Fairy Dress / Multi-Layered Petal Skirt
+        this._renderPetalDress(palette);
 
-        // 7. Luminous Head & Soft Face
-        this._renderFairyHead(cx, cy, palette);
+        // 7. Petite Fairy Torso & Glowing Star Brooch
+        this._renderFairyTorso(palette);
 
-        // 8. Delicate Arching Antennae with Glowing Pearl Tips
-        this._renderAntennae(cx, cy, palette);
+        // 8. Cute Rounded Chibi Head & Luminous Porcelain Face
+        this._renderFairyHead(palette);
 
-        // 9. Expressive Chibi/Anime Eyes with Look-At Tracking & Blinking
-        this._renderFairyEyes(cx, cy, palette);
+        // 9. Pointed Fairy Elf Ears with Soft Blush
+        this._renderFairyEars(palette);
 
-        // 10. Rosy Cheeks & Animated Speaking Mouth
-        this._renderCheeksAndMouth(cx, cy, palette, time);
+        // 10. Soft Celestial Hair: Layered Bangs & Floating Side Curls
+        this._renderFairyHair(palette);
 
-        // 11. Delicate Little Hands Resting Gently in Front
-        this._renderFairyHands(cx, cy, palette);
+        // 11. Delicate Starlight Tiara / Circlet with Glowing Star Crystal
+        this._renderFairyTiara(palette);
 
-        // 12. Draw Burst Particles (Hearts / Sparkles from Pet or Magic)
-        this._renderBurstParticles(cx, cy);
+        // 12. Expressive Chibi/Anime Eyes with Look-At Tracking & Blinking
+        this._renderFairyEyes(palette);
+
+        // 13. Rosy Cheeks & Animated Speaking Mouth
+        this._renderCheeksAndMouth(palette, time);
+
+        // 14. Delicate Little Fairy Hands Resting Gracefully
+        this._renderFairyHands(palette);
+
+        // 15. Draw Burst Particles (Hearts / Sparkles from Pet or Magic)
+        this._renderBurstParticles();
 
         this.ctx.restore();
     }
 
-    _renderOrbitParticles(cx, cy, palette, time) {
+    _renderOrbitParticles(palette, time) {
         const sec = time / 1000;
         for (const p of this.orbitParticles) {
             p.angle += p.speed;
-            const px = cx + Math.cos(p.angle) * p.distance;
-            const py = cy + Math.sin(p.angle) * (p.distance * 0.42);
+            const px = Math.cos(p.angle) * p.distance;
+            const py = Math.sin(p.angle) * (p.distance * 0.44);
             const pulse = (Math.sin(sec * p.pulseSpeed + p.angle) + 1) * 0.5;
 
             this.ctx.beginPath();
             this.ctx.arc(px, py, p.radius * (0.8 + pulse * 0.4), 0, Math.PI * 2);
-            this.ctx.fillStyle = p.radius > 1.8 ? palette.accent : palette.aura;
-            this.ctx.globalAlpha = p.alpha * (0.4 + pulse * 0.6) * this.state.opacity;
+            this.ctx.fillStyle = p.radius > 1.4 ? palette.accent : palette.aura;
+            this.ctx.globalAlpha = p.alpha * (0.35 + pulse * 0.5) * this.state.opacity;
             this.ctx.fill();
         }
         this.ctx.globalAlpha = this.state.opacity;
     }
 
-    _renderTrailingParticles(cx, cy) {
+    _renderTrailingParticles() {
         for (const p of this.trailParticles) {
             this.ctx.save();
             this.ctx.beginPath();
-            this.ctx.arc(cx + p.x, cy + p.y, p.radius, 0, Math.PI * 2);
+            this.ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
             this.ctx.fillStyle = '#ffd166';
             this.ctx.globalAlpha = Math.max(0, p.alpha * this.state.opacity);
-            this.ctx.shadowColor = '#00f5d4';
-            this.ctx.shadowBlur = 6;
+            this.ctx.shadowColor = '#ffd166';
+            this.ctx.shadowBlur = 5;
             this.ctx.fill();
             this.ctx.restore();
         }
     }
 
-    _renderFairyWings(cx, cy, palette) {
+    _renderFairyWings(palette) {
         this.ctx.save();
-        this.ctx.translate(cx, cy - 8);
+        this.ctx.translate(0, -6);
 
-        const wingSpread = 1 + this.state.wingPhase * 0.16;
-        const wingFlapY = Math.sin(this.state.wingPhase * 0.8) * 4;
+        const wingSpread = 1 + this.state.wingPhase * 0.15;
+        const wingFlapY = Math.sin(this.state.wingPhase * 0.8) * 3.5;
 
-        // Left Double Wing Set
+        // Left Wing Pair
         this._drawWingPair(-1, wingSpread, wingFlapY, palette);
 
-        // Right Double Wing Set
+        // Right Wing Pair
         this._drawWingPair(1, wingSpread, wingFlapY, palette);
 
         this.ctx.restore();
     }
 
     _drawWingPair(side, spread, flapY, palette) {
-        // Upper Primary Wing (Graceful Teardrop)
         this.ctx.save();
         this.ctx.scale(side, 1);
 
-        const upperGrad = this.ctx.createLinearGradient(0, 0, 50 * spread, -35);
+        // --- Upper Primary Gossamer Fairy Wing ---
+        const upperGrad = this.ctx.createLinearGradient(0, -8, 48 * spread, -38);
         upperGrad.addColorStop(0, palette.wingsInner);
-        upperGrad.addColorStop(0.6, palette.wingsOuter);
-        upperGrad.addColorStop(1, 'rgba(255, 255, 255, 0.7)');
+        upperGrad.addColorStop(0.55, palette.wingsOuter);
+        upperGrad.addColorStop(0.9, 'rgba(255, 255, 255, 0.75)');
+        upperGrad.addColorStop(1, 'rgba(255, 209, 102, 0.6)');
 
         this.ctx.beginPath();
-        this.ctx.moveTo(8, -4);
-        this.ctx.bezierCurveTo(24, -28 + flapY, 52 * spread, -46 + flapY, 56 * spread, -18 + flapY);
-        this.ctx.bezierCurveTo(58 * spread, 6, 26, 4, 8, 2);
+        this.ctx.moveTo(6, -6);
+        // Graceful swept arch reaching up and outward like a delicate fairy butterfly wing
+        this.ctx.bezierCurveTo(18, -34 + flapY, 48 * spread, -50 + flapY, 52 * spread, -24 + flapY);
+        // Delicate scalloped outer curve
+        this.ctx.bezierCurveTo(54 * spread, -6, 44 * spread, 4, 22, 3);
+        this.ctx.bezierCurveTo(14, 2, 8, -2, 6, -6);
         this.ctx.fillStyle = upperGrad;
         this.ctx.shadowColor = palette.core;
-        this.ctx.shadowBlur = 14;
+        this.ctx.shadowBlur = 10;
         this.ctx.fill();
 
-        // Delicate glowing wing vein
+        // Delicate stardust wing veins
         this.ctx.beginPath();
-        this.ctx.moveTo(8, -4);
-        this.ctx.quadraticCurveTo(32 * spread, -20 + flapY, 48 * spread, -18 + flapY);
-        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
-        this.ctx.lineWidth = 1.1;
+        this.ctx.moveTo(6, -6);
+        this.ctx.quadraticCurveTo(28 * spread, -22 + flapY, 46 * spread, -24 + flapY);
+        this.ctx.moveTo(18 * spread, -18 + flapY * 0.6);
+        this.ctx.quadraticCurveTo(34 * spread, -36 + flapY * 0.8, 42 * spread, -40 + flapY);
+        this.ctx.moveTo(24 * spread, -12 + flapY * 0.4);
+        this.ctx.quadraticCurveTo(38 * spread, -4 + flapY * 0.4, 46 * spread, -10 + flapY);
+        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+        this.ctx.lineWidth = 0.9;
         this.ctx.stroke();
 
-        // Lower Secondary Wing (Softer rounded petal)
-        const lowerGrad = this.ctx.createLinearGradient(0, 0, 36 * spread, 24);
+        // Sparkle gem at upper wing tip
+        this.ctx.beginPath();
+        this.ctx.arc(52 * spread, -24 + flapY, 1.8, 0, Math.PI * 2);
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.shadowColor = '#ffd166';
+        this.ctx.shadowBlur = 6;
+        this.ctx.fill();
+
+        // --- Lower Secondary Gossamer Wing ---
+        const lowerGrad = this.ctx.createLinearGradient(0, 2, 32 * spread, 26);
         lowerGrad.addColorStop(0, palette.wingsInner);
-        lowerGrad.addColorStop(1, 'rgba(179, 136, 255, 0.45)');
+        lowerGrad.addColorStop(0.7, palette.wingsOuter);
+        lowerGrad.addColorStop(1, 'rgba(255, 255, 255, 0.5)');
 
         this.ctx.beginPath();
-        this.ctx.moveTo(8, 2);
-        this.ctx.bezierCurveTo(22, 10, 42 * spread, 26 + flapY * 0.5, 34 * spread, 34);
-        this.ctx.bezierCurveTo(24 * spread, 38, 12, 18, 6, 8);
+        this.ctx.moveTo(6, 1);
+        this.ctx.bezierCurveTo(18, 10, 36 * spread, 28 + flapY * 0.4, 28 * spread, 34);
+        this.ctx.bezierCurveTo(18 * spread, 36, 10, 16, 6, 1);
         this.ctx.fillStyle = lowerGrad;
-        this.ctx.shadowBlur = 8;
+        this.ctx.shadowBlur = 6;
         this.ctx.fill();
+
+        // Lower wing vein
+        this.ctx.beginPath();
+        this.ctx.moveTo(6, 1);
+        this.ctx.quadraticCurveTo(18 * spread, 18, 24 * spread, 30);
+        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+        this.ctx.lineWidth = 0.8;
+        this.ctx.stroke();
 
         this.ctx.restore();
     }
 
-    _renderSoftAura(cx, cy, palette) {
-        const auraGrad = this.ctx.createRadialGradient(cx, cy - 6, 12, cx, cy - 6, 82);
+    _renderSoftAura(palette) {
+        const auraGrad = this.ctx.createRadialGradient(0, -6, 10, 0, -6, 65);
         auraGrad.addColorStop(0, palette.aura);
-        auraGrad.addColorStop(0.55, palette.aura.replace(/[\d.]+\)$/, '0.15)'));
+        auraGrad.addColorStop(0.6, palette.aura.replace(/[\d.]+\)$/, '0.08)'));
         auraGrad.addColorStop(1, 'transparent');
 
         this.ctx.beginPath();
-        this.ctx.arc(cx, cy - 6, 82, 0, Math.PI * 2);
+        this.ctx.arc(0, -6, 65, 0, Math.PI * 2);
         this.ctx.fillStyle = auraGrad;
         this.ctx.fill();
     }
 
-    _renderPetalDress(cx, cy, palette) {
+    _renderBackHair(palette) {
+        // Soft back hair volume that gives a cute, lush chibi fairy silhouette
         this.ctx.save();
-        this.ctx.translate(cx, cy + 18);
+        const backHairGrad = this.ctx.createRadialGradient(0, -22, 6, 0, -18, 36);
+        backHairGrad.addColorStop(0, palette.hair);
+        backHairGrad.addColorStop(0.7, palette.hairAccent || '#9d4edd');
+        backHairGrad.addColorStop(1, 'rgba(40, 20, 60, 0.8)');
+
+        this.ctx.beginPath();
+        this.ctx.ellipse(0, -22, 30, 32, 0, 0, Math.PI * 2);
+        this.ctx.fillStyle = backHairGrad;
+        this.ctx.shadowColor = palette.core;
+        this.ctx.shadowBlur = 10;
+        this.ctx.fill();
+        this.ctx.restore();
+    }
+
+    _renderPetalDress(palette) {
+        this.ctx.save();
+        this.ctx.translate(0, 14);
 
         const sway = this.state.skirtSway;
-        const petalGrad = this.ctx.createLinearGradient(0, 0, 0, 32);
+        const petalGrad = this.ctx.createLinearGradient(0, 0, 0, 28);
         petalGrad.addColorStop(0, palette.dress);
-        petalGrad.addColorStop(0.8, 'rgba(179, 136, 255, 0.45)');
-        petalGrad.addColorStop(1, 'rgba(255, 255, 255, 0.6)');
+        petalGrad.addColorStop(0.6, 'rgba(196, 181, 253, 0.5)');
+        petalGrad.addColorStop(1, 'rgba(255, 255, 255, 0.7)');
 
         // Center Petal
         this.ctx.beginPath();
         this.ctx.moveTo(0, 0);
-        this.ctx.quadraticCurveTo(-14 + sway, 16, 0 + sway * 1.2, 32);
-        this.ctx.quadraticCurveTo(14 + sway, 16, 0, 0);
+        this.ctx.quadraticCurveTo(-11 + sway, 14, 0 + sway * 1.1, 27);
+        this.ctx.quadraticCurveTo(11 + sway, 14, 0, 0);
         this.ctx.fillStyle = petalGrad;
         this.ctx.fill();
 
         // Left Layered Petal
         this.ctx.beginPath();
-        this.ctx.moveTo(-6, -2);
-        this.ctx.quadraticCurveTo(-26 + sway * 0.8, 12, -18 + sway, 28);
-        this.ctx.quadraticCurveTo(-4, 18, -2, 2);
+        this.ctx.moveTo(-5, -1);
+        this.ctx.quadraticCurveTo(-22 + sway * 0.8, 11, -14 + sway, 24);
+        this.ctx.quadraticCurveTo(-3, 15, -1, 1);
         this.ctx.fillStyle = petalGrad;
         this.ctx.fill();
 
         // Right Layered Petal
         this.ctx.beginPath();
-        this.ctx.moveTo(6, -2);
-        this.ctx.quadraticCurveTo(26 + sway * 0.8, 12, 18 + sway, 28);
-        this.ctx.quadraticCurveTo(4, 18, 2, 2);
+        this.ctx.moveTo(5, -1);
+        this.ctx.quadraticCurveTo(22 + sway * 0.8, 11, 14 + sway, 24);
+        this.ctx.quadraticCurveTo(3, 15, 1, 1);
         this.ctx.fillStyle = petalGrad;
         this.ctx.fill();
 
         this.ctx.restore();
     }
 
-    _renderFairyTorso(cx, cy, palette) {
-        // Torso / Bodice
+    _renderFairyTorso(palette) {
         this.ctx.save();
-        const torsoGrad = this.ctx.createRadialGradient(cx, cy + 4, 3, cx, cy + 6, 20);
+        // Petite feminine bodice
+        const torsoGrad = this.ctx.createRadialGradient(0, 3, 2, 0, 5, 16);
         torsoGrad.addColorStop(0, '#ffffff');
-        torsoGrad.addColorStop(0.6, palette.core);
-        torsoGrad.addColorStop(1, 'rgba(20, 26, 50, 0.9)');
+        torsoGrad.addColorStop(0.5, palette.core);
+        torsoGrad.addColorStop(1, 'rgba(50, 30, 80, 0.85)');
 
         this.ctx.beginPath();
-        this.ctx.ellipse(cx, cy + 6, 16, 18, 0, 0, Math.PI * 2);
+        this.ctx.ellipse(0, 5, 13, 14, 0, 0, Math.PI * 2);
         this.ctx.fillStyle = torsoGrad;
         this.ctx.shadowColor = palette.core;
-        this.ctx.shadowBlur = 12;
+        this.ctx.shadowBlur = 8;
         this.ctx.fill();
 
-        // Glowing Heart / Star Emblem on chest
+        // Glowing Star Crystal Brooch on chest
         this.ctx.beginPath();
-        this.ctx.arc(cx, cy + 4, 3.8, 0, Math.PI * 2);
+        this.ctx.arc(0, 3, 3.2, 0, Math.PI * 2);
         this.ctx.fillStyle = palette.accent || '#ffd166';
         this.ctx.shadowColor = palette.accent || '#ffd166';
-        this.ctx.shadowBlur = 10;
+        this.ctx.shadowBlur = 8;
         this.ctx.fill();
 
         this.ctx.restore();
     }
 
-    _renderFairyHead(cx, cy, palette) {
+    _renderFairyHead(palette) {
         this.ctx.save();
-        const headY = cy - 20;
+        const headY = -20;
 
-        // Head core with soft pearlescent luminous gradient
-        const headGrad = this.ctx.createRadialGradient(cx - 8, headY - 10, 6, cx, headY, 38);
+        // Cute rounded chibi head with soft pearlescent skin gradient
+        const headGrad = this.ctx.createRadialGradient(-5, headY - 6, 4, 0, headY, 28);
         headGrad.addColorStop(0, '#ffffff');
-        headGrad.addColorStop(0.45, '#f8fafc');
-        headGrad.addColorStop(0.8, palette.core);
-        headGrad.addColorStop(1, 'rgba(18, 24, 48, 0.95)');
+        headGrad.addColorStop(0.5, '#fff5f8');
+        headGrad.addColorStop(0.85, '#fae8f3');
+        headGrad.addColorStop(1, 'rgba(180, 140, 200, 0.45)');
 
         this.ctx.beginPath();
-        this.ctx.ellipse(cx, headY, 36, 38, 0, 0, Math.PI * 2);
+        this.ctx.ellipse(0, headY, 26, 25, 0, 0, Math.PI * 2);
         this.ctx.fillStyle = headGrad;
-        this.ctx.shadowColor = palette.core;
-        this.ctx.shadowBlur = 24;
+        this.ctx.shadowColor = 'rgba(255, 200, 220, 0.4)';
+        this.ctx.shadowBlur = 12;
         this.ctx.fill();
+
+        this.ctx.restore();
+    }
+
+    _renderFairyEars(palette) {
+        this.ctx.save();
+        const headY = -20;
+
+        // Delicate pointed elf/fairy ears peeking from sides
+        [-1, 1].forEach((side) => {
+            this.ctx.beginPath();
+            this.ctx.moveTo(side * 22, headY - 3);
+            this.ctx.quadraticCurveTo(side * 30, headY - 7, side * 34, headY - 11);
+            this.ctx.quadraticCurveTo(side * 29, headY + 3, side * 22, headY + 5);
+            this.ctx.fillStyle = '#fff0f5';
+            this.ctx.fill();
+
+            // Soft inner ear blush
+            this.ctx.beginPath();
+            this.ctx.moveTo(side * 23, headY - 2);
+            this.ctx.quadraticCurveTo(side * 28, headY - 5, side * 31, headY - 8);
+            this.ctx.quadraticCurveTo(side * 27, headY + 1, side * 23, headY + 3);
+            this.ctx.fillStyle = 'rgba(255, 133, 161, 0.55)';
+            this.ctx.fill();
+
+            // Tiny pearl earring
+            this.ctx.beginPath();
+            this.ctx.arc(side * 24, headY + 5, 1.4, 0, Math.PI * 2);
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.shadowColor = palette.accent;
+            this.ctx.shadowBlur = 4;
+            this.ctx.fill();
+        });
+
+        this.ctx.restore();
+    }
+
+    _renderFairyHair(palette) {
+        this.ctx.save();
+        const headY = -20;
+        const sway = this.state.hairSway;
+
+        // Hair color gradients
+        const hairGrad = this.ctx.createLinearGradient(0, headY - 26, 0, headY + 12);
+        hairGrad.addColorStop(0, '#ffffff');
+        hairGrad.addColorStop(0.3, palette.hair);
+        hairGrad.addColorStop(1, palette.hairAccent || '#9d4edd');
+
+        // Front Chibi Bangs: soft layered bangs swept gracefully across forehead
+        this.ctx.beginPath();
+        this.ctx.moveTo(-24, headY - 14);
+        // Left side fringe
+        this.ctx.quadraticCurveTo(-18, headY - 4, -12, headY - 8);
+        // Center fringe
+        this.ctx.quadraticCurveTo(-5, headY + 2, 2, headY - 8);
+        // Right side fringe
+        this.ctx.quadraticCurveTo(10, headY - 3, 24, headY - 14);
+        // Hairline top arch
+        this.ctx.quadraticCurveTo(0, headY - 32, -24, headY - 14);
+        this.ctx.fillStyle = hairGrad;
+        this.ctx.fill();
+
+        // Delicate hair gloss highlight (angel ring shine)
+        this.ctx.beginPath();
+        this.ctx.arc(0, headY - 16, 20, 1.25 * Math.PI, 1.75 * Math.PI);
+        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+        this.ctx.lineWidth = 1.6;
+        this.ctx.stroke();
+
+        // Twin floating side fairy curls / locks with gentle spring physics
+        // Left side curl
+        this.ctx.beginPath();
+        this.ctx.moveTo(-22, headY - 8);
+        this.ctx.bezierCurveTo(-26 + sway, headY + 6, -28 + sway * 1.4, headY + 18, -22 + sway * 1.2, headY + 24);
+        this.ctx.bezierCurveTo(-20 + sway, headY + 24, -22 + sway, headY + 12, -20, headY - 4);
+        this.ctx.fillStyle = hairGrad;
+        this.ctx.fill();
+
+        // Right side curl
+        this.ctx.beginPath();
+        this.ctx.moveTo(22, headY - 8);
+        this.ctx.bezierCurveTo(26 - sway, headY + 6, 28 - sway * 1.4, headY + 18, 22 - sway * 1.2, headY + 24);
+        this.ctx.bezierCurveTo(20 - sway, headY + 24, 22 - sway, headY + 12, 20, headY - 4);
+        this.ctx.fillStyle = hairGrad;
+        this.ctx.fill();
+
+        this.ctx.restore();
+    }
+
+    _renderFairyTiara(palette) {
+        this.ctx.save();
+        const headY = -20;
+
+        // Delicate starlight fairy tiara / circlet resting in hair
+        this.ctx.beginPath();
+        this.ctx.arc(0, headY - 16, 22, 1.25 * Math.PI, 1.75 * Math.PI);
+        this.ctx.strokeStyle = palette.accent || '#ffd166';
+        this.ctx.lineWidth = 1.6;
+        this.ctx.shadowColor = palette.accent || '#ffd166';
+        this.ctx.shadowBlur = 6;
+        this.ctx.stroke();
+
+        // Center Pulsing Starlight Crystal Gem
+        const pulse = (Math.sin(this.state.hoverPhase * 1.2) + 1) * 0.5;
+        this.ctx.beginPath();
+        this.ctx.arc(0, headY - 26, 2.8 + pulse * 0.8, 0, Math.PI * 2);
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.shadowColor = '#ffffff';
+        this.ctx.shadowBlur = 8;
+        this.ctx.fill();
+
+        // 4-point golden star flare behind center crystal
+        this.ctx.save();
+        this.ctx.translate(0, headY - 26);
+        const r = 5.5 + pulse * 1.5;
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, -r);
+        this.ctx.quadraticCurveTo(0, 0, r, 0);
+        this.ctx.quadraticCurveTo(0, 0, 0, r);
+        this.ctx.quadraticCurveTo(0, 0, -r, 0);
+        this.ctx.quadraticCurveTo(0, 0, 0, -r);
+        this.ctx.fillStyle = 'rgba(255, 209, 102, 0.85)';
+        this.ctx.fill();
+        this.ctx.restore();
+
+        // Side mini star accents
+        [-14, 14].forEach((x) => {
+            this.ctx.beginPath();
+            this.ctx.arc(x, headY - 22, 1.3, 0, Math.PI * 2);
+            this.ctx.fillStyle = '#ffd166';
+            this.ctx.fill();
+        });
 
         this.ctx.restore();
     }
 
     _renderAntennae(cx, cy, palette) {
-        this.ctx.save();
-        const headY = cy - 20;
-        const sway = this.state.antennaeSway;
-
-        this.ctx.strokeStyle = palette.core;
-        this.ctx.lineWidth = 2.4;
-        this.ctx.lineCap = 'round';
-        this.ctx.shadowColor = palette.core;
-        this.ctx.shadowBlur = 8;
-
-        // Left Antennula
-        this.ctx.beginPath();
-        this.ctx.moveTo(cx - 16, headY - 28);
-        this.ctx.bezierCurveTo(cx - 28 + sway, headY - 56, cx - 44 + sway * 1.5, headY - 68, cx - 36 + sway * 1.8, headY - 74);
-        this.ctx.stroke();
-
-        // Left glowing pearl bulb
-        this.ctx.beginPath();
-        this.ctx.arc(cx - 36 + sway * 1.8, headY - 74, 4.5, 0, Math.PI * 2);
-        this.ctx.fillStyle = '#ffffff';
-        this.ctx.shadowColor = palette.accent || '#ffd166';
-        this.ctx.shadowBlur = 14;
-        this.ctx.fill();
-
-        // Right Antennula
-        this.ctx.beginPath();
-        this.ctx.moveTo(cx + 16, headY - 28);
-        this.ctx.bezierCurveTo(cx + 28 - sway, headY - 56, cx + 44 - sway * 1.5, headY - 68, cx + 36 - sway * 1.8, headY - 74);
-        this.ctx.stroke();
-
-        // Right glowing pearl bulb
-        this.ctx.beginPath();
-        this.ctx.arc(cx + 36 - sway * 1.8, headY - 74, 4.5, 0, Math.PI * 2);
-        this.ctx.fillStyle = '#ffffff';
-        this.ctx.shadowColor = palette.accent || '#ffd166';
-        this.ctx.shadowBlur = 14;
-        this.ctx.fill();
-
-        this.ctx.restore();
+        // Preserved for backward-compatibility; antennae replaced by feminine starlight tiara & fairy curls
     }
 
-    _renderFairyEyes(cx, cy, palette) {
-        const headY = cy - 20;
-        const eyeOffset = 14;
-        const eyeLookX = this.state.currentEyeX * 4;
-        const eyeLookY = this.state.currentEyeY * 3;
+    _renderFairyEyes(palette) {
+        const headY = -20;
+        const eyeOffset = 11;
+        const eyeLookX = this.state.currentEyeX * 3.2;
+        const eyeLookY = this.state.currentEyeY * 2.2;
 
         const isHappySmile = (this.state.emotion === 'happy' || this.state.emotion === 'pet');
         const blinkFactor = (this.state.emotion === 'sleep') ? 0.05 : Math.max(0.08, 1 - Math.abs(this.state.blinkProgress));
 
         if (isHappySmile && this.state.emotion === 'pet') {
-            // Delightful happy curved eyes (^‿^) during petting
-            this._drawHappyEye(cx - eyeOffset, headY - 2, palette.eyes, -1);
-            this._drawHappyEye(cx + eyeOffset, headY - 2, palette.eyes, 1);
+            // Joyful curved happy anime eyes (^‿^) during petting
+            this._drawHappyEye(-eyeOffset, headY - 2, -1);
+            this._drawHappyEye(eyeOffset, headY - 2, 1);
         } else {
-            // Luminous Anime / Chibi Eyes
-            this._drawFairyEye(cx - eyeOffset + eyeLookX, headY - 2 + eyeLookY, palette.eyes, blinkFactor);
-            this._drawFairyEye(cx + eyeOffset + eyeLookX, headY - 2 + eyeLookY, palette.eyes, blinkFactor);
+            // Luminous Anime / Chibi Eyes with Look-At Tracking
+            this._drawFairyEye(-eyeOffset + eyeLookX, headY - 2 + eyeLookY, palette.eyes, blinkFactor);
+            this._drawFairyEye(eyeOffset + eyeLookX, headY - 2 + eyeLookY, palette.eyes, blinkFactor);
         }
     }
 
@@ -728,174 +898,172 @@ class CelestialFamiliarRenderer {
 
         // Eye Socket (Dark background)
         this.ctx.beginPath();
-        this.ctx.ellipse(x, y, 7.5, 11 * openFactor, 0, 0, Math.PI * 2);
-        this.ctx.fillStyle = '#0a0e1c';
+        this.ctx.ellipse(x, y, 6.2, 9.2 * openFactor, 0, 0, Math.PI * 2);
+        this.ctx.fillStyle = '#0f1123';
         this.ctx.fill();
 
         if (openFactor > 0.35) {
-            // Iridescent Iris Gradient
-            const irisGrad = this.ctx.createLinearGradient(x, y - 9 * openFactor, x, y + 9 * openFactor);
-            irisGrad.addColorStop(0, '#10002b');
-            irisGrad.addColorStop(0.45, '#3a0ca3');
-            irisGrad.addColorStop(0.85, eyeColor);
-            irisGrad.addColorStop(1, '#00f5d4');
+            // Deep iridescent iris gradient
+            const irisGrad = this.ctx.createLinearGradient(x, y - 8 * openFactor, x, y + 8 * openFactor);
+            irisGrad.addColorStop(0, '#190a36');
+            irisGrad.addColorStop(0.45, '#4a154b');
+            irisGrad.addColorStop(0.8, eyeColor || '#70d6ff');
+            irisGrad.addColorStop(1, '#ffffff');
 
             this.ctx.beginPath();
-            this.ctx.ellipse(x, y, 5.8, 9 * openFactor, 0, 0, Math.PI * 2);
+            this.ctx.ellipse(x, y, 4.8, 7.5 * openFactor, 0, 0, Math.PI * 2);
             this.ctx.fillStyle = irisGrad;
             this.ctx.fill();
 
             // Pupil
             this.ctx.beginPath();
-            this.ctx.ellipse(x, y + 1, 3.2, 5 * openFactor, 0, 0, Math.PI * 2);
-            this.ctx.fillStyle = '#05070f';
+            this.ctx.ellipse(x, y + 0.8, 2.5, 4.2 * openFactor, 0, 0, Math.PI * 2);
+            this.ctx.fillStyle = '#060712';
             this.ctx.fill();
 
             // Primary Sparkle Glint (Top-left star reflection)
             this.ctx.beginPath();
-            this.ctx.arc(x - 2.2, y - 3.2 * openFactor, 2.4, 0, Math.PI * 2);
+            this.ctx.arc(x - 1.8, y - 2.8 * openFactor, 2.0, 0, Math.PI * 2);
             this.ctx.fillStyle = '#ffffff';
             this.ctx.shadowColor = '#ffffff';
-            this.ctx.shadowBlur = 4;
+            this.ctx.shadowBlur = 3;
             this.ctx.fill();
 
-            // Secondary Ambient Catchlight (Bottom-right soft reflection)
+            // Secondary Catchlight (Bottom-right soft reflection)
             this.ctx.beginPath();
-            this.ctx.arc(x + 2.4, y + 3 * openFactor, 1.4, 0, Math.PI * 2);
-            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            this.ctx.arc(x + 2.0, y + 2.5 * openFactor, 1.1, 0, Math.PI * 2);
+            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
             this.ctx.fill();
         }
 
-        // Delicate Upper Eyelash line
+        // Feminine upper eyelash line with slight outer flick
         this.ctx.beginPath();
-        this.ctx.arc(x, y - 6 * openFactor, 8, 1.1 * Math.PI, 1.9 * Math.PI);
-        this.ctx.strokeStyle = '#0a0e1c';
-        this.ctx.lineWidth = 1.8;
+        this.ctx.arc(x, y - 5 * openFactor, 6.8, 1.12 * Math.PI, 1.88 * Math.PI);
+        this.ctx.strokeStyle = '#0f1123';
+        this.ctx.lineWidth = 1.6;
         this.ctx.lineCap = 'round';
         this.ctx.stroke();
 
         this.ctx.restore();
     }
 
-    _drawHappyEye(x, y, eyeColor, side) {
+    _drawHappyEye(x, y, side) {
         this.ctx.save();
         this.ctx.beginPath();
-        this.ctx.arc(x, y - 1, 7.5, 1.15 * Math.PI, 1.85 * Math.PI);
-        this.ctx.strokeStyle = '#0a0e1c';
-        this.ctx.lineWidth = 2.4;
+        this.ctx.arc(x, y - 1, 6.2, 1.15 * Math.PI, 1.85 * Math.PI);
+        this.ctx.strokeStyle = '#0f1123';
+        this.ctx.lineWidth = 2.0;
         this.ctx.lineCap = 'round';
         this.ctx.stroke();
 
-        // Delicate eyelash flick
+        // Delicate outer eyelash flick
         this.ctx.beginPath();
-        this.ctx.moveTo(x + side * 7, y - 2);
-        this.ctx.lineTo(x + side * 10, y - 5);
+        this.ctx.moveTo(x + side * 5.5, y - 2);
+        this.ctx.lineTo(x + side * 8.5, y - 4.5);
         this.ctx.stroke();
         this.ctx.restore();
     }
 
-    _renderCheeksAndMouth(cx, cy, palette, time) {
-        const headY = cy - 20;
+    _renderCheeksAndMouth(palette, time) {
+        const headY = -20;
 
         // Rosy Cheek Blush
-        const blushOpacity = this.state.emotion === 'pet' ? 0.6 : 0.35;
+        const blushOpacity = this.state.emotion === 'pet' ? 0.65 : 0.4;
         this.ctx.save();
-        this.ctx.fillStyle = `rgba(255, 105, 180, ${blushOpacity})`;
-        this.ctx.shadowColor = 'rgba(255, 105, 180, 0.4)';
-        this.ctx.shadowBlur = 6;
+        this.ctx.fillStyle = `rgba(255, 120, 160, ${blushOpacity})`;
+        this.ctx.shadowColor = 'rgba(255, 120, 160, 0.35)';
+        this.ctx.shadowBlur = 5;
 
         this.ctx.beginPath();
-        this.ctx.ellipse(cx - 20, headY + 11, 6.5, 4, 0, 0, Math.PI * 2);
+        this.ctx.ellipse(-15, headY + 8, 5.2, 3.2, 0, 0, Math.PI * 2);
         this.ctx.fill();
 
         this.ctx.beginPath();
-        this.ctx.ellipse(cx + 20, headY + 11, 6.5, 4, 0, 0, Math.PI * 2);
+        this.ctx.ellipse(15, headY + 8, 5.2, 3.2, 0, 0, Math.PI * 2);
         this.ctx.fill();
         this.ctx.restore();
 
         // Cute Mouth
         this.ctx.save();
-        this.ctx.strokeStyle = '#ffffff';
-        this.ctx.fillStyle = '#ffffff';
-        this.ctx.lineWidth = 1.7;
+        this.ctx.strokeStyle = '#4a154b';
+        this.ctx.fillStyle = '#ff85a1';
+        this.ctx.lineWidth = 1.4;
         this.ctx.lineCap = 'round';
 
         const isSpeaking = (this.state.emotion === 'speaking' || this.state.emotion === 'talking');
         if (isSpeaking) {
-            const mouthOpen = Math.abs(Math.sin((time || 0) * 0.016)) * 4.5 + 2;
+            const mouthOpen = Math.abs(Math.sin((time || 0) * 0.016)) * 3.5 + 1.8;
             this.ctx.beginPath();
-            this.ctx.ellipse(cx, headY + 14, 4.2, mouthOpen, 0, 0, Math.PI * 2);
-            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            this.ctx.ellipse(0, headY + 11, 3.2, mouthOpen, 0, 0, Math.PI * 2);
             this.ctx.fill();
+            this.ctx.stroke();
         } else if (this.state.emotion === 'happy' || this.state.emotion === 'pet') {
             // Joyful open smile
             this.ctx.beginPath();
-            this.ctx.arc(cx, headY + 12, 5, 0.15 * Math.PI, 0.85 * Math.PI);
+            this.ctx.arc(0, headY + 9, 3.8, 0.15 * Math.PI, 0.85 * Math.PI);
             this.ctx.stroke();
         } else if (this.state.emotion === 'worried') {
             // Concerned soft pout
             this.ctx.beginPath();
-            this.ctx.arc(cx, headY + 16, 4.5, 1.15 * Math.PI, 1.85 * Math.PI);
+            this.ctx.arc(0, headY + 13, 3.5, 1.15 * Math.PI, 1.85 * Math.PI);
             this.ctx.stroke();
         } else {
             // Gentle serene smile
             this.ctx.beginPath();
-            this.ctx.arc(cx, headY + 13, 3.2, 0.1 * Math.PI, 0.9 * Math.PI);
+            this.ctx.arc(0, headY + 10, 2.6, 0.1 * Math.PI, 0.9 * Math.PI);
             this.ctx.stroke();
         }
 
         this.ctx.restore();
     }
 
-    _renderFairyHands(cx, cy, palette) {
+    _renderFairyHands(palette) {
         this.ctx.save();
-        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        this.ctx.fillStyle = '#fff0f5';
         this.ctx.shadowColor = palette.core;
-        this.ctx.shadowBlur = 6;
+        this.ctx.shadowBlur = 4;
 
         if (this.state.emotion === 'pet' || this.state.emotion === 'magic') {
             // Hands held up playfully
             this.ctx.beginPath();
-            this.ctx.arc(cx - 16, cy + 8, 3.2, 0, Math.PI * 2);
-            this.ctx.arc(cx + 16, cy + 8, 3.2, 0, Math.PI * 2);
+            this.ctx.arc(-12, 6, 2.6, 0, Math.PI * 2);
+            this.ctx.arc(12, 6, 2.6, 0, Math.PI * 2);
             this.ctx.fill();
         } else {
             // Delicate hands folded softly together
             this.ctx.beginPath();
-            this.ctx.ellipse(cx - 3, cy + 12, 3.4, 2.6, -Math.PI / 8, 0, Math.PI * 2);
-            this.ctx.ellipse(cx + 3, cy + 12, 3.4, 2.6, Math.PI / 8, 0, Math.PI * 2);
+            this.ctx.ellipse(-2.5, 9, 2.6, 2.0, -Math.PI / 8, 0, Math.PI * 2);
+            this.ctx.ellipse(2.5, 9, 2.6, 2.0, Math.PI / 8, 0, Math.PI * 2);
             this.ctx.fill();
         }
 
         this.ctx.restore();
     }
 
-    _renderBurstParticles(cx, cy) {
+    _renderBurstParticles() {
         for (const p of this.burstParticles) {
             this.ctx.save();
-            this.ctx.translate(cx + p.x, cy + p.y);
+            this.ctx.translate(p.x, p.y);
             this.ctx.fillStyle = p.color;
             this.ctx.globalAlpha = Math.max(0, p.alpha * this.state.opacity);
             this.ctx.shadowColor = p.color;
-            this.ctx.shadowBlur = 8;
+            this.ctx.shadowBlur = 6;
 
             if (p.shape === 'heart') {
-                // Draw little glowing heart
-                const s = p.radius * 0.7;
+                const s = p.radius * 0.65;
                 this.ctx.beginPath();
                 this.ctx.moveTo(0, s * 0.3);
                 this.ctx.bezierCurveTo(-s, -s * 0.8, -s * 1.5, s * 0.2, 0, s * 1.3);
                 this.ctx.bezierCurveTo(s * 1.5, s * 0.2, s, -s * 0.8, 0, s * 0.3);
                 this.ctx.fill();
             } else {
-                // 4-point glittering star sparkle
                 const r = p.radius;
                 this.ctx.beginPath();
-                this.ctx.moveTo(0, -r * 1.6);
-                this.ctx.quadraticCurveTo(0, 0, r * 1.6, 0);
-                this.ctx.quadraticCurveTo(0, 0, 0, r * 1.6);
-                this.ctx.quadraticCurveTo(0, 0, -r * 1.6, 0);
-                this.ctx.quadraticCurveTo(0, 0, 0, -r * 1.6);
+                this.ctx.moveTo(0, -r * 1.5);
+                this.ctx.quadraticCurveTo(0, 0, r * 1.5, 0);
+                this.ctx.quadraticCurveTo(0, 0, 0, r * 1.5);
+                this.ctx.quadraticCurveTo(0, 0, -r * 1.5, 0);
+                this.ctx.quadraticCurveTo(0, 0, 0, -r * 1.5);
                 this.ctx.fill();
             }
 

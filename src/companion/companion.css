@@ -1,14 +1,14 @@
-/* L.U.C.Y. Desktop Fairy Companion Styling */
+/* L.U.C.Y. Desktop Fairy Companion Styling — Compact Edition */
 :root {
-  --accent-cyan: #00f5d4;
-  --accent-magenta: #f72585;
-  --accent-purple: #7209b7;
-  --accent-violet: #3a0ca3;
+  --accent-cyan: #70d6ff;
+  --accent-magenta: #ff85a1;
+  --accent-purple: #b388ff;
+  --accent-violet: #9d4edd;
   --accent-gold: #ffd166;
   --accent-green: #06d6a0;
   --accent-red: #ef476f;
-  --bg-glass: rgba(10, 16, 32, 0.78);
-  --border-glass: rgba(0, 245, 212, 0.22);
+  --bg-glass: rgba(14, 18, 36, 0.82);
+  --border-glass: rgba(179, 136, 255, 0.28);
   --text-main: #f8fafc;
   --text-dim: #94a3b8;
 }
@@ -37,7 +37,7 @@ html, body {
   flex-direction: column;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 12px 14px 12px;
+  padding: 6px 8px 8px 8px;
   pointer-events: none;
 }
 
@@ -54,43 +54,43 @@ html, body {
 .status-pill {
   display: flex;
   align-items: center;
-  gap: 6px;
-  background: rgba(10, 16, 32, 0.75);
+  gap: 5px;
+  background: rgba(14, 18, 36, 0.78);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  padding: 3px 10px;
-  border-radius: 20px;
-  font-size: 9.5px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  padding: 2px 8px;
+  border-radius: 16px;
+  font-size: 8.5px;
   font-weight: 700;
   color: var(--text-main);
-  letter-spacing: 0.6px;
+  letter-spacing: 0.5px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
   cursor: move;
 }
 
 .status-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--accent-cyan);
-  box-shadow: 0 0 8px var(--accent-cyan);
+  box-shadow: 0 0 6px var(--accent-cyan);
   animation: pulseDot 2.2s infinite ease-in-out;
 }
 
 @keyframes pulseDot {
   0%, 100% { opacity: 0.8; transform: scale(1); }
-  50% { opacity: 1; transform: scale(1.35); }
+  50% { opacity: 1; transform: scale(1.3); }
 }
 
 .top-close-btn {
-  background: rgba(10, 16, 32, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(14, 18, 36, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 10px;
   cursor: pointer;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -99,33 +99,34 @@ html, body {
 }
 
 .top-close-btn:hover {
-  background: rgba(239, 71, 111, 0.25);
+  background: rgba(239, 71, 111, 0.3);
   color: var(--accent-red);
-  border-color: rgba(239, 71, 111, 0.4);
-  transform: scale(1.1);
+  border-color: rgba(239, 71, 111, 0.5);
+  transform: scale(1.12);
 }
 
 /* Speech Dialogue Bubble */
 .speech-bubble {
-  position: relative;
+  position: absolute;
+  top: 30px;
+  left: 12px;
+  right: 12px;
   z-index: 25;
-  max-width: 92%;
   background: var(--bg-glass);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--border-glass);
-  border-radius: 14px;
-  padding: 7px 14px;
+  border-radius: 12px;
+  padding: 4px 8px;
   color: var(--text-main);
-  font-size: 11.5px;
-  line-height: 1.4;
+  font-size: 9.5px;
+  line-height: 1.3;
   text-align: center;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 16px rgba(0, 245, 212, 0.15);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), 0 0 10px rgba(179, 136, 255, 0.12);
   opacity: 0;
-  transform: translateY(-6px) scale(0.96);
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  transform: translateY(-4px) scale(0.96);
+  transition: opacity 0.22s ease, transform 0.22s ease;
   pointer-events: auto;
-  margin-top: 4px;
 }
 
 .speech-bubble.visible {
@@ -136,23 +137,23 @@ html, body {
 .speech-bubble::after {
   content: '';
   position: absolute;
-  bottom: -6px;
+  bottom: -5px;
   left: 50%;
   transform: translateX(-50%);
   width: 0;
   height: 0;
-  border-left: 6px solid transparent;
-  border-right: 6px solid transparent;
-  border-top: 6px solid var(--bg-glass);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 5px solid var(--bg-glass);
 }
 
 /* Fairy Canvas Stage */
 .fairy-stage {
   position: absolute;
-  top: 0;
+  top: 26px;
+  bottom: 40px;
   left: 0;
-  width: 100%;
-  height: 100%;
+  right: 0;
   z-index: 5;
   display: flex;
   align-items: center;
@@ -166,9 +167,10 @@ html, body {
 }
 
 #fairyCanvas {
-  width: 100%;
-  height: 100%;
+  width: 220px;
+  height: 190px;
   display: block;
+  image-rendering: -webkit-optimize-contrast;
 }
 
 /* Bottom Glassmorphic Interaction Dock */
@@ -177,60 +179,66 @@ html, body {
   z-index: 30;
   display: flex;
   align-items: center;
-  gap: 8px;
-  background: rgba(10, 16, 32, 0.82);
+  gap: 5px;
+  background: rgba(14, 18, 36, 0.85);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-glass);
-  padding: 6px 12px;
-  border-radius: 28px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55), 0 0 18px rgba(0, 245, 212, 0.18);
+  padding: 4px 8px;
+  border-radius: 20px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), 0 0 14px rgba(179, 136, 255, 0.15);
   pointer-events: auto;
-  opacity: 0.92;
+  opacity: 0.94;
   transition: opacity 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
 }
 
 .control-dock:hover {
   opacity: 1;
-  transform: translateY(-2px);
-  border-color: rgba(0, 245, 212, 0.45);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6), 0 0 22px rgba(0, 245, 212, 0.28);
+  transform: translateY(-1px);
+  border-color: rgba(179, 136, 255, 0.5);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.6), 0 0 18px rgba(179, 136, 255, 0.25);
 }
 
 .dock-btn {
   background: transparent;
   border: none;
   color: var(--text-dim);
-  font-size: 15px;
+  font-size: 13px;
   cursor: pointer;
-  padding: 6px 8px;
-  border-radius: 14px;
+  padding: 4px 6px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.16s ease;
+  transition: all 0.15s ease;
   position: relative;
 }
 
 .dock-btn:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.14);
   color: var(--text-main);
-  transform: scale(1.18);
+  transform: scale(1.15);
 }
 
 .dock-btn:active {
-  transform: scale(0.95);
+  transform: scale(0.94);
 }
 
-/* Pinned State */
+/* Pinned State Indicator */
 .dock-btn.active {
-  color: var(--accent-cyan);
-  background: rgba(0, 245, 212, 0.15);
-  box-shadow: 0 0 10px rgba(0, 245, 212, 0.3);
+  color: var(--accent-gold);
+  background: rgba(255, 209, 102, 0.18);
+  box-shadow: 0 0 8px rgba(255, 209, 102, 0.35);
+}
+
+.dock-btn.unpinned {
+  color: var(--text-dim);
+  background: transparent;
+  opacity: 0.7;
 }
 
 /* Return Button */
 .dock-btn.return-btn:hover {
-  color: var(--accent-gold);
-  background: rgba(255, 209, 102, 0.2);
+  color: var(--accent-cyan);
+  background: rgba(112, 214, 255, 0.2);
 }

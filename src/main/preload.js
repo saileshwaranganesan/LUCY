@@ -59,7 +59,9 @@ contextBridge.exposeInMainWorld('lucyIpc', {
     resumeTask: (taskId, options) => ipcRenderer.invoke('lucy:resumeTask', taskId, options),
     discardTask: (taskId) => ipcRenderer.invoke('lucy:discardTask', taskId),
     // Floating 3D Companion APIs
-    toggleCompanionWindow: () => ipcRenderer.invoke('lucy:toggleCompanionWindow'),
+    toggleCompanionWindow: (options) => ipcRenderer.invoke('lucy:toggleCompanionWindow', options),
+    summonCompanionWindow: () => ipcRenderer.invoke('lucy:summonCompanionWindow'),
+    setCompanionPin: (isPinned) => ipcRenderer.invoke('lucy:setCompanionPin', isPinned),
     getCompanionStatus: () => ipcRenderer.invoke('lucy:getCompanionStatus'),
     sendVoiceState: (voiceData) => ipcRenderer.send('lucy:sendVoiceState', voiceData),
     onCompanionWindowToggled: (callback) => {

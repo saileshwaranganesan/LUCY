@@ -244,6 +244,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let isFairyFloating = false;
     const creatureStage = document.getElementById('creatureStage');
     const inlineReturnBtn = document.getElementById('inlineReturnBtn');
+    const inlineSummonBtn = document.getElementById('inlineSummonBtn');
 
     async function floatFairyToDesktop() {
         if (isFairyTransitioning || isFairyFloating) return;
@@ -275,8 +276,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         isFairyFloating = true;
         if (toggleFloatingBtn) {
-            toggleFloatingBtn.textContent = '↩️ Return Pet';
-            toggleFloatingBtn.title = 'Return Lucy to main application';
+            toggleFloatingBtn.textContent = '↩️ Dock Pet';
+            toggleFloatingBtn.title = 'Dock Lucy back into main application';
             toggleFloatingBtn.disabled = false;
         }
         isFairyTransitioning = false;
@@ -327,7 +328,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     isFairyFloating = true;
                     if (creatureStage) creatureStage.classList.add('fairy-on-desktop');
                     renderer.stop();
-                    toggleFloatingBtn.textContent = '↩️ Return Pet';
+                    toggleFloatingBtn.textContent = '↩️ Dock Pet';
+                    toggleFloatingBtn.title = 'Dock Lucy back into main application';
                 }
             }).catch(() => {});
         }
@@ -346,6 +348,15 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
+        if (inlineSummonBtn) {
+            inlineSummonBtn.addEventListener('click', async () => {
+                if (window.lucyIpc && window.lucyIpc.summonCompanionWindow) {
+                    await window.lucyIpc.summonCompanionWindow();
+                    showBubble('Brought Lucy to the front! ✨');
+                }
+            });
+        }
+
         if (window.lucyIpc && window.lucyIpc.onCompanionWindowToggled) {
             window.lucyIpc.onCompanionWindowToggled(async ({ isOpen }) => {
                 if (!isOpen && isFairyFloating) {
@@ -354,7 +365,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     isFairyFloating = true;
                     if (creatureStage) creatureStage.classList.add('fairy-on-desktop');
                     renderer.stop();
-                    toggleFloatingBtn.textContent = '↩️ Return Pet';
+                    toggleFloatingBtn.textContent = '↩️ Dock Pet';
+                    toggleFloatingBtn.title = 'Dock Lucy back into main application';
                 }
             });
         }

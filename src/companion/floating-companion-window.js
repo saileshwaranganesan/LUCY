@@ -7,7 +7,7 @@ const { validateMoveWindow, validateExecuteRequest } = require('../security/ipc-
 
 /**
  * FloatingCompanionWindow
- * Manages the transparent, borderless, always-on-top desktop window for L.U.C.Y.'s
+ * Manages the compact, transparent, borderless desktop window for L.U.C.Y.'s
  * cute fairy companion.
  * 
  * ARCHITECTURAL MANDATES:
@@ -15,8 +15,13 @@ const { validateMoveWindow, validateExecuteRequest } = require('../security/ipc-
  * 2. Complete crash isolation: failure of companion renderer never crashes core assistant.
  * 3. Secure context isolation: sandbox enabled, nodeIntegration disabled.
  * 4. Seamless transitions: coordinated handoff between embedded interface and desktop.
+ * 5. Compact, proportionate footprint: unobtrusive miniature desktop companion.
+ * 6. High discoverability: reliable summon, pin/unpin, and dock/restore lifecycle.
  */
 class FloatingCompanionWindow {
+    static DEFAULT_WIDTH = 220;
+    static DEFAULT_HEIGHT = 260;
+
     constructor(options = {}) {
         this.mainWindow = options.mainWindow || null;
         this.companionBridge = options.companionBridge || null;
@@ -40,13 +45,37 @@ class FloatingCompanionWindow {
         return null;
     }
 
+    _clampToBounds(x, y, width = FloatingCompanionWindow.DEFAULT_WIDTH, height = FloatingCompanionWindow.DEFAULT_HEIGHT) {
+        if (!screen || typeof screen.getAllDisplays !== 'function') {
+            return { x, y };
+        }
+        try {
+            const displays = screen.getAllDisplays();
+            if (!displays || displays.length === 0) return { x, y };
+
+            const targetPoint = { x: x + width / 2, y: y + height / 2 };
+            let matched = screen.getDisplayNearestPoint ? screen.getDisplayNearestPoint(targetPoint) : screen.getPrimaryDisplay();
+            if (!matched) matched = displays[0];
+
+            const workArea = matched.workArea;
+            const clampedX = Math.round(Math.max(workArea.x + 8, Math.min(x, workArea.x + workArea.width - width - 8)));
+            const clampedY = Math.round(Math.max(workArea.y + 8, Math.min(y, workArea.y + workArea.height - height - 8)));
+            return { x: clampedX, y: clampedY };
+        } catch (_) {
+            return { x, y };
+        }
+    }
+
     _loadSavedPosition() {
         const file = this._getBoundsFile();
         if (file && fs.existsSync(file)) {
             try {
                 const data = JSON.parse(fs.readFileSync(file, 'utf8'));
                 if (data && typeof data.x === 'number' && typeof data.y === 'number') {
-                    return data;
+                    if (data.isPinned !== undefined) {
+                        this.isPinned = Boolean(data.isPinned);
+                    }
+                    return this._clampToBounds(data.x, data.y);
                 }
             } catch (_) {}
         }
@@ -58,7 +87,13 @@ class FloatingCompanionWindow {
         const file = this._getBoundsFile();
         if (file) {
             try {
-                fs.writeFileSync(file, JSON.stringify({ x, y }, null, 2), 'utf8');
+                fs.writeFileSync(file, JSON.stringify({
+                    x,
+                    y,
+                    width: FloatingCompanionWindow.DEFAULT_WIDTH,
+                    height: FloatingCompanionWindow.DEFAULT_HEIGHT,
+                    isPinned: this.isPinned
+                }, null, 2), 'utf8');
             } catch (_) {}
         }
     }
@@ -76,7 +111,7 @@ class FloatingCompanionWindow {
     }
 
     /**
-     * Create or restore the floating companion window
+     * Create or restore the compact floating companion window
      */
     createWindow() {
         if (this.window && !this.window.isDestroyed()) {
@@ -85,22 +120,25 @@ class FloatingCompanionWindow {
             return this.window;
         }
 
-        // Calculate initial default position: bottom-right corner of primary display
+        const winWidth = FloatingCompanionWindow.DEFAULT_WIDTH;
+        const winHeight = FloatingCompanionWindow.DEFAULT_HEIGHT;
+
         let defaultX = 100;
         let defaultY = 100;
         try {
             const primaryDisplay = screen.getPrimaryDisplay();
             const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-            const winWidth = 320;
-            const winHeight = 380;
             defaultX = this.lastPosition ? this.lastPosition.x : Math.max(20, screenWidth - winWidth - 30);
             defaultY = this.lastPosition ? this.lastPosition.y : Math.max(20, screenHeight - winHeight - 30);
+            const clamped = this._clampToBounds(defaultX, defaultY, winWidth, winHeight);
+            defaultX = clamped.x;
+            defaultY = clamped.y;
         } catch (_) {}
 
         const WinCtor = this.browserWindowConstructor || BrowserWindow;
         this.window = new WinCtor({
-            width: 320,
-            height: 380,
+            width: winWidth,
+            height: winHeight,
             x: defaultX,
             y: defaultY,
             frame: false,
@@ -142,6 +180,9 @@ class FloatingCompanionWindow {
             if (this.window && !this.window.isDestroyed()) {
                 this.window.show();
                 this.isShown = true;
+
+                // Sync pin state to renderer
+                this.window.webContents.send('companion:pinChanged', { isPinned: this.isPinned });
 
                 // Send initial state & play landing arrival
                 if (this.companionBridge) {
@@ -198,6 +239,71 @@ class FloatingCompanionWindow {
     }
 
     /**
+     * Summon floating pet window to the front.
+     * Restores window if minimized, unhides if hidden, temporarily raises above
+     * other windows so the user can easily find it, and plays a friendly reaction.
+     */
+    summonToFront() {
+        if (!this.window || this.window.isDestroyed()) {
+            this.createWindow();
+        }
+        if (this.window && !this.window.isDestroyed()) {
+            if (this.window.isMinimized()) this.window.restore();
+            this.window.show();
+            this.isShown = true;
+
+            // Ensure coordinates are currently valid on visible display
+            try {
+                const [x, y] = this.window.getPosition();
+                const clamped = this._clampToBounds(x, y);
+                if (clamped.x !== x || clamped.y !== y) {
+                    this.window.setPosition(clamped.x, clamped.y);
+                }
+            } catch (_) {}
+
+            // Temporarily set screen-saver level to bring forward over desktop windows
+            this.window.setAlwaysOnTop(true, 'screen-saver');
+            this.window.focus();
+
+            if (!this.isPinned) {
+                setTimeout(() => {
+                    if (this.window && !this.window.isDestroyed() && !this.isPinned) {
+                        this.window.setAlwaysOnTop(false, 'normal');
+                    }
+                }, 350);
+            }
+
+            this.sendVisualUpdate({
+                emotion: 'happy',
+                speechBubble: "Sparkle! ✨ I'm right here!"
+            });
+        }
+        return true;
+    }
+
+    setPinned(isPinned) {
+        this.isPinned = Boolean(isPinned);
+        if (this.window && !this.window.isDestroyed()) {
+            this.window.setAlwaysOnTop(this.isPinned, this.isPinned ? 'screen-saver' : 'normal');
+            this.window.webContents.send('companion:pinChanged', { isPinned: this.isPinned });
+        }
+        if (this.lastPosition) {
+            this._savePosition(this.lastPosition.x, this.lastPosition.y);
+        }
+        return this.isPinned;
+    }
+
+    getStatus() {
+        return {
+            isOpen: this.isOpen(),
+            isPinned: this.isPinned,
+            width: FloatingCompanionWindow.DEFAULT_WIDTH,
+            height: FloatingCompanionWindow.DEFAULT_HEIGHT,
+            position: this.lastPosition
+        };
+    }
+
+    /**
      * Seamless Return Transition:
      * Un-minimizes & focuses main window, hides floating pet, and triggers landing animation in main app.
      */
@@ -247,8 +353,9 @@ class FloatingCompanionWindow {
                 const [x, y] = this.window.getPosition();
                 const newX = Math.round(x + deltaX);
                 const newY = Math.round(y + deltaY);
-                this.window.setPosition(newX, newY);
-                this._savePosition(newX, newY);
+                const clamped = this._clampToBounds(newX, newY);
+                this.window.setPosition(clamped.x, clamped.y);
+                this._savePosition(clamped.x, clamped.y);
             }
         });
 
@@ -282,11 +389,17 @@ class FloatingCompanionWindow {
         });
 
         ipcMain.handle('companion:togglePin', async () => {
-            this.isPinned = !this.isPinned;
-            if (this.window && !this.window.isDestroyed()) {
-                this.window.setAlwaysOnTop(this.isPinned, this.isPinned ? 'screen-saver' : 'normal');
-            }
-            return { ok: true, isPinned: this.isPinned };
+            const newPin = this.setPinned(!this.isPinned);
+            return { ok: true, isPinned: newPin };
+        });
+
+        ipcMain.handle('companion:getStatus', async () => {
+            return { ok: true, ...this.getStatus() };
+        });
+
+        ipcMain.handle('companion:summonToFront', async () => {
+            this.summonToFront();
+            return { ok: true, summoned: true };
         });
 
         ipcMain.handle('companion:pet', async () => {

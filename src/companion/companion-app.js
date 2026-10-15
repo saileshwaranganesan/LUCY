@@ -2,7 +2,7 @@
 
 /**
  * Desktop Floating Fairy Companion Application
- * Runs the unified CelestialFamiliarRenderer on the transparent desktop window,
+ * Runs the unified CelestialFamiliarRenderer on the compact transparent desktop window,
  * manages window drag physics, speech dialogue bubbles, and dock interactions.
  */
 document.addEventListener('DOMContentLoaded', () => {
@@ -24,16 +24,51 @@ document.addEventListener('DOMContentLoaded', () => {
     let isPinned = true;
     let bubbleTimer = null;
 
-    // 1. Initialize Unified Fairy Renderer
+    // 1. Initialize Unified Fairy Renderer with high-DPI awareness
+    if (fairyCanvas) {
+        fairyCanvas.width = 220;
+        fairyCanvas.height = 190;
+    }
+
     const renderer = new CelestialFamiliarRenderer(fairyCanvas);
     renderer.start();
     window.fairyRenderer = renderer;
     window.companionRenderer = renderer;
 
     // Show initial welcoming speech bubble
-    showBubble('Sparkle! ✨ I am right here beside you.');
+    showBubble('Sparkle! ✨ Beside you on your desktop.');
 
-    // 2. Window Dragging Physics
+    // 2. Pin State Visual Sync
+    function updatePinUI(pinned) {
+        isPinned = Boolean(pinned);
+        if (pinBtn) {
+            pinBtn.classList.toggle('active', isPinned);
+            pinBtn.classList.toggle('unpinned', !isPinned);
+            pinBtn.textContent = isPinned ? '📌' : '📍';
+            pinBtn.title = isPinned
+                ? 'Pinned: Always on top 📌 (Click to unpin)'
+                : 'Free: Behind active windows 📍 (Click to pin on top)';
+        }
+    }
+
+    // Query initial status from main process
+    if (window.companionIpc && window.companionIpc.getStatus) {
+        window.companionIpc.getStatus().then((status) => {
+            if (status && status.isPinned !== undefined) {
+                updatePinUI(status.isPinned);
+            }
+        }).catch(() => {});
+    }
+
+    if (window.companionIpc && window.companionIpc.onPinChanged) {
+        window.companionIpc.onPinChanged((data) => {
+            if (data && data.isPinned !== undefined) {
+                updatePinUI(data.isPinned);
+            }
+        });
+    }
+
+    // 3. Window Dragging Physics
     let isDragging = false;
     let dragStartX = 0;
     let dragStartY = 0;
@@ -77,7 +112,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('mousemove', handleDragMove);
     window.addEventListener('mouseup', handleDragEnd);
 
-    // 3. Dock Button Interactions
+    // 4. Dock Button Interactions
     // ✋ Pet Lucy
     if (petBtn) {
         petBtn.addEventListener('click', async (e) => {
@@ -121,16 +156,15 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 📌 Pin / Always on Top
+    // 📌 Pin / Always on Top Toggle
     if (pinBtn) {
         pinBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
             if (window.companionIpc && window.companionIpc.togglePin) {
                 try {
                     const res = await window.companionIpc.togglePin();
-                    isPinned = res.isPinned;
-                    pinBtn.classList.toggle('active', isPinned);
-                    showBubble(isPinned ? 'Pinned: Always on top 📌' : 'Unpinned from top.');
+                    updatePinUI(res.isPinned);
+                    showBubble(res.isPinned ? 'Pinned: Always on top 📌' : 'Unpinned: Free mode 📍');
                 } catch (_) {}
             }
         });
@@ -142,7 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderer.setVisualState({ emotion: 'takeoff' });
 
         // Graceful exit fade
-        document.body.style.transition = 'opacity 0.35s ease';
+        document.body.style.transition = 'opacity 0.28s ease';
         document.body.style.opacity = '0';
 
         setTimeout(() => {
@@ -150,7 +184,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 window.companionIpc.returnToApp();
             }
             document.body.style.opacity = '1';
-        }, 360);
+        }, 300);
     }
 
     if (returnBtn) {
@@ -177,7 +211,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 4. Speech Bubble Helper
+    // 5. Speech Bubble Helper
     function showBubble(text) {
         if (!speechBubble || !text) return;
         speechBubble.textContent = text;
@@ -186,10 +220,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (bubbleTimer) clearTimeout(bubbleTimer);
         bubbleTimer = setTimeout(() => {
             speechBubble.classList.remove('visible');
-        }, 5500);
+        }, 5000);
     }
 
-    // 5. IPC Listeners for Visual & Voice Events
+    // 6. IPC Listeners for Visual & Voice Events
     if (window.companionIpc) {
         if (window.companionIpc.onVisualUpdate) {
             window.companionIpc.onVisualUpdate((data) => {
@@ -201,16 +235,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Update status dot color
                     if (statusDot) {
                         const colors = {
-                            happy: '#00f5d4',
-                            speaking: '#38ef7d',
+                            happy: '#ff85a1',
+                            speaking: '#70d6ff',
                             thinking: '#b388ff',
-                            working: '#06d6a0',
+                            working: '#38bdf8',
                             listening: '#ff70a6',
-                            worried: '#ff8da1',
-                            idle: '#00f5d4'
+                            worried: '#fb7185',
+                            idle: '#70d6ff'
                         };
-                        statusDot.style.background = colors[data.emotion] || '#00f5d4';
-                        statusDot.style.boxShadow = `0 0 8px ${colors[data.emotion] || '#00f5d4'}`;
+                        statusDot.style.background = colors[data.emotion] || '#70d6ff';
+                        statusDot.style.boxShadow = `0 0 6px ${colors[data.emotion] || '#70d6ff'}`;
                     }
                 }
                 if (data.speechBubble) {

@@ -227,4 +227,103 @@ test('Unified Fairy Companion Redesign Verification', async (t) => {
         assert.equal(executed[0], 'Create a note');
         assert.equal(submitResult.replyText, 'Executed via coordinator');
     });
+
+    await t.test('6. Compact Desktop Bounds & Clamping Mechanics', () => {
+        assert.equal(FloatingCompanionWindow.DEFAULT_WIDTH, 220, 'Default floating companion width must be 220px');
+        assert.equal(FloatingCompanionWindow.DEFAULT_HEIGHT, 260, 'Default floating companion height must be 260px');
+
+        const floating = new FloatingCompanionWindow();
+        const status = floating.getStatus();
+        assert.equal(status.width, 220);
+        assert.equal(status.height, 260);
+        assert.equal(status.isPinned, true);
+
+        // Test boundary clamping with fallback mock
+        const clamped = floating._clampToBounds(99999, 99999, 220, 260);
+        assert.ok(typeof clamped.x === 'number' && typeof clamped.y === 'number');
+    });
+
+    await t.test('7. Cute Feminine Fairy Aesthetic & Curated Soft Palette', () => {
+        const canvas = createMockCanvas(220, 190);
+        const renderer = new CelestialFamiliarRenderer(canvas);
+
+        const idlePalette = renderer._getColorPalette();
+        assert.ok(idlePalette.hair, 'Must define soft pastel hair tone');
+        assert.ok(idlePalette.wingsInner, 'Must define translucent gossamer inner wing tone');
+        assert.ok(idlePalette.wingsOuter, 'Must define iridescent outer wing tone');
+        assert.ok(idlePalette.dress, 'Must define petal dress tone');
+
+        // Verify all emotional states provide coherent fairy palettes
+        const states = ['happy', 'pet', 'speaking', 'listening', 'thinking', 'working', 'worried', 'curious', 'magic', 'sleep', 'idle'];
+        for (const st of states) {
+            renderer.state.emotion = st;
+            const pal = renderer._getColorPalette();
+            assert.ok(pal.core, `State ${st} must define core color`);
+            assert.ok(pal.eyes, `State ${st} must define eyes color`);
+            assert.ok(pal.wingsInner, `State ${st} must define wingsInner`);
+        }
+
+        // Verify clean render on 220x190 compact canvas
+        assert.doesNotThrow(() => {
+            renderer._render(500);
+        }, 'Renderer must render cleanly on 220x190 compact canvas');
+
+        renderer.destroy();
+    });
+
+    await t.test('8. Discoverability: Summon to Front and Pin/Unpin Synchronization', () => {
+        let setAlwaysOnTopCalled = false;
+        let lastTopLevel = null;
+        let focusedCalled = false;
+        let shownCalled = false;
+
+        class MockDesktopWindow {
+            constructor() {
+                this.destroyed = false;
+                this.visible = false;
+                this.webContents = {
+                    send: () => {},
+                    setWindowOpenHandler: () => {},
+                    on: () => {}
+                };
+            }
+            isDestroyed() { return this.destroyed; }
+            isMinimized() { return false; }
+            show() { shownCalled = true; this.visible = true; }
+            hide() { this.visible = false; }
+            focus() { focusedCalled = true; }
+            restore() {}
+            getPosition() { return [100, 100]; }
+            setPosition() {}
+            setAlwaysOnTop(val, level) {
+                setAlwaysOnTopCalled = true;
+                lastTopLevel = level;
+            }
+            loadFile() {}
+            on() {}
+            once(ev, cb) { if (ev === 'ready-to-show') setTimeout(cb, 1); }
+            destroy() { this.destroyed = true; }
+        }
+
+        const floating = new FloatingCompanionWindow({
+            BrowserWindow: MockDesktopWindow
+        });
+
+        // Test Pin toggle
+        assert.equal(floating.isPinned, true, 'Default pinned state is true');
+        const unpinned = floating.setPinned(false);
+        assert.equal(unpinned, false, 'Can unpin companion');
+        assert.equal(floating.isPinned, false);
+        const repinned = floating.setPinned(true);
+        assert.equal(repinned, true, 'Can repin companion');
+
+        // Test summonToFront
+        const summoned = floating.summonToFront();
+        assert.equal(summoned, true, 'summonToFront succeeds');
+        assert.equal(shownCalled, true, 'Window was shown on summon');
+        assert.equal(focusedCalled, true, 'Window was focused on summon');
+        assert.equal(setAlwaysOnTopCalled, true, 'setAlwaysOnTop was invoked to bring to front');
+
+        floating.destroy();
+    });
 });

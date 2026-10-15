@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld('companionIpc', {
     onVoiceUpdate: (callback) => {
         ipcRenderer.on('companion:voiceUpdate', (_event, data) => callback(data));
     },
+    onPinChanged: (callback) => {
+        ipcRenderer.on('companion:pinChanged', (_event, data) => callback(data));
+    },
 
     // Window controls
     moveWindow: (deltaX, deltaY) => {
@@ -35,6 +38,9 @@ contextBridge.exposeInMainWorld('companionIpc', {
     },
     togglePin: () => {
         return ipcRenderer.invoke('companion:togglePin');
+    },
+    getStatus: () => {
+        return ipcRenderer.invoke('companion:getStatus');
     },
 
     // Companion interactions (routed strictly through central task coordinator)

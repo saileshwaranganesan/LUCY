@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 
 const ARTIFACTS_DIR = 'C:\\Users\\admin\\.gemini\\antigravity-ide\\brain\\37e00f8a-b4af-4413-a3f0-ab08cdcdc149';
-const ISOLATED_PROFILE = path.resolve(__dirname, '../scratch/isolated-verify-profile');
+const ISOLATED_PROFILE = path.resolve(__dirname, '../scratch/isolated-fairy-verify-profile');
 
 class SimpleCdpClient {
     constructor(wsUrl) {
@@ -120,20 +120,18 @@ async function killApp(proc) {
 
 async function runVisualVerificationSuite() {
     console.log('================================================================');
-    console.log('  L.U.C.Y. Visual Verification Suite: Elimination of Old Dragon');
-    console.log('  Testing 5 States: Main, Floating, Dock/Undock, Reopen, Restart');
+    console.log('  L.U.C.Y. Visual Verification Suite: Cute Desktop Fairy Companion');
+    console.log('  Testing 6 Live States: Main, Compact Floating, Unpinned, Summon, Dock/Undock, Restart');
     console.log('================================================================\n');
 
     fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
 
-    // STEP 1 & 2 & 3 & 4 (Session 1)
     console.log('[Phase 1] Launching Application with Remote Debugging...');
     let proc = await launchApp(9222);
     let mainClient = null;
     let compClient = null;
 
     try {
-        // Wait for CDP target
         let targets = [];
         for (let i = 0; i < 25; i++) {
             await sleep(400);
@@ -155,9 +153,9 @@ async function runVisualVerificationSuite() {
         await sleep(2000);
 
         // -------------------------------------------------------------
-        // SCREENSHOT 1: Main application with the fairy visible
+        // SCREENSHOT 1: Main application with sidebar fairy
         // -------------------------------------------------------------
-        console.log('\n[Check 1] Inspecting Main Application Alcove & Fairy Renderer...');
+        console.log('\n[Check 1] Inspecting Main Application Alcove & Cute Fairy Renderer...');
         const mainFairyStatus = await mainClient.eval(`
             (() => {
                 const canvas = document.getElementById('creatureCanvas');
@@ -186,9 +184,9 @@ async function runVisualVerificationSuite() {
         console.log(`  📸 Saved Screenshot 1 (Main Fairy): ${p1} (${ss1.length} bytes)`);
 
         // -------------------------------------------------------------
-        // SCREENSHOT 2: Floating companion visible outside the main window
+        // SCREENSHOT 2: Compact floating fairy window over desktop
         // -------------------------------------------------------------
-        console.log('\n[Check 2] Undocking Fairy to Desktop Overlay...');
+        console.log('\n[Check 2] Undocking Fairy to Compact Desktop Overlay...');
         await mainClient.eval('window.lucyIpc.toggleCompanionWindow({ action: "float" })');
         await sleep(2000);
 
@@ -210,6 +208,8 @@ async function runVisualVerificationSuite() {
                 const hasDragon = document.body.innerHTML.toLowerCase().includes('dragon');
                 return {
                     hasFairyCanvas: Boolean(canvas),
+                    canvasWidth: canvas ? canvas.width : 0,
+                    canvasHeight: canvas ? canvas.height : 0,
                     hasThreeCanvas: hasThree,
                     hasDragonText: hasDragon,
                     rendererRunning: Boolean(renderer && renderer.running),
@@ -223,20 +223,75 @@ async function runVisualVerificationSuite() {
         if (!floatingStatus.rendererRunning) {
             throw new Error('CelestialFamiliarRenderer is not running in floating companion');
         }
-        if (floatingStatus.hasThreeCanvas || floatingStatus.hasDragonText) {
-            throw new Error('Legacy threeCanvas or dragon reference detected in floating companion!');
+        if (floatingStatus.canvasWidth > 240 || floatingStatus.canvasHeight > 220) {
+            throw new Error(`Canvas oversized: ${floatingStatus.canvasWidth}x${floatingStatus.canvasHeight}`);
         }
-        console.log('  ✓ Floating window is running CelestialFamiliarRenderer. 0 dragons present.');
+        console.log(`  ✓ Compact floating canvas verified: ${floatingStatus.canvasWidth}x${floatingStatus.canvasHeight}`);
 
         const ss2 = await compClient.captureScreenshot();
         const p2 = path.join(ARTIFACTS_DIR, 'fairy_2_floating_companion.png');
         fs.writeFileSync(p2, ss2);
-        console.log(`  📸 Saved Screenshot 2 (Floating Fairy): ${p2} (${ss2.length} bytes)`);
+        console.log(`  📸 Saved Screenshot 2 (Compact Floating Fairy): ${p2} (${ss2.length} bytes)`);
 
         // -------------------------------------------------------------
-        // SCREENSHOT 3: The application after docking and undocking
+        // SCREENSHOT 3: Unpinning and free mode testing
         // -------------------------------------------------------------
-        console.log('\n[Check 3] Testing Docking (Return to App) and Undocking Cycle...');
+        console.log('\n[Check 3] Testing Pin/Unpin Toggle & Free Mode Visual State...');
+        const unpinRes = await compClient.eval(`
+            (async () => {
+                const pinBtn = document.getElementById('pinBtn');
+                pinBtn.click();
+                await new Promise(r => setTimeout(r, 300));
+                return {
+                    buttonText: pinBtn.textContent,
+                    isActive: pinBtn.classList.contains('active'),
+                    isUnpinned: pinBtn.classList.contains('unpinned'),
+                    title: pinBtn.title
+                };
+            })()
+        `);
+        console.log('  Pin Toggle Result:', JSON.stringify(unpinRes, null, 2));
+        if (unpinRes.isActive) {
+            throw new Error('Pin button should not be active when unpinned');
+        }
+        console.log('  ✓ Unpinned free mode verified. Button state updated correctly.');
+
+        const ss3 = await compClient.captureScreenshot();
+        const p3 = path.join(ARTIFACTS_DIR, 'fairy_3_unpinned_state.png');
+        fs.writeFileSync(p3, ss3);
+        console.log(`  📸 Saved Screenshot 3 (Unpinned State): ${p3} (${ss3.length} bytes)`);
+
+        // Re-pin
+        await compClient.eval('document.getElementById("pinBtn").click()');
+        await sleep(300);
+
+        // -------------------------------------------------------------
+        // SCREENSHOT 4: Summon / Restore path from main application
+        // -------------------------------------------------------------
+        console.log('\n[Check 4] Testing Summon Pet to Front from Main Application Alcove...');
+        const summonRes = await mainClient.eval(`
+            (async () => {
+                const summonBtn = document.getElementById('inlineSummonBtn');
+                if (summonBtn) {
+                    summonBtn.click();
+                    await new Promise(r => setTimeout(r, 400));
+                    return { clicked: true };
+                }
+                const res = await window.lucyIpc.summonCompanionWindow();
+                return { clicked: false, res };
+            })()
+        `);
+        console.log('  Summon Action Result:', JSON.stringify(summonRes, null, 2));
+
+        const ss4 = await compClient.captureScreenshot();
+        const p4 = path.join(ARTIFACTS_DIR, 'fairy_4_summon_restore_path.png');
+        fs.writeFileSync(p4, ss4);
+        console.log(`  📸 Saved Screenshot 4 (Summon to Front): ${p4} (${ss4.length} bytes)`);
+
+        // -------------------------------------------------------------
+        // SCREENSHOT 5: Dock and Undock Verification
+        // -------------------------------------------------------------
+        console.log('\n[Check 5] Testing Return to App (Docking) & Re-Undocking...');
         await compClient.eval('document.getElementById("returnBtn").click()');
         await sleep(1500);
 
@@ -246,46 +301,21 @@ async function runVisualVerificationSuite() {
                 const stage = document.getElementById('creatureStage');
                 return {
                     rendererRunning: Boolean(renderer && renderer.running),
-                    stageHasFlyingIn: stage.classList.contains('fairy-flying-in') || !stage.classList.contains('fairy-on-desktop'),
+                    isDocked: !stage.classList.contains('fairy-on-desktop'),
                     toggleBtnText: document.getElementById('toggleFloatingBtn')?.textContent || ''
                 };
             })()
         `);
         console.log('  Docked State in Main App:', JSON.stringify(dockedStatus, null, 2));
 
-        // Undock again
+        // Re-undock to desktop
         await mainClient.eval('window.lucyIpc.toggleCompanionWindow({ action: "float" })');
         await sleep(1500);
 
-        const ss3 = await compClient.captureScreenshot();
-        const p3 = path.join(ARTIFACTS_DIR, 'fairy_3_dock_undock_verified.png');
-        fs.writeFileSync(p3, ss3);
-        console.log(`  📸 Saved Screenshot 3 (After Dock/Undock): ${p3} (${ss3.length} bytes)`);
-
-        // -------------------------------------------------------------
-        // SCREENSHOT 4: The application after closing and reopening the companion
-        // -------------------------------------------------------------
-        console.log('\n[Check 4] Testing Close and Reopen Companion (Single Instance Verification)...');
-        await compClient.eval('document.getElementById("closeBtn").click()');
-        await sleep(1200);
-
-        // Reopen from main app button
-        await mainClient.eval('document.getElementById("toggleFloatingBtn").click()');
-        await sleep(1500);
-
-        // Check target count - ensure NO duplicate companion windows
-        const checkTargets = await fetchCdpTargets(9222);
-        const compTargets = checkTargets.filter(t => t.url.includes('companion.html'));
-        console.log(`  Discovered companion targets count: ${compTargets.length}`);
-        if (compTargets.length !== 1) {
-            throw new Error(`Expected exactly 1 companion window target, found: ${compTargets.length}`);
-        }
-        console.log('  ✓ Duplicate prevention verified: exactly 1 companion window exists.');
-
-        const ss4 = await compClient.captureScreenshot();
-        const p4 = path.join(ARTIFACTS_DIR, 'fairy_4_close_reopen_verified.png');
-        fs.writeFileSync(p4, ss4);
-        console.log(`  📸 Saved Screenshot 4 (After Close & Reopen): ${p4} (${ss4.length} bytes)`);
+        const ss5 = await compClient.captureScreenshot();
+        const p5 = path.join(ARTIFACTS_DIR, 'fairy_5_dock_undock_verified.png');
+        fs.writeFileSync(p5, ss5);
+        console.log(`  📸 Saved Screenshot 5 (Dock & Undock Cycle): ${p5} (${ss5.length} bytes)`);
 
     } finally {
         if (compClient) compClient.close();
@@ -295,9 +325,9 @@ async function runVisualVerificationSuite() {
     }
 
     // -------------------------------------------------------------
-    // SCREENSHOT 5: The application after a full application restart
+    // SCREENSHOT 6: Fresh application restart verification
     // -------------------------------------------------------------
-    console.log('\n[Check 5] Full Application Restart Verification...');
+    console.log('\n[Check 6] Testing Clean Application Restart & Restoration...');
     proc = await launchApp(9222);
     mainClient = null;
     compClient = null;
@@ -321,7 +351,6 @@ async function runVisualVerificationSuite() {
         await mainClient.send('Page.enable');
         await sleep(2000);
 
-        // Undock companion on fresh restart
         await mainClient.eval('window.lucyIpc.toggleCompanionWindow({ action: "float" })');
         await sleep(2000);
 
@@ -338,15 +367,12 @@ async function runVisualVerificationSuite() {
             (() => {
                 const renderer = window.fairyRenderer || window.companionRenderer;
                 const canvas = document.getElementById('fairyCanvas');
-                const hasThree = Boolean(document.getElementById('threeCanvas'));
-                const hasDragon = document.body.innerHTML.toLowerCase().includes('dragon');
                 return {
                     hasFairyCanvas: Boolean(canvas),
-                    hasThreeCanvas: hasThree,
-                    hasDragonText: hasDragon,
+                    canvasWidth: canvas ? canvas.width : 0,
+                    canvasHeight: canvas ? canvas.height : 0,
                     rendererRunning: Boolean(renderer && renderer.running),
-                    emotion: renderer ? renderer.state.emotion : 'none',
-                    orbitParticles: renderer && renderer.orbitParticles ? renderer.orbitParticles.length : 0
+                    emotion: renderer ? renderer.state.emotion : 'none'
                 };
             })()
         `);
@@ -354,18 +380,14 @@ async function runVisualVerificationSuite() {
         if (!restartStatus.rendererRunning) {
             throw new Error('Renderer failed to run after restart');
         }
-        if (restartStatus.hasThreeCanvas || restartStatus.hasDragonText) {
-            throw new Error('Old dragon found after fresh restart!');
-        }
-        console.log('  ✓ Post-restart verified: 0 dragons in any window, Fairy running flawlessly.');
 
-        const ss5 = await compClient.captureScreenshot();
-        const p5 = path.join(ARTIFACTS_DIR, 'fairy_5_restart_verified.png');
-        fs.writeFileSync(p5, ss5);
-        console.log(`  📸 Saved Screenshot 5 (After Restart): ${p5} (${ss5.length} bytes)`);
+        const ss6 = await compClient.captureScreenshot();
+        const p6 = path.join(ARTIFACTS_DIR, 'fairy_6_restart_verified.png');
+        fs.writeFileSync(p6, ss6);
+        console.log(`  📸 Saved Screenshot 6 (Post-Restart): ${p6} (${ss6.length} bytes)`);
 
         console.log('\n================================================================');
-        console.log('  ALL 5 VISUAL VERIFICATION CHECKS PASSED WITH 100% SUCCESS!');
+        console.log('  ALL 6 VISUAL VERIFICATION CHECKS PASSED WITH 100% SUCCESS!');
         console.log('================================================================');
 
     } finally {

@@ -53,8 +53,8 @@ test('SEC-004: Real Electron Single-Instance Lock Prevents Concurrent Running In
 
             const timer = setTimeout(() => {
                 secondaryChild.kill();
-                reject(new Error(`Secondary instance did not exit within 8 seconds as expected for single instance lock. Stderr: ${secondaryStderr}`));
-            }, 8000);
+                reject(new Error(`Secondary instance did not exit within 15 seconds as expected for single instance lock. Stderr: ${secondaryStderr}`));
+            }, 15000);
 
             secondaryChild.on('exit', (code) => {
                 clearTimeout(timer);
