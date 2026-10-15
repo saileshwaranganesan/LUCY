@@ -73,6 +73,7 @@ contextBridge.exposeInMainWorld('lucyIpc', {
     summonCompanionWindow: () => ipcRenderer.invoke('lucy:summonCompanionWindow'),
     setCompanionPin: (isPinned) => ipcRenderer.invoke('lucy:setCompanionPin', isPinned),
     getCompanionStatus: () => ipcRenderer.invoke('lucy:getCompanionStatus'),
+    playCompanionTrick: (trick) => ipcRenderer.invoke('lucy:playCompanionTrick', trick),
     sendVoiceState: (voiceData) => ipcRenderer.send('lucy:sendVoiceState', voiceData),
     onCompanionWindowToggled: (callback) => {
         ipcRenderer.on('lucy:companionWindowToggled', (_event, data) => callback(data));

@@ -45,6 +45,17 @@ class CelestialFamiliarRenderer {
             opacity: 1
         };
 
+        this.targetFps = 24;
+        this.lastFrameTime = 0;
+        this.isInteracting = false;
+        this.lastInteractionTime = Date.now();
+        this.isObscured = false;
+        this.rafId = null;
+        this.dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? Math.min(2, window.devicePixelRatio) : 1;
+        this.prefersReducedMotion = (typeof window !== 'undefined' && window.matchMedia)
+            ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+            : false;
+
         this.orbitParticles = [];
         this.burstParticles = [];
         this.trailParticles = [];
@@ -53,6 +64,28 @@ class CelestialFamiliarRenderer {
 
         this._initParticles();
         this._bindEvents();
+    }
+
+    onResize(width, height) {
+        if (!this.canvas) return;
+        if (typeof width === 'number' && width > 0) {
+            this.canvas.width = Math.round(width);
+        }
+        if (typeof height === 'number' && height > 0) {
+            this.canvas.height = Math.round(height);
+        }
+    }
+
+    setVisibility(visible) {
+        this.isObscured = !visible;
+        if (visible) {
+            this.lastInteractionTime = Date.now();
+        }
+    }
+
+    markInteracted() {
+        this.lastInteractionTime = Date.now();
+        this.isInteracting = true;
     }
 
     _initParticles() {
@@ -75,6 +108,7 @@ class CelestialFamiliarRenderer {
         if (!this.canvas) return;
 
         this._mouseMoveHandler = (e) => {
+            this.markInteracted();
             const rect = this.canvas.getBoundingClientRect();
             if (rect.width <= 0 || rect.height <= 0) return;
             const cx = rect.width / 2;
@@ -96,20 +130,126 @@ class CelestialFamiliarRenderer {
 
     setVisualState(visualState = {}) {
         if (!visualState) return;
+        this.markInteracted();
         const prevEmotion = this.state.emotion;
         if (visualState.emotion) {
             this.state.emotion = visualState.emotion;
+            this.targetFps = (visualState.emotion === 'idle') ? 24 : 60;
         }
 
         if (this.state.emotion === 'pet' && prevEmotion !== 'pet') {
             this.triggerPetBurst();
         } else if (this.state.emotion === 'magic' && prevEmotion !== 'magic') {
             this.triggerMagicSpin();
+        } else if ((this.state.emotion === 'trick_spin' || this.state.emotion === 'spin') && prevEmotion !== 'trick_spin') {
+            this.triggerSpin();
+        } else if ((this.state.emotion === 'trick_jump' || this.state.emotion === 'jump') && prevEmotion !== 'trick_jump') {
+            this.triggerJump();
+        } else if ((this.state.emotion === 'trick_fly' || this.state.emotion === 'fly') && prevEmotion !== 'trick_fly') {
+            this.triggerFlight();
+        } else if ((this.state.emotion === 'trick_bounce' || this.state.emotion === 'bounce') && prevEmotion !== 'trick_bounce') {
+            this.triggerBounce();
         } else if (this.state.emotion === 'takeoff') {
             this.triggerTakeoff();
         } else if (this.state.emotion === 'landing') {
             this.triggerLanding();
         }
+    }
+
+    playTrick(trickName) {
+        const trick = String(trickName || '').toLowerCase().trim();
+        switch (trick) {
+            case 'spin':
+                this.triggerSpin();
+                break;
+            case 'jump':
+                this.triggerJump();
+                break;
+            case 'fly':
+            case 'flight':
+                this.triggerFlight();
+                break;
+            case 'bounce':
+                this.triggerBounce();
+                break;
+            case 'pet':
+                this.setVisualState({ emotion: 'pet' });
+                break;
+            case 'magic':
+                this.setVisualState({ emotion: 'magic' });
+                break;
+            default:
+                this.triggerBounce();
+                break;
+        }
+    }
+
+    triggerSpin() {
+        this.state.emotion = 'trick_spin';
+        this.targetFps = 60;
+        this.state.actionTimer = 0;
+        this.state.actionDuration = 1.6;
+        this.state.spinAngle = 0;
+        this.markInteracted();
+        this.burstParticles = [];
+        for (let i = 0; i < 28; i++) {
+            const angle = (i / 28) * Math.PI * 2;
+            const dist = Math.random() * 32 + 10;
+            this.burstParticles.push({
+                x: Math.cos(angle) * dist,
+                y: Math.sin(angle) * dist,
+                vx: Math.cos(angle + Math.PI / 2) * (Math.random() * 2 + 1.2),
+                vy: Math.sin(angle + Math.PI / 2) * (Math.random() * 2 + 1.2) - 0.4,
+                radius: Math.random() * 2.4 + 1.0,
+                alpha: 1,
+                decay: 0.02,
+                color: ['#70d6ff', '#ffd166', '#b388ff', '#ff85a1'][i % 4],
+                shape: 'sparkle'
+            });
+        }
+    }
+
+    triggerJump() {
+        this.state.emotion = 'trick_jump';
+        this.targetFps = 60;
+        this.state.actionTimer = 0;
+        this.state.actionDuration = 1.3;
+        this.state.transitionOffset = 0;
+        this.state.scaleY = 1.0;
+        this.markInteracted();
+        for (let i = 0; i < 16; i++) {
+            this.burstParticles.push({
+                x: (Math.random() - 0.5) * 24,
+                y: 18,
+                vx: (Math.random() - 0.5) * 1.8,
+                vy: Math.random() * 1.5 + 0.5,
+                radius: Math.random() * 2.2 + 0.8,
+                alpha: 1,
+                decay: 0.03,
+                color: '#ffd166',
+                shape: 'sparkle'
+            });
+        }
+    }
+
+    triggerFlight() {
+        this.state.emotion = 'trick_fly';
+        this.targetFps = 60;
+        this.state.actionTimer = 0;
+        this.state.actionDuration = 2.0;
+        this.state.transitionOffset = 0;
+        this.state.flightOffsetX = 0;
+        this.markInteracted();
+    }
+
+    triggerBounce() {
+        this.state.emotion = 'trick_bounce';
+        this.targetFps = 60;
+        this.state.actionTimer = 0;
+        this.state.actionDuration = 1.2;
+        this.state.transitionOffset = 0;
+        this.state.scaleY = 1.0;
+        this.markInteracted();
     }
 
     triggerPetBurst() {
@@ -169,20 +309,69 @@ class CelestialFamiliarRenderer {
     start() {
         if (this.running) return;
         this.running = true;
-        this.lastTime = performance.now();
+        this.lastTime = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+        this.lastFrameTime = this.lastTime;
+
         const animate = (time) => {
             if (!this.running) return;
+
+            // Visibility / hidden guard: skip render passes when document is hidden or obscured
+            const isDocHidden = (typeof document !== 'undefined' && document.hidden);
+            if (this.isObscured || isDocHidden) {
+                if (typeof requestAnimationFrame === 'function') {
+                    this.rafId = requestAnimationFrame(animate);
+                }
+                return;
+            }
+
+            // Adaptive frame rate scheduling:
+            // High rate (60 FPS) when actively interacting, speaking, or executing tricks.
+            // Throttled rate (24 FPS) when idle to preserve CPU, GPU, and battery.
+            const isIdle = (this.state.emotion === 'idle');
+            const now = Date.now();
+            const isRecentlyActive = (now - this.lastInteractionTime < 3000);
+            const targetFps = (!isIdle || isRecentlyActive) ? 60 : 24;
+            const frameInterval = 1000 / targetFps;
+            const elapsed = time - this.lastFrameTime;
+
+            if (elapsed < frameInterval - 2) {
+                if (typeof requestAnimationFrame === 'function') {
+                    this.rafId = requestAnimationFrame(animate);
+                }
+                return;
+            }
+
+            this.lastFrameTime = time - (elapsed % frameInterval);
             const dt = Math.min((time - this.lastTime) / 1000, 0.1);
             this.lastTime = time;
+
             this._update(time, dt);
             this._render(time);
-            requestAnimationFrame(animate);
+
+            if (typeof requestAnimationFrame === 'function') {
+                this.rafId = requestAnimationFrame(animate);
+            }
         };
-        requestAnimationFrame(animate);
+
+        if (typeof requestAnimationFrame === 'function') {
+            this.rafId = requestAnimationFrame(animate);
+        }
     }
 
     stop() {
         this.running = false;
+        if (this.rafId && typeof cancelAnimationFrame === 'function') {
+            cancelAnimationFrame(this.rafId);
+            this.rafId = null;
+        }
+    }
+
+    destroy() {
+        this.stop();
+        if (this.canvas) {
+            if (this._mouseMoveHandler) this.canvas.removeEventListener('mousemove', this._mouseMoveHandler);
+            if (this._mouseLeaveHandler) this.canvas.removeEventListener('mouseleave', this._mouseLeaveHandler);
+        }
     }
 
     _update(time, dt) {
@@ -194,8 +383,8 @@ class CelestialFamiliarRenderer {
 
         // Hover & wing frequencies adapt dynamically
         let hoverSpeed = 2.2;
-        let hoverAmp = 7;
-        let wingSpeed = 12;
+        let hoverAmp = this.prefersReducedMotion ? 2.5 : 7;
+        let wingSpeed = this.prefersReducedMotion ? 6 : 12;
 
         if (this.state.emotion === 'takeoff') {
             wingSpeed = 24;
@@ -226,7 +415,6 @@ class CelestialFamiliarRenderer {
                 this.state.opacity = 1;
             }
         } else {
-            this.state.transitionOffset = 0;
             this.state.opacity = 1;
 
             if (this.state.emotion === 'speaking') {
@@ -239,6 +427,63 @@ class CelestialFamiliarRenderer {
                 hoverSpeed = 3.2;
                 hoverAmp = 9;
                 wingSpeed = 18;
+            } else if (this.state.emotion === 'trick_spin') {
+                wingSpeed = 26;
+                this.state.actionTimer += dt;
+                this.state.spinAngle += dt * Math.PI * 3.8;
+                if (this.state.actionTimer >= this.state.actionDuration) {
+                    this.state.emotion = 'idle';
+                    this.targetFps = 24;
+                    this.state.spinAngle = 0;
+                }
+            } else if (this.state.emotion === 'trick_jump') {
+                wingSpeed = 22;
+                this.state.actionTimer += dt;
+                const prog = Math.min(1, this.state.actionTimer / this.state.actionDuration);
+                if (prog < 0.2) {
+                    this.state.scaleY = 0.88;
+                    this.state.transitionOffset = 6;
+                } else if (prog < 0.7) {
+                    const jumpNorm = (prog - 0.2) / 0.5;
+                    this.state.scaleY = 1.12;
+                    this.state.transitionOffset = -46 * Math.sin(jumpNorm * Math.PI);
+                } else if (prog < 0.9) {
+                    this.state.scaleY = 0.9;
+                    this.state.transitionOffset = 0;
+                } else {
+                    this.state.scaleY = 1.0;
+                    this.state.transitionOffset = 0;
+                }
+                if (this.state.actionTimer >= this.state.actionDuration) {
+                    this.state.emotion = 'idle';
+                    this.targetFps = 24;
+                    this.state.transitionOffset = 0;
+                    this.state.scaleY = 1.0;
+                }
+            } else if (this.state.emotion === 'trick_fly') {
+                wingSpeed = 28;
+                this.state.actionTimer += dt;
+                const prog = Math.min(1, this.state.actionTimer / this.state.actionDuration);
+                this.state.transitionOffset = Math.sin(prog * Math.PI * 2) * -30;
+                this.state.flightOffsetX = Math.sin(prog * Math.PI * 4) * 16;
+                if (this.state.actionTimer >= this.state.actionDuration) {
+                    this.state.emotion = 'idle';
+                    this.targetFps = 24;
+                    this.state.transitionOffset = 0;
+                    this.state.flightOffsetX = 0;
+                }
+            } else if (this.state.emotion === 'trick_bounce') {
+                wingSpeed = 20;
+                this.state.actionTimer += dt;
+                const prog = Math.min(1, this.state.actionTimer / this.state.actionDuration);
+                this.state.transitionOffset = -Math.abs(Math.sin(prog * Math.PI * 4)) * 18;
+                this.state.scaleY = 1.0 + Math.sin(prog * Math.PI * 4) * 0.08;
+                if (this.state.actionTimer >= this.state.actionDuration) {
+                    this.state.emotion = 'idle';
+                    this.targetFps = 24;
+                    this.state.transitionOffset = 0;
+                    this.state.scaleY = 1.0;
+                }
             } else if (this.state.emotion === 'magic') {
                 wingSpeed = 22;
                 this.state.actionTimer += dt;
@@ -251,6 +496,11 @@ class CelestialFamiliarRenderer {
                 hoverSpeed = 1.0;
                 hoverAmp = 3.5;
                 wingSpeed = 5;
+            } else {
+                this.state.transitionOffset = 0;
+                this.state.scaleY = 1.0;
+                this.state.flightOffsetX = 0;
+                this.state.spinAngle = 0;
             }
         }
 
@@ -454,8 +704,9 @@ class CelestialFamiliarRenderer {
         }
 
         // Apply scale & spin transformations during special actions
-        this.ctx.translate(cx, cy);
-        this.ctx.scale(baseScale, baseScale);
+        const fx = cx + (this.state.flightOffsetX || 0);
+        this.ctx.translate(fx, cy);
+        this.ctx.scale(baseScale, baseScale * (this.state.scaleY || 1));
 
         if (this.state.spinAngle !== 0) {
             this.ctx.rotate(this.state.spinAngle);

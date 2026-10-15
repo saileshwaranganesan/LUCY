@@ -10,32 +10,54 @@
 <body>
   <div id="companionContainer">
     <!-- Top Bar: Status Pill & Dismiss -->
-    <div class="top-bar">
+    <div class="top-bar" id="topBar">
       <div class="status-pill" id="statusPill" title="L.U.C.Y. Assistant State (Drag to move)">
         <div class="status-dot" id="statusDot"></div>
         <span id="statusText">IDLE</span>
       </div>
-      <button class="top-close-btn" id="closeBtn" title="Return companion to main app">✕</button>
+      <button class="top-close-btn" id="closeBtn" title="Return companion to main app" aria-label="Close Companion">✕</button>
     </div>
 
-    <!-- Speech Dialogue Bubble -->
-    <div class="speech-bubble" id="speechBubble">
-      Sparkle! ✨ Ready for your instruction.
+    <!-- Main Workspace: Fairy Stage + Adjacent Side Conversation Panel -->
+    <div class="companion-body" id="companionBody">
+      <!-- Fairy Canvas Stage -->
+      <div class="fairy-stage" id="fairyStage" title="Lucy Fairy Companion (Drag to move, click to pet)">
+        <canvas id="fairyCanvas"></canvas>
+      </div>
+
+      <!-- Adjacent Side Conversation Panel (Never overlaps Lucy's face) -->
+      <div class="side-panel" id="sideConversationPanel" role="region" aria-label="Lucy Conversation Panel">
+        <div class="side-panel-header">
+          <span class="side-panel-title">✨ Lucy</span>
+          <button class="side-panel-dismiss" id="sideDismissBtn" title="Dismiss speech panel" aria-label="Dismiss">✕</button>
+        </div>
+        <div class="side-panel-body" id="sidePanelBody">
+          <div class="typewriter-text" id="typewriterText">Sparkle! ✨ Beside you on your desktop.</div>
+        </div>
+        <div class="side-panel-actions">
+          <button class="side-action-btn primary" id="openChatBtn" title="Open full chat console in main window">Chat ↗</button>
+          <div class="trick-menu-wrapper" id="trickMenuWrapper">
+            <button class="side-action-btn" id="trickMenuBtn" title="Playful fairy tricks">✨ Tricks ▾</button>
+            <div class="trick-dropdown" id="trickDropdown">
+              <button class="trick-option" data-trick="spin" title="Full-body spin">💫 Spin</button>
+              <button class="trick-option" data-trick="jump" title="Vertical jump & cushion">🦘 Jump</button>
+              <button class="trick-option" data-trick="fly" title="Swoop flight loop">🦋 Fly</button>
+              <button class="trick-option" data-trick="bounce" title="Happy double bounce">✨ Bounce</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- Fairy Canvas (Unified Celestial Familiar Renderer) -->
-    <div class="fairy-stage" id="fairyStage" title="Lucy Fairy Companion (Drag to move)">
-      <canvas id="fairyCanvas" width="220" height="190"></canvas>
+    <!-- Simplified 3-Button Bottom Glassmorphic Control Dock -->
+    <div class="control-dock" id="controlDock" role="toolbar" aria-label="Companion Primary Controls">
+      <button class="dock-btn" id="talkBtn" title="Chat: Open side conversation or focus main window" aria-label="Chat">💬</button>
+      <button class="dock-btn active" id="pinBtn" title="Pin State: Always on top 📌 (Click to toggle)" aria-label="Toggle Pin">📌</button>
+      <button class="dock-btn return-btn" id="returnBtn" title="Return to Main Application" aria-label="Return to Main App">↩️</button>
     </div>
 
-    <!-- Sleek Glassmorphic Floating Interaction Dock -->
-    <div class="control-dock" id="controlDock">
-      <button class="dock-btn" id="petBtn" title="Pet Lucy (Affectionate reaction)">✋</button>
-      <button class="dock-btn" id="magicBtn" title="Magical sparkle interaction">✨</button>
-      <button class="dock-btn" id="talkBtn" title="Talk / Focus Assistant Console">💬</button>
-      <button class="dock-btn active" id="pinBtn" title="Pin State: Always on top (Click to toggle)">📌</button>
-      <button class="dock-btn return-btn" id="returnBtn" title="Return to Main Application">↩️</button>
-    </div>
+    <!-- Tactile Corner Resize Handle -->
+    <div class="resize-grip" id="resizeGrip" title="Drag to resize companion window"></div>
   </div>
 
   <script src="../ui/companion-renderer.js"></script>

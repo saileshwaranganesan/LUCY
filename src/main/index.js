@@ -917,6 +917,18 @@ ipcMain.handle('lucy:getCompanionStatus', async () => {
     return { ok: true, ...floatingCompanion.getStatus() };
 });
 
+ipcMain.handle('lucy:playCompanionTrick', async (_event, trick) => {
+    const allowedTricks = ['spin', 'jump', 'fly', 'bounce', 'pet', 'magic'];
+    const sanitized = String(trick || '').toLowerCase().trim();
+    if (!allowedTricks.includes(sanitized)) {
+        return { ok: false, error: `Invalid trick: ${sanitized}` };
+    }
+    if (floatingCompanion && floatingCompanion.window && !floatingCompanion.window.isDestroyed()) {
+        floatingCompanion.window.webContents.send('companion:playTrick', { trick: sanitized });
+    }
+    return { ok: true, trick: sanitized };
+});
+
 ipcMain.on('lucy:sendVoiceState', (_event, voiceData) => {
     const validation = validateSendVoiceState(voiceData);
     if (!validation.ok) {

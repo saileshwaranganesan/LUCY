@@ -30,9 +30,22 @@ class FloatingCompanionWindow {
         this.window = null;
         this.isShown = false;
         this.isPinned = true;
-        this.lastPosition = this._loadSavedPosition();
+        this.currentWidth = FloatingCompanionWindow.DEFAULT_WIDTH;
+        this.currentHeight = FloatingCompanionWindow.DEFAULT_HEIGHT;
+        this.lastPosition = this._loadSavedBounds();
 
         this._registerIpcHandlers();
+    }
+
+    _debounce(fn, delayMs) {
+        let timer = null;
+        return (...args) => {
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(() => {
+                timer = null;
+                fn(...args);
+            }, delayMs);
+        };
     }
 
     _getBoundsFile() {
@@ -66,7 +79,7 @@ class FloatingCompanionWindow {
         }
     }
 
-    _loadSavedPosition() {
+    _loadSavedBounds() {
         const file = this._getBoundsFile();
         if (file && fs.existsSync(file)) {
             try {
@@ -75,27 +88,43 @@ class FloatingCompanionWindow {
                     if (data.isPinned !== undefined) {
                         this.isPinned = Boolean(data.isPinned);
                     }
-                    return this._clampToBounds(data.x, data.y);
+                    if (typeof data.width === 'number' && typeof data.height === 'number') {
+                        this.currentWidth = Math.max(180, Math.min(520, Math.round(data.width)));
+                        this.currentHeight = Math.max(220, Math.min(600, Math.round(data.height)));
+                    }
+                    const clamped = this._clampToBounds(data.x, data.y, this.currentWidth, this.currentHeight);
+                    this.lastPosition = clamped;
+                    return clamped;
                 }
             } catch (_) {}
         }
         return null;
     }
 
-    _savePosition(x, y) {
+    _loadSavedPosition() {
+        return this._loadSavedBounds();
+    }
+
+    _saveBounds(x, y, width = this.currentWidth, height = this.currentHeight) {
         this.lastPosition = { x, y };
+        this.currentWidth = Math.max(180, Math.min(520, Math.round(width)));
+        this.currentHeight = Math.max(220, Math.min(600, Math.round(height)));
         const file = this._getBoundsFile();
         if (file) {
             try {
                 fs.writeFileSync(file, JSON.stringify({
                     x,
                     y,
-                    width: FloatingCompanionWindow.DEFAULT_WIDTH,
-                    height: FloatingCompanionWindow.DEFAULT_HEIGHT,
+                    width: this.currentWidth,
+                    height: this.currentHeight,
                     isPinned: this.isPinned
                 }, null, 2), 'utf8');
             } catch (_) {}
         }
+    }
+
+    _savePosition(x, y) {
+        this._saveBounds(x, y, this.currentWidth, this.currentHeight);
     }
 
     setMainWindow(mainWindow) {
@@ -120,8 +149,8 @@ class FloatingCompanionWindow {
             return this.window;
         }
 
-        const winWidth = FloatingCompanionWindow.DEFAULT_WIDTH;
-        const winHeight = FloatingCompanionWindow.DEFAULT_HEIGHT;
+        const winWidth = this.currentWidth || FloatingCompanionWindow.DEFAULT_WIDTH;
+        const winHeight = this.currentHeight || FloatingCompanionWindow.DEFAULT_HEIGHT;
 
         let defaultX = 100;
         let defaultY = 100;
@@ -139,6 +168,10 @@ class FloatingCompanionWindow {
         this.window = new WinCtor({
             width: winWidth,
             height: winHeight,
+            minWidth: 180,
+            minHeight: 220,
+            maxWidth: 520,
+            maxHeight: 600,
             x: defaultX,
             y: defaultY,
             frame: false,
@@ -147,7 +180,7 @@ class FloatingCompanionWindow {
             hasShadow: false,
             alwaysOnTop: this.isPinned,
             skipTaskbar: true,
-            resizable: false,
+            resizable: true,
             movable: true,
             show: false,
             webPreferences: {
@@ -192,6 +225,38 @@ class FloatingCompanionWindow {
             }
         });
 
+        const debouncedSave = this._debounce(() => {
+            if (this.window && !this.window.isDestroyed()) {
+                try {
+                    const [x, y] = this.window.getPosition();
+                    const [w, h] = (typeof this.window.getSize === 'function')
+                        ? this.window.getSize()
+                        : [this.currentWidth, this.currentHeight];
+                    this._saveBounds(x, y, w, h);
+                } catch (_) {}
+            }
+        }, 300);
+
+        this.window.on('resize', () => {
+            if (this.window && !this.window.isDestroyed()) {
+                try {
+                    if (typeof this.window.getSize === 'function') {
+                        const [w, h] = this.window.getSize();
+                        this.currentWidth = w;
+                        this.currentHeight = h;
+                        if (this.window.webContents) {
+                            this.window.webContents.send('companion:resized', { width: w, height: h });
+                        }
+                    }
+                } catch (_) {}
+            }
+            debouncedSave();
+        });
+
+        this.window.on('moved', () => {
+            debouncedSave();
+        });
+
         // Crash resilience: isolate renderer failure
         this.window.webContents.on('render-process-gone', (_event, details) => {
             console.warn('[FloatingCompanionWindow] Renderer process terminated:', details);
@@ -215,6 +280,9 @@ class FloatingCompanionWindow {
             this.window.show();
             this.isShown = true;
             this.sendVisualUpdate({ emotion: 'landing' });
+            if (this.window.webContents) {
+                this.window.webContents.send('companion:visibilityChanged', { isVisible: true });
+            }
         }
     }
 
@@ -222,8 +290,14 @@ class FloatingCompanionWindow {
         if (this.window && !this.window.isDestroyed()) {
             try {
                 const [x, y] = this.window.getPosition();
-                this._savePosition(x, y);
+                const [w, h] = (typeof this.window.getSize === 'function')
+                    ? this.window.getSize()
+                    : [this.currentWidth, this.currentHeight];
+                this._saveBounds(x, y, w, h);
             } catch (_) {}
+            if (this.window.webContents) {
+                this.window.webContents.send('companion:visibilityChanged', { isVisible: false });
+            }
             this.window.hide();
             this.isShown = false;
         }
@@ -297,8 +371,8 @@ class FloatingCompanionWindow {
         return {
             isOpen: this.isOpen(),
             isPinned: this.isPinned,
-            width: FloatingCompanionWindow.DEFAULT_WIDTH,
-            height: FloatingCompanionWindow.DEFAULT_HEIGHT,
+            width: this.currentWidth || FloatingCompanionWindow.DEFAULT_WIDTH,
+            height: this.currentHeight || FloatingCompanionWindow.DEFAULT_HEIGHT,
             position: this.lastPosition
         };
     }
@@ -353,9 +427,9 @@ class FloatingCompanionWindow {
                 const [x, y] = this.window.getPosition();
                 const newX = Math.round(x + deltaX);
                 const newY = Math.round(y + deltaY);
-                const clamped = this._clampToBounds(newX, newY);
+                const clamped = this._clampToBounds(newX, newY, this.currentWidth, this.currentHeight);
                 this.window.setPosition(clamped.x, clamped.y);
-                this._savePosition(clamped.x, clamped.y);
+                this._saveBounds(clamped.x, clamped.y, this.currentWidth, this.currentHeight);
             }
         });
 
@@ -400,6 +474,67 @@ class FloatingCompanionWindow {
         ipcMain.handle('companion:summonToFront', async () => {
             this.summonToFront();
             return { ok: true, summoned: true };
+        });
+
+        ipcMain.handle('companion:setWindowSize', async (_event, payload = {}) => {
+            if (!payload || typeof payload !== 'object') {
+                return { ok: false, error: 'Invalid size payload' };
+            }
+            const rawW = Number(payload.width);
+            const rawH = Number(payload.height);
+            if (!Number.isFinite(rawW) || !Number.isFinite(rawH)) {
+                return { ok: false, error: 'Non-finite dimensions' };
+            }
+            const newW = Math.max(180, Math.min(520, Math.round(rawW)));
+            const newH = Math.max(220, Math.min(600, Math.round(rawH)));
+            this.currentWidth = newW;
+            this.currentHeight = newH;
+            if (this.window && !this.window.isDestroyed()) {
+                if (typeof this.window.setSize === 'function') {
+                    this.window.setSize(newW, newH);
+                }
+                const [x, y] = this.window.getPosition();
+                this._saveBounds(x, y, newW, newH);
+                if (this.window.webContents) {
+                    this.window.webContents.send('companion:resized', { width: newW, height: newH });
+                }
+            }
+            return { ok: true, width: newW, height: newH };
+        });
+
+        ipcMain.handle('companion:resizeDelta', async (_event, payload = {}) => {
+            if (!payload || typeof payload !== 'object') {
+                return { ok: false, error: 'Invalid delta payload' };
+            }
+            const dW = Number(payload.deltaWidth) || 0;
+            const dH = Number(payload.deltaHeight) || 0;
+            const newW = Math.max(180, Math.min(520, Math.round((this.currentWidth || 220) + dW)));
+            const newH = Math.max(220, Math.min(600, Math.round((this.currentHeight || 260) + dH)));
+            this.currentWidth = newW;
+            this.currentHeight = newH;
+            if (this.window && !this.window.isDestroyed()) {
+                if (typeof this.window.setSize === 'function') {
+                    this.window.setSize(newW, newH);
+                }
+                const [x, y] = this.window.getPosition();
+                this._saveBounds(x, y, newW, newH);
+                if (this.window.webContents) {
+                    this.window.webContents.send('companion:resized', { width: newW, height: newH });
+                }
+            }
+            return { ok: true, width: newW, height: newH };
+        });
+
+        ipcMain.handle('companion:playTrick', async (_event, trickName) => {
+            const allowedTricks = ['spin', 'jump', 'fly', 'bounce', 'pet', 'magic'];
+            const trick = String(trickName || '').toLowerCase().trim();
+            if (!allowedTricks.includes(trick)) {
+                return { ok: false, error: `Unsupported trick: ${trick}` };
+            }
+            if (this.window && !this.window.isDestroyed()) {
+                this.window.webContents.send('companion:playTrick', { trick });
+            }
+            return { ok: true, trick };
         });
 
         ipcMain.handle('companion:pet', async () => {

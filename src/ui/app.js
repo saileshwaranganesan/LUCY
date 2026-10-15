@@ -52,10 +52,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const hfNotice = document.getElementById('hfNotice');
     const settingTtsEnabled = document.getElementById('settingTtsEnabled');
     const settingVoiceSelect = document.getElementById('settingVoiceSelect');
+    const previewVoiceBtn = document.getElementById('previewVoiceBtn');
     const settingVoicePitch = document.getElementById('settingVoicePitch');
     const settingVoiceRate = document.getElementById('settingVoiceRate');
+    const settingVoiceVolume = document.getElementById('settingVoiceVolume');
     const voicePitchVal = document.getElementById('voicePitchVal');
     const voiceRateVal = document.getElementById('voiceRateVal');
+    const voiceVolumeVal = document.getElementById('voiceVolumeVal');
     const settingWakeWordEnabled = document.getElementById('settingWakeWordEnabled');
     const wakeWordOptionsGroup = document.getElementById('wakeWordOptionsGroup');
     const settingBackgroundMode = document.getElementById('settingBackgroundMode');
@@ -528,6 +531,44 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         commandInput.value = '';
+
+        // Expressive fairy trick commands
+        const lower = text.toLowerCase().trim();
+        const trickMatch = lower.match(/^(\/)?(spin|jump|fly|bounce)$/) ||
+            lower.match(/^(do a spin|spin around|jump up|do a jump|fly around|bounce up)$/);
+        if (trickMatch) {
+            let trick = 'bounce';
+            if (lower.includes('spin')) trick = 'spin';
+            else if (lower.includes('jump')) trick = 'jump';
+            else if (lower.includes('fly')) trick = 'fly';
+            else if (lower.includes('bounce')) trick = 'bounce';
+
+            if (typeof renderer.playTrick === 'function') {
+                renderer.playTrick(trick);
+            }
+            if (window.lucyIpc && typeof window.lucyIpc.playCompanionTrick === 'function') {
+                window.lucyIpc.playCompanionTrick(trick);
+            }
+
+            const replies = {
+                spin: 'Twirl! 💫 Watch me spin through the stardust!',
+                jump: 'Boing! 🦘 High fairy leap into the air!',
+                fly: 'Swoosh! 🦋 Gliding on celestial gossamer wings!',
+                bounce: 'Sparkle! ✨ Bouncing with celestial happiness!'
+            };
+            const reply = replies[trick] || 'Sparkle! ✨';
+            showBubble(reply);
+            appendFeedEntry('Fairy Trick', reply, 'normal', `Trick: ${trick}`);
+
+            if (voiceController && voiceController.ttsEnabled) {
+                voiceController.speak(reply);
+            }
+
+            statusLabel.textContent = 'READY';
+            statusDot.style.background = 'var(--accent-cyan)';
+            return;
+        }
+
         appendFeedEntry('User Request', text, 'normal', 'Instruction');
         renderer.setVisualState({ emotion: 'thinking' });
         statusLabel.textContent = 'PLANNING';
@@ -1177,7 +1218,7 @@ document.addEventListener('DOMContentLoaded', () => {
         for (const v of voices) {
             const opt = document.createElement('option');
             opt.value = v.name;
-            opt.textContent = `${v.name} (${v.lang || 'en'})${v.default ? ' [Default]' : ''}`;
+            opt.textContent = `${v.name} (${v.lang || 'en'}) [Local System Voice]${v.default ? ' ★' : ''}`;
             if (v.name === selectedVoice) {
                 opt.selected = true;
             }
@@ -1188,18 +1229,90 @@ document.addEventListener('DOMContentLoaded', () => {
     if (settingVoicePitch && voicePitchVal) {
         settingVoicePitch.addEventListener('input', () => {
             voicePitchVal.textContent = parseFloat(settingVoicePitch.value).toFixed(2);
+            persistVoiceSettings();
         });
     }
 
     if (settingVoiceRate && voiceRateVal) {
         settingVoiceRate.addEventListener('input', () => {
             voiceRateVal.textContent = parseFloat(settingVoiceRate.value).toFixed(2);
+            persistVoiceSettings();
+        });
+    }
+
+    if (settingVoiceVolume && voiceVolumeVal) {
+        settingVoiceVolume.addEventListener('input', () => {
+            const vol = parseFloat(settingVoiceVolume.value);
+            voiceVolumeVal.textContent = Math.round(vol * 100) + '%';
+            if (voiceController && voiceController.synthesis) {
+                voiceController.synthesis.setVoiceConfig({ volume: vol });
+            }
+            persistVoiceSettings();
+        });
+    }
+
+    if (settingVoiceSelect) {
+        settingVoiceSelect.addEventListener('change', () => {
+            persistVoiceSettings();
+        });
+    }
+
+    if (settingTtsEnabled) {
+        settingTtsEnabled.addEventListener('change', () => {
+            persistVoiceSettings();
+        });
+    }
+
+    async function persistVoiceSettings() {
+        if (!window.lucyIpc || typeof window.lucyIpc.setVoiceConfig !== 'function') return;
+        const config = {
+            voiceName: settingVoiceSelect ? settingVoiceSelect.value : '',
+            pitch: settingVoicePitch ? parseFloat(settingVoicePitch.value) : 1.05,
+            rate: settingVoiceRate ? parseFloat(settingVoiceRate.value) : 1.02,
+            volume: settingVoiceVolume ? parseFloat(settingVoiceVolume.value) : 1.0,
+            ttsEnabled: settingTtsEnabled ? settingTtsEnabled.checked : true,
+            wakeWordEnabled: settingWakeWordEnabled ? settingWakeWordEnabled.checked : false,
+            wakeWordSensitivity: settingWakeWordSensitivity ? parseFloat(settingWakeWordSensitivity.value) : 0.5
+        };
+        try {
+            await window.lucyIpc.setVoiceConfig(config);
+            if (voiceController) {
+                voiceController.setVoiceConfig(config);
+            }
+        } catch (_) {}
+    }
+
+    if (previewVoiceBtn) {
+        previewVoiceBtn.addEventListener('click', async () => {
+            if (!voiceController) return;
+            if (voiceController.isSpeaking) {
+                voiceController.stopSpeaking();
+                previewVoiceBtn.textContent = '▶ Preview';
+                return;
+            }
+            const selectedVoice = settingVoiceSelect ? settingVoiceSelect.value : '';
+            const pitch = settingVoicePitch ? parseFloat(settingVoicePitch.value) : 1.05;
+            const rate = settingVoiceRate ? parseFloat(settingVoiceRate.value) : 1.02;
+            const volume = settingVoiceVolume ? parseFloat(settingVoiceVolume.value) : 1.0;
+
+            previewVoiceBtn.textContent = '⏹ Stop';
+            try {
+                await voiceController.speak('Hello! I am Lucy, your celestial fairy companion. Ready to assist you!', {
+                    voiceName: selectedVoice,
+                    pitch,
+                    rate,
+                    volume
+                });
+            } catch (_) {
+            } finally {
+                previewVoiceBtn.textContent = '▶ Preview';
+            }
         });
     }
 
     const resetVoiceDefaultsBtn = document.getElementById('resetVoiceDefaultsBtn');
     if (resetVoiceDefaultsBtn) {
-        resetVoiceDefaultsBtn.addEventListener('click', () => {
+        resetVoiceDefaultsBtn.addEventListener('click', async () => {
             if (settingVoicePitch) {
                 settingVoicePitch.value = 1.05;
                 if (voicePitchVal) voicePitchVal.textContent = '1.05';
@@ -1208,12 +1321,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 settingVoiceRate.value = 1.02;
                 if (voiceRateVal) voiceRateVal.textContent = '1.02';
             }
+            if (settingVoiceVolume) {
+                settingVoiceVolume.value = 1.0;
+                if (voiceVolumeVal) voiceVolumeVal.textContent = '100%';
+            }
             if (settingVoiceSelect) {
                 settingVoiceSelect.value = '';
             }
             if (settingTtsEnabled) {
                 settingTtsEnabled.checked = true;
             }
+            await persistVoiceSettings();
             showBubble('Voice settings reset to defaults.');
         });
     }
@@ -1241,6 +1359,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (settingVoiceRate) {
                         settingVoiceRate.value = vc.rate ?? 1.02;
                         if (voiceRateVal) voiceRateVal.textContent = Number(vc.rate ?? 1.02).toFixed(2);
+                    }
+                    if (settingVoiceVolume) {
+                        settingVoiceVolume.value = vc.volume ?? 1.0;
+                        if (voiceVolumeVal) voiceVolumeVal.textContent = Math.round((vc.volume ?? 1.0) * 100) + '%';
                     }
                     if (settingTtsEnabled) {
                         settingTtsEnabled.checked = vc.ttsEnabled !== false;

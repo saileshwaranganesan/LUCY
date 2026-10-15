@@ -19,10 +19,25 @@ contextBridge.exposeInMainWorld('companionIpc', {
     onPinChanged: (callback) => {
         ipcRenderer.on('companion:pinChanged', (_event, data) => callback(data));
     },
+    onResized: (callback) => {
+        ipcRenderer.on('companion:resized', (_event, data) => callback(data));
+    },
+    onVisibilityChanged: (callback) => {
+        ipcRenderer.on('companion:visibilityChanged', (_event, data) => callback(data));
+    },
+    onPlayTrick: (callback) => {
+        ipcRenderer.on('companion:playTrick', (_event, data) => callback(data));
+    },
 
     // Window controls
     moveWindow: (deltaX, deltaY) => {
         ipcRenderer.send('companion:moveWindow', { deltaX, deltaY });
+    },
+    setWindowSize: (width, height) => {
+        return ipcRenderer.invoke('companion:setWindowSize', { width, height });
+    },
+    resizeDelta: (deltaWidth, deltaHeight) => {
+        return ipcRenderer.invoke('companion:resizeDelta', { deltaWidth, deltaHeight });
     },
     focusMainWindow: () => {
         ipcRenderer.send('companion:focusMainWindow');
@@ -49,6 +64,9 @@ contextBridge.exposeInMainWorld('companionIpc', {
     },
     magicCompanion: () => {
         return ipcRenderer.invoke('companion:magic');
+    },
+    playTrick: (trick) => {
+        return ipcRenderer.invoke('companion:playTrick', trick);
     },
     submitRequest: (text) => {
         return ipcRenderer.invoke('companion:submitRequest', text);

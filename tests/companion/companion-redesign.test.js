@@ -190,19 +190,29 @@ test('Unified Fairy Companion Redesign Verification', async (t) => {
 
         const html = fs.readFileSync(htmlPath, 'utf8');
         assert.ok(html.includes('id="fairyCanvas"'), 'companion.html must contain fairyCanvas');
-        assert.ok(html.includes('id="petBtn"'), 'companion.html must contain petBtn');
-        assert.ok(html.includes('id="magicBtn"'), 'companion.html must contain magicBtn');
+        assert.ok(html.includes('id="sideConversationPanel"'), 'companion.html must contain sideConversationPanel');
+        assert.ok(html.includes('id="typewriterText"'), 'companion.html must contain typewriterText');
         assert.ok(html.includes('id="talkBtn"'), 'companion.html must contain talkBtn');
         assert.ok(html.includes('id="pinBtn"'), 'companion.html must contain pinBtn');
         assert.ok(html.includes('id="returnBtn"'), 'companion.html must contain returnBtn');
+        assert.ok(html.includes('id="resizeGrip"'), 'companion.html must contain resizeGrip');
+
+        // Verify primary dock contains ONLY the clean 3 primary actions
+        const controlDockMatch = html.match(/<div class="control-dock" id="controlDock"[^>]*>([\s\S]*?)<\/div>/);
+        assert.ok(controlDockMatch, 'companion.html must contain controlDock');
+        assert.ok(!controlDockMatch[1].includes('id="petBtn"'), 'Primary dock must NOT contain petBtn');
+        assert.ok(!controlDockMatch[1].includes('id="magicBtn"'), 'Primary dock must NOT contain magicBtn');
 
         const css = fs.readFileSync(cssPath, 'utf8');
         assert.ok(css.includes('backdrop-filter'), 'companion.css must use glassmorphic styling');
         assert.ok(css.includes('pointer-events'), 'companion.css must configure transparent pass-through');
+        assert.ok(css.includes('.side-panel'), 'companion.css must style side-panel');
+        assert.ok(css.includes('.resize-grip'), 'companion.css must style resize-grip');
 
         const appCode = fs.readFileSync(appPath, 'utf8');
         assert.ok(appCode.includes('CelestialFamiliarRenderer'), 'companion-app.js must use CelestialFamiliarRenderer');
         assert.ok(appCode.includes('returnToApp'), 'companion-app.js must handle returnToApp');
+        assert.ok(appCode.includes('displayMessage'), 'companion-app.js must handle side panel message display');
     });
 
     await t.test('5. Single Authority Guarantee: Requests Route Solely Through TaskCoordinator', async () => {
@@ -326,4 +336,159 @@ test('Unified Fairy Companion Redesign Verification', async (t) => {
 
         floating.destroy();
     });
+
+    await t.test('9. Expressive Fairy Tricks: Spin, Jump, Fly, Bounce, and Clean Settlement to Idle', () => {
+        const canvas = createMockCanvas(240, 240);
+        const renderer = new CelestialFamiliarRenderer(canvas);
+
+        // 1. Spin trick
+        renderer.playTrick('spin');
+        assert.equal(renderer.state.emotion, 'trick_spin');
+        assert.equal(renderer.targetFps, 60, 'Tricks must elevate frame rate to 60 FPS');
+        assert.ok(renderer.burstParticles.length > 0, 'Spin must generate swirling particles');
+        // Simulate time advancement to completion
+        renderer._update(100, 1.7);
+        assert.equal(renderer.state.emotion, 'idle', 'Spin trick must settle cleanly back to idle');
+        assert.equal(renderer.state.spinAngle, 0, 'Spin angle must reset to 0');
+
+        // 2. Jump trick
+        renderer.playTrick('jump');
+        assert.equal(renderer.state.emotion, 'trick_jump');
+        // Anticipation phase
+        renderer._update(100, 0.1);
+        assert.ok(renderer.state.scaleY < 1.0, 'Jump anticipation must squash character');
+        // Airborne phase
+        renderer._update(200, 0.3);
+        assert.ok(renderer.state.transitionOffset < 0, 'Airborne jump must raise character upwards');
+        // Completion
+        renderer._update(1000, 1.0);
+        assert.equal(renderer.state.emotion, 'idle', 'Jump trick must settle cleanly back to idle');
+        assert.equal(renderer.state.transitionOffset, 0);
+        assert.equal(renderer.state.scaleY, 1.0);
+
+        // 3. Fly trick
+        renderer.playTrick('fly');
+        assert.equal(renderer.state.emotion, 'trick_fly');
+        renderer._update(100, 0.5);
+        assert.notEqual(renderer.state.flightOffsetX, 0, 'Flight trick must apply horizontal swoop offset');
+        // Completion
+        renderer._update(2500, 1.6);
+        assert.equal(renderer.state.emotion, 'idle', 'Fly trick must settle cleanly back to idle');
+        assert.equal(renderer.state.flightOffsetX, 0);
+
+        // 4. Bounce trick
+        renderer.playTrick('bounce');
+        assert.equal(renderer.state.emotion, 'trick_bounce');
+        renderer._update(100, 0.3);
+        assert.ok(renderer.state.transitionOffset <= 0);
+        renderer._update(1500, 1.0);
+        assert.equal(renderer.state.emotion, 'idle', 'Bounce trick must settle cleanly back to idle');
+
+        renderer.destroy();
+    });
+
+    await t.test('10. Adaptive Performance Engine: Idle Throttling (24 FPS) & Obscured Suspension', () => {
+        const canvas = createMockCanvas(240, 240);
+        const renderer = new CelestialFamiliarRenderer(canvas);
+
+        assert.equal(renderer.targetFps, 24, 'Idle companion renderer must target 24 FPS by default');
+
+        // User interaction elevates to 60 FPS
+        renderer.markInteracted();
+        assert.equal(renderer.targetFps, 24); // Will be evaluated in animate
+        renderer.setVisualState({ emotion: 'speaking' });
+        assert.equal(renderer.targetFps, 60, 'Active speaking state must elevate to 60 FPS');
+
+        // Obscured / hidden window pauses rendering
+        renderer.setVisibility(false);
+        assert.equal(renderer.isObscured, true, 'Window obscured state must set isObscured flag');
+
+        renderer.setVisibility(true);
+        assert.equal(renderer.isObscured, false, 'Window visible state must clear isObscured flag');
+
+        // Proportionate dynamic canvas resize
+        renderer.onResize(350, 400);
+        assert.equal(canvas.width, 350);
+        assert.equal(canvas.height, 400);
+
+        renderer.destroy();
+    });
+
+    await t.test('11. Genuine Window Resizing & Debounced Bounds Persistence', async () => {
+        let setSizeCalled = false;
+        let lastSize = null;
+
+        class MockResizableWindow {
+            constructor(options = {}) {
+                this.options = options;
+                this.destroyed = false;
+                this.visible = false;
+                this.x = 100;
+                this.y = 100;
+                this.width = options.width || 220;
+                this.height = options.height || 260;
+                this.webContents = {
+                    send: () => {},
+                    setWindowOpenHandler: () => {},
+                    on: () => {}
+                };
+            }
+            isDestroyed() { return this.destroyed; }
+            isMinimized() { return false; }
+            show() { this.visible = true; }
+            hide() { this.visible = false; }
+            getPosition() { return [this.x, this.y]; }
+            getSize() { return [this.width, this.height]; }
+            setSize(w, h) {
+                setSizeCalled = true;
+                this.width = w;
+                this.height = h;
+                lastSize = [w, h];
+            }
+            setPosition(x, y) { this.x = x; this.y = y; }
+            setAlwaysOnTop() {}
+            loadFile() {}
+            on() {}
+            once(ev, cb) { if (ev === 'ready-to-show') setTimeout(cb, 1); }
+            destroy() { this.destroyed = true; }
+        }
+
+        const floating = new FloatingCompanionWindow({
+            BrowserWindow: MockResizableWindow
+        });
+
+        // Window configuration must have resizable: true
+        const win = floating.createWindow();
+        assert.equal(win.options.resizable, true, 'Window configuration MUST have resizable: true');
+        assert.equal(win.options.minWidth, 180, 'Must enforce minimum width 180');
+        assert.equal(win.options.minHeight, 220, 'Must enforce minimum height 220');
+        assert.equal(win.options.maxWidth, 520, 'Must enforce maximum width 520');
+        assert.equal(win.options.maxHeight, 600, 'Must enforce maximum height 600');
+
+        // Test status reflects current size
+        const status = floating.getStatus();
+        assert.equal(status.width, 220);
+        assert.equal(status.height, 260);
+
+        floating.destroy();
+    });
+
+    await t.test('12. Adjacent Side Conversation Panel with Typewriter Presentation & No Face Obstruction', () => {
+        const htmlPath = path.resolve(__dirname, '../../src/companion/companion.html');
+        const cssPath = path.resolve(__dirname, '../../src/companion/companion.css');
+
+        const html = fs.readFileSync(htmlPath, 'utf8');
+        const css = fs.readFileSync(cssPath, 'utf8');
+
+        // Verify structure: companion-body is a row containing fairy-stage AND side-panel
+        assert.ok(html.includes('class="companion-body"'), 'companion.html must have companion-body wrapper');
+        assert.ok(html.includes('class="side-panel"'), 'companion.html must have side-panel');
+        assert.ok(html.includes('id="typewriterText"'), 'companion.html must have typewriterText');
+
+        // In CSS, side panel is adjacent flex item, NOT positioned absolutely over fairy face
+        assert.ok(css.includes('.companion-body'), 'companion.css must define companion-body');
+        assert.ok(css.includes('flex-direction: row'), 'companion-body must use flex-direction: row for side-by-side layout');
+        assert.ok(!css.includes('.speech-bubble {'), 'Old overlapping speech-bubble style must be replaced');
+    });
 });
+

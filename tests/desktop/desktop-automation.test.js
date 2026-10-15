@@ -199,7 +199,20 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
         if (process.platform !== 'win32') return;
         try {
             const { execSync } = require('node:child_process');
-            execSync('powershell -Command "Stop-Process -Name notepad -Force -ErrorAction SilentlyContinue; Get-ChildItem -Path \'$env:LOCALAPPDATA\\Packages\\Microsoft.WindowsNotepad_8wekyb3d8bbwe\\LocalState\' -Recurse -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue"', { stdio: 'ignore' });
+            execSync('taskkill /F /IM notepad.exe 2>$null', { stdio: 'ignore', shell: 'powershell' });
+        } catch (_) {}
+        try {
+            if (process.env.LOCALAPPDATA) {
+                const localStateDir = path.join(process.env.LOCALAPPDATA, 'Packages', 'Microsoft.WindowsNotepad_8wekyb3d8bbwe', 'LocalState');
+                for (const sub of ['TabState', 'WindowState']) {
+                    const dir = path.join(localStateDir, sub);
+                    if (fs.existsSync(dir)) {
+                        for (const f of fs.readdirSync(dir)) {
+                            try { fs.unlinkSync(path.join(dir, f)); } catch (_) {}
+                        }
+                    }
+                }
+            }
         } catch (_) {}
     }
 
