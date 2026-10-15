@@ -116,9 +116,13 @@
 | T-B05-01 | Memory | Persistent SQLite adapter, 5-cat parity, corruption recovery & lifecycle | `node --test tests/memory/sqlite-memory.test.js` | PASS | 17/17 pass; sql.js WASM, exact 5-category parity, idempotent migration, collision-safe backup & JSON readability validation, corrupt DB backup to .corrupt_*, persistence across close/reopen, parameter binding & SQL injection resistance, packaged WASM asset resolution, TaskCoordinator integration |
 | T-B06-01 | Memory | BM25 retrieval, query safety, ToolRegistry tools & checkpoint persistence | `node --test tests/memory/integrated-retrieval.test.js` | PASS | 14/14 pass; BM25 across 5 categories, phrase boosting, diversity penalty, SQLite checkpoints, empty/whitespace handling, Unicode normalization, SQL injection safety, result limits, ToolRegistry execution (memory_search, memory_get, memory_list), and non-repeating task resumption |
 | T-LIVE-B05 | Real Runtime | Live Electron SQLite persistent memory & task continuity verification | `node scripts/verify-live-memory.js` | PASS | Verified live Electron startup, CDP connection, 5-category memory persistence, secret redaction, untrusted external promotion blocking, long-term memory toggle, crash checkpoint recovery without repeating actions, visual screenshot artifact: `lucy_memory_continuity_verified.png` |
-| T-SUITE-FINAL | Complete | Complete autonomous regression suite | `npm test` | PASS | 223/223 tests passed (0 failures across all 23 test suites) |
-
-
-
-
+| T-UX2-01 | Companion UX 2.0 | Resizable companion window & bounds clamping | `node --test tests/companion/companion-redesign.test.js` | PASS | Clamps [180x220 to 520x600], proportional isotropic canvas scaling, 400ms debounced persistence to `companion-window-bounds.json` |
+| T-UX2-02 | Companion UX 2.0 | Clean 3-button primary control dock | `node --test tests/companion/companion-redesign.test.js` | PASS | Eliminated pet/magic buttons; retained talkBtn, pinBtn, returnBtn; reflects native always-on-top state |
+| T-UX2-03 | Companion UX 2.0 | Background runtime & tray persistence | `node --test tests/companion/persistent-background-runtime.test.js` | PASS | Main window hide on close; companion remains alive; tray restores main and toggles companion; explicit exit shuts down cleanly |
+| T-UX2-04 | Companion UX 2.0 | Adaptive rendering & idle optimization | `node --test tests/companion/companion-redesign.test.js` | PASS | Throttles to 24 FPS during idle; elevates to 60 FPS on interaction/speech/tricks; pauses (0 FPS) when obscured/hidden |
+| T-UX2-05 | Companion UX 2.0 | Adjacent side conversation panel & typewriter | `node --test tests/companion/companion-redesign.test.js` | PASS | Text beside character, face 100% unobstructed, typewriter effect (~24ms/char), auto-collapse for transient greetings |
+| T-UX2-06 | Companion UX 2.0 | System voice options & live preview | `node --test tests/voice/*.test.js` | PASS | Enumerates SAPI5 voices, `#previewVoiceBtn` audio playback, volume slider [0, 1], synchronized speech animation |
+| T-UX2-07 | Companion UX 2.0 | Expressive fairy tricks & clean settlement | `node --test tests/companion/companion-redesign.test.js` | PASS | Spin (360° rotation), Jump (squash/stretch leap), Fly (figure-8 swoop), Bounce, petting burst, clean return to idle |
+| T-LIVE-UX2 | Real Runtime | Live Electron Desktop UX 2.0 Verification | `node scripts/verify-floating-ux2.js` | PASS | 9 live CDP screenshots captured (`fairy_ux2_1_compact.png` through `fairy_ux2_9_voice_settings.png`), idle CPU/RAM measured (159.3 MB, 24 FPS) |
+| T-SUITE-FINAL | Complete | Complete autonomous regression suite | `node --test tests/**/*.test.js` | PASS | 427/427 tests passed (0 failures across all test suites) |
 
