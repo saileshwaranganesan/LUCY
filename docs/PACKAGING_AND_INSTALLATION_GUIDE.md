@@ -12,9 +12,9 @@ The release artifacts are stored in the project's release output directory: `dis
 
 | File Name | File Size | Target Description | SHA-256 Digest |
 |---|---|---|---|
-| **`L.U.C.Y-Setup-0.1.0-win-x64.exe`** | 170,155,304 B (~162.27 MB) | Standard Windows Installer (NSIS). Creates Start Menu & Desktop shortcuts, includes uninstaller. | `f56ea3e3b6087b499fc832533f2ba3c5f83b5d211746aa6f7279bd9f8c7511b2` |
-| **`L.U.C.Y-Portable-0.1.0-win-x64.exe`** | 169,925,762 B (~162.05 MB) | Portable executable. Runs directly without installation or administrator privileges. | `2117d0557855ecf63bec8695d15715591db1187289efdb8e1ccb1f19bc22a7f4` |
-| **`L.U.C.Y-Setup-0.1.0-win-x64.exe.blockmap`** | 179,606 B (~0.17 MB) | Differential update blockmap for Electron auto-updater. | `56b5b5e1a8b4d4b3e23eaf8f4d3a1c3f259b91b6282c65046d11632eadbb480f` |
+| **`L.U.C.Y-Setup-0.1.0-win-x64.exe`** | 170,176,539 B (~162.29 MB) | Standard Windows Installer (NSIS). Creates Start Menu & Desktop shortcuts, includes uninstaller. | `988fff53569ae9817759a029723329fa24bb3f6faac4b37274849a52e58b8861` |
+| **`L.U.C.Y-Portable-0.1.0-win-x64.exe`** | 169,946,909 B (~162.07 MB) | Portable executable. Runs directly without installation or administrator privileges. | `54acd25258a5285c9c97a8111acef71352ee638889762747c696193c646503d8` |
+| **`L.U.C.Y-Setup-0.1.0-win-x64.exe.blockmap`** | 179,473 B (~0.17 MB) | Differential update blockmap for Electron auto-updater. | `7912854e6492f7dbf72f452233d3c752b30b83ed15d4bca50faa7d34aaecc6ce` |
 | **`SHA256SUMS.txt`** | Standard GNU format | Cryptographic checksum manifest for verification with `sha256sum -c` or PowerShell. | — |
 | **`release-manifest.json`** | ~3.4 KB | Machine-readable release metadata with source revision commit, build timestamps, and hashes. | — |
 
