@@ -724,122 +724,450 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 6. Provider Settings Screen
+    // 6. Multi-Provider AI Connection & Routing Management
     const defaultModels = {
         gemini: 'gemini-2.0-flash',
         openrouter: 'google/gemini-2.0-flash-001',
+        groq: 'llama-3.3-70b-versatile',
+        cerebras: 'llama3.1-8b',
         ollama: 'qwen2.5:1.5b',
         huggingface: 'meta-llama/Llama-3.2-3B-Instruct',
         'custom-openai': 'gpt-4o-mini'
     };
 
-    function updateSettingVisibility() {
-        const prov = settingProvider.value;
-        if (prov === 'ollama') {
-            apiKeyGroup.style.display = 'none';
-            localUrlGroup.style.display = 'flex';
-            if (hfNotice) hfNotice.style.display = 'none';
-        } else if (prov === 'huggingface') {
-            apiKeyGroup.style.display = 'flex';
-            localUrlGroup.style.display = 'none';
-            if (hfNotice) hfNotice.style.display = 'block';
-        } else {
-            apiKeyGroup.style.display = 'flex';
-            localUrlGroup.style.display = 'none';
-            if (hfNotice) hfNotice.style.display = 'none';
+    // Tab Navigation
+    const settingsTabBtns = document.querySelectorAll('.settings-tab-btn');
+    const settingsTabContents = document.querySelectorAll('.settings-tab-content');
+
+    function switchSettingsTab(targetTabId) {
+        settingsTabBtns.forEach((btn) => {
+            const isTarget = btn.getAttribute('data-tab') === targetTabId;
+            btn.classList.toggle('active', isTarget);
+            btn.style.background = isTarget ? 'rgba(0, 242, 254, 0.15)' : 'rgba(255,255,255,0.05)';
+            btn.style.borderColor = isTarget ? 'var(--accent-cyan)' : 'var(--bg-card-border)';
+            btn.style.color = isTarget ? 'var(--accent-cyan)' : 'var(--text-dim)';
+        });
+        settingsTabContents.forEach((content) => {
+            content.style.display = content.id === targetTabId ? 'flex' : 'none';
+        });
+
+        if (targetTabId === 'tabConnections') {
+            loadConnectionsList();
+        } else if (targetTabId === 'tabRouting') {
+            loadRoutingConfig();
+        } else if (targetTabId === 'tabDiagnostics') {
+            loadRoutingDiagnostics();
         }
     }
 
-    settingProvider.addEventListener('change', () => {
-        updateSettingVisibility();
-        settingModel.value = defaultModels[settingProvider.value] || '';
-        checkKeyStatus();
+    settingsTabBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const tabId = btn.getAttribute('data-tab');
+            switchSettingsTab(tabId);
+        });
     });
 
-    if (discoverOllamaBtn) {
-        discoverOllamaBtn.addEventListener('click', async () => {
-            const url = settingLocalUrl.value.trim() || 'http://127.0.0.1:11434';
-            discoverOllamaBtn.disabled = true;
-            discoverOllamaBtn.textContent = '🔄 Discovering...';
-            if (ollamaDiscoveryStatus) {
-                ollamaDiscoveryStatus.style.display = 'block';
-                ollamaDiscoveryStatus.style.color = 'var(--text-dim)';
-                ollamaDiscoveryStatus.textContent = 'Connecting to Ollama endpoint...';
+    // Connections Management Elements
+    const showAddConnBtn = document.getElementById('showAddConnBtn');
+    const cancelAddConnBtn = document.getElementById('cancelAddConnBtn');
+    const addConnectionForm = document.getElementById('addConnectionForm');
+    const connProviderSelect = document.getElementById('connProviderSelect');
+    const connLabelInput = document.getElementById('connLabelInput');
+    const connApiKeyInput = document.getElementById('connApiKeyInput');
+    const connModelInput = document.getElementById('connModelInput');
+    const connPriorityInput = document.getElementById('connPriorityInput');
+    const connBaseUrlInput = document.getElementById('connBaseUrlInput');
+    const connFreeOnlyInput = document.getElementById('connFreeOnlyInput');
+    const saveConnBtn = document.getElementById('saveConnBtn');
+    const connApiKeyRow = document.getElementById('connApiKeyRow');
+    const connBaseUrlRow = document.getElementById('connBaseUrlRow');
+    const connModelList = document.getElementById('connModelList');
+    const connectionsListContainer = document.getElementById('connectionsListContainer');
+
+    function updateConnFormVisibility() {
+        if (!connProviderSelect) return;
+        const prov = connProviderSelect.value;
+        if (prov === 'ollama') {
+            if (connApiKeyRow) connApiKeyRow.style.display = 'none';
+            if (connBaseUrlRow) connBaseUrlRow.style.display = 'flex';
+            if (connBaseUrlInput && !connBaseUrlInput.value) connBaseUrlInput.value = 'http://127.0.0.1:11434';
+        } else {
+            if (connApiKeyRow) connApiKeyRow.style.display = 'flex';
+            if (connBaseUrlRow) connBaseUrlRow.style.display = (prov === 'custom-openai') ? 'flex' : 'none';
+        }
+        if (connModelInput && !connModelInput.value) {
+            connModelInput.value = defaultModels[prov] || '';
+        }
+    }
+
+    if (connProviderSelect) {
+        connProviderSelect.addEventListener('change', () => {
+            if (connModelInput) connModelInput.value = defaultModels[connProviderSelect.value] || '';
+            updateConnFormVisibility();
+        });
+    }
+
+    if (showAddConnBtn && addConnectionForm) {
+        showAddConnBtn.addEventListener('click', () => {
+            addConnectionForm.style.display = 'flex';
+            updateConnFormVisibility();
+        });
+    }
+
+    if (cancelAddConnBtn && addConnectionForm) {
+        cancelAddConnBtn.addEventListener('click', () => {
+            addConnectionForm.style.display = 'none';
+            if (connApiKeyInput) connApiKeyInput.value = '';
+            if (connLabelInput) connLabelInput.value = '';
+        });
+    }
+
+    if (saveConnBtn) {
+        saveConnBtn.addEventListener('click', async () => {
+            const provider = connProviderSelect.value;
+            const label = connLabelInput.value.trim();
+            const apiKey = connApiKeyInput.value.trim();
+            const defaultModel = connModelInput.value.trim() || defaultModels[provider];
+            const priority = parseInt(connPriorityInput.value, 10) || 10;
+            const baseUrl = connBaseUrlInput ? connBaseUrlInput.value.trim() : '';
+            const freeOnly = connFreeOnlyInput ? connFreeOnlyInput.checked : false;
+
+            if (provider !== 'ollama' && !apiKey) {
+                showBubble('API Key is required for hosted AI connections.');
+                return;
             }
 
+            saveConnBtn.disabled = true;
+            saveConnBtn.textContent = 'Saving...';
+
             try {
-                if (window.lucyIpc && typeof window.lucyIpc.discoverOllamaModels === 'function') {
-                    const res = await window.lucyIpc.discoverOllamaModels(url);
-                    if (res.ok && res.models && res.models.length > 0) {
-                        if (modelDatalist) {
-                            modelDatalist.innerHTML = res.models
-                                .map((m) => `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)} (${escapeHtml(m.sizeFormatted || '')})</option>`)
-                                .join('');
-                        }
-                        if (modelDiscoveryBadge) {
-                            modelDiscoveryBadge.style.display = 'inline';
-                            modelDiscoveryBadge.textContent = `${res.models.length} local models`;
-                        }
-                        if (ollamaDiscoveryStatus) {
-                            ollamaDiscoveryStatus.style.color = 'var(--accent-green)';
-                            ollamaDiscoveryStatus.textContent = `✓ Found ${res.models.length} installed model(s).`;
-                        }
-                        if (!settingModel.value || settingModel.value === defaultModels.ollama) {
-                            settingModel.value = res.models[0].name;
-                        }
-                        showBubble(`Discovered ${res.models.length} local Ollama model(s)!`);
+                if (window.lucyIpc && typeof window.lucyIpc.saveConnection === 'function') {
+                    const res = await window.lucyIpc.saveConnection({
+                        provider,
+                        label: label || undefined,
+                        apiKey: apiKey || undefined,
+                        defaultModel,
+                        priority,
+                        baseUrl: baseUrl || undefined,
+                        freeOnly,
+                        enabled: true
+                    });
+
+                    if (res && res.ok) {
+                        appendFeedEntry('Connection Saved', `Saved connection '${label || provider}' securely via Windows DPAPI.`, 'normal', 'Key Configured');
+                        showBubble(`Connection '${label || provider}' saved!`);
+                        if (addConnectionForm) addConnectionForm.style.display = 'none';
+                        if (connApiKeyInput) connApiKeyInput.value = '';
+                        if (connLabelInput) connLabelInput.value = '';
+                        await loadConnectionsList();
+                        await refreshStatus();
                     } else {
-                        if (ollamaDiscoveryStatus) {
-                            ollamaDiscoveryStatus.style.color = 'var(--accent-amber)';
-                            ollamaDiscoveryStatus.textContent = res.error ? `Discovery error: ${res.error}` : 'No installed models returned by server.';
-                        }
-                        if (modelDiscoveryBadge) {
-                            modelDiscoveryBadge.style.display = 'none';
-                        }
-                    }
-                } else {
-                    if (ollamaDiscoveryStatus) {
-                        ollamaDiscoveryStatus.textContent = 'Discovery IPC unavailable in preview mode.';
+                        showBubble(`Save failed: ${res.error || 'Unknown error'}`);
                     }
                 }
             } catch (err) {
-                if (ollamaDiscoveryStatus) {
-                    ollamaDiscoveryStatus.style.color = 'var(--accent-red)';
-                    ollamaDiscoveryStatus.textContent = `Failed: ${err.message}`;
-                }
+                showBubble(`Save error: ${err.message}`);
             } finally {
-                discoverOllamaBtn.disabled = false;
-                discoverOllamaBtn.textContent = '🔄 Discover Models';
+                saveConnBtn.disabled = false;
+                saveConnBtn.textContent = 'Save Connection';
             }
         });
     }
 
-    async function checkKeyStatus() {
-        if (!window.lucyIpc || typeof window.lucyIpc.getProviderConfig !== 'function') {
-            keyStatusBadge.textContent = 'Offline Preview Mode';
-            keyStatusBadge.style.color = 'var(--text-muted)';
+    async function loadConnectionsList() {
+        if (!connectionsListContainer) return;
+        if (!window.lucyIpc || typeof window.lucyIpc.getConnectionList !== 'function') {
+            connectionsListContainer.innerHTML = '<div style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 20px;">Connections unavailable in preview mode.</div>';
             return;
         }
+
         try {
-            const cfg = await window.lucyIpc.getProviderConfig();
-            if (settingProvider.value === 'ollama') {
-                keyStatusBadge.textContent = 'Local (No Key Required)';
-                keyStatusBadge.style.color = 'var(--accent-green)';
-            } else if (cfg.hasKey && cfg.provider === settingProvider.value) {
-                keyStatusBadge.textContent = '✓ Configured (DPAPI Protected)';
-                keyStatusBadge.style.color = 'var(--accent-green)';
-            } else if (settingProvider.value === 'huggingface') {
-                keyStatusBadge.textContent = 'Key Required (Free HF Token)';
-                keyStatusBadge.style.color = 'var(--accent-amber)';
-            } else {
-                keyStatusBadge.textContent = 'Not Configured';
-                keyStatusBadge.style.color = 'var(--accent-amber)';
+            const res = await window.lucyIpc.getConnectionList();
+            if (!res || !res.ok || !Array.isArray(res.connections)) {
+                connectionsListContainer.innerHTML = `<div style="font-size: 11px; color: var(--accent-red); padding: 10px;">Failed to load connections: ${escapeHtml(res?.error || 'Unknown')}</div>`;
+                return;
             }
-        } catch {
-            keyStatusBadge.textContent = 'Unknown';
+
+            const conns = res.connections;
+            if (conns.length === 0) {
+                connectionsListContainer.innerHTML = '<div style="font-size: 11px; color: var(--text-muted); text-align: center; padding: 20px; background: rgba(0,0,0,0.15); border-radius: var(--radius-sm);">No AI connections configured yet. Click "+ Add Connection" above to configure your first provider key.</div>';
+                return;
+            }
+
+            const statusColors = {
+                connected: 'var(--accent-green)',
+                configured: 'var(--accent-cyan)',
+                rate_limited: 'var(--accent-amber)',
+                temporarily_unavailable: 'var(--accent-amber)',
+                invalid_credential: 'var(--accent-red)',
+                disabled: 'var(--text-dim)'
+            };
+
+            const statusLabels = {
+                connected: '● Connected',
+                configured: '● Ready',
+                rate_limited: '● Rate Limited',
+                temporarily_unavailable: '● Unavailable',
+                invalid_credential: '● Invalid Key',
+                disabled: '○ Disabled'
+            };
+
+            connectionsListContainer.innerHTML = conns.map((c) => {
+                const color = statusColors[c.state] || 'var(--text-dim)';
+                const label = statusLabels[c.state] || c.state;
+                const cooldownText = c.cooldownSecondsRemaining > 0 ? ` (${c.cooldownSecondsRemaining}s cooldown)` : '';
+                const freeTag = c.freeOnly ? '<span style="font-size: 9px; padding: 2px 5px; border-radius: 3px; background: rgba(0,255,136,0.1); color: var(--accent-green); border: 1px solid rgba(0,255,136,0.3);">FREE ONLY</span>' : '';
+
+                return `
+                    <div class="connection-card" style="display: flex; flex-direction: column; gap: 6px; background: rgba(14, 20, 38, 0.7); border: 1px solid ${c.enabled ? 'var(--bg-card-border)' : 'rgba(255,255,255,0.06)'}; padding: 10px 12px; border-radius: var(--radius-sm); opacity: ${c.enabled ? '1' : '0.6'};">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <strong style="font-size: 12px; color: var(--accent-cyan); text-transform: uppercase;">${escapeHtml(c.provider)}</strong>
+                                <span style="font-size: 12px; color: var(--text-main); font-weight: 600;">${escapeHtml(c.label || 'Default Connection')}</span>
+                                ${freeTag}
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="font-size: 10px; font-weight: 700; color: ${color};">${escapeHtml(label)}${escapeHtml(cooldownText)}</span>
+                                <span style="font-size: 10px; color: var(--text-dim); background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 3px;">P:${c.priority}</span>
+                            </div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text-muted);">
+                            <div style="display: flex; gap: 12px; align-items: center;">
+                                <span>Model: <strong style="color: var(--text-dim);">${escapeHtml(c.defaultModel || 'auto')}</strong></span>
+                                <span>Key: <code style="color: var(--text-dim);">${escapeHtml(c.maskedKey || (c.hasKey ? '••••••••' : 'No Key'))}</code></span>
+                                ${c.lastError ? `<span style="color: var(--accent-red); font-size: 10px;" title="${escapeHtml(c.lastError)}">⚠ ${escapeHtml(c.lastError.slice(0, 35))}...</span>` : ''}
+                            </div>
+                            <div style="display: flex; gap: 6px; align-items: center;">
+                                <button class="btn-cancel test-conn-btn" data-id="${escapeHtml(c.id)}" style="padding: 2px 8px; font-size: 10px; color: var(--accent-cyan); border-color: rgba(0,242,254,0.3);">Test</button>
+                                <button class="btn-cancel toggle-conn-btn" data-id="${escapeHtml(c.id)}" data-enabled="${c.enabled}" style="padding: 2px 8px; font-size: 10px;">${c.enabled ? 'Disable' : 'Enable'}</button>
+                                <button class="btn-cancel delete-conn-btn" data-id="${escapeHtml(c.id)}" data-label="${escapeHtml(c.label || c.provider)}" style="padding: 2px 8px; font-size: 10px; color: var(--accent-red); border-color: rgba(255,75,75,0.3);">Delete</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Bind actions
+            connectionsListContainer.querySelectorAll('.test-conn-btn').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    const id = btn.getAttribute('data-id');
+                    btn.disabled = true;
+                    btn.textContent = 'Testing...';
+                    try {
+                        const testRes = await window.lucyIpc.testConnection(id);
+                        if (testRes.ok) {
+                            showBubble(`✓ Connected successfully: ${testRes.message || 'Healthy'}`);
+                        } else {
+                            showBubble(`✗ Connection test failed: ${testRes.error || testRes.code}`);
+                        }
+                        await loadConnectionsList();
+                    } catch (err) {
+                        showBubble(`Test error: ${err.message}`);
+                    } finally {
+                        btn.disabled = false;
+                        btn.textContent = 'Test';
+                    }
+                });
+            });
+
+            connectionsListContainer.querySelectorAll('.toggle-conn-btn').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    const id = btn.getAttribute('data-id');
+                    const currentEnabled = btn.getAttribute('data-enabled') === 'true';
+                    try {
+                        await window.lucyIpc.updateConnection({ id, enabled: !currentEnabled });
+                        await loadConnectionsList();
+                        await refreshStatus();
+                    } catch (err) {
+                        showBubble(`Toggle failed: ${err.message}`);
+                    }
+                });
+            });
+
+            connectionsListContainer.querySelectorAll('.delete-conn-btn').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    const id = btn.getAttribute('data-id');
+                    const label = btn.getAttribute('data-label');
+                    if (!confirm(`Delete connection '${label}' and its stored DPAPI key?`)) return;
+                    try {
+                        await window.lucyIpc.deleteConnection(id);
+                        showBubble(`Deleted connection '${label}'`);
+                        await loadConnectionsList();
+                        await refreshStatus();
+                    } catch (err) {
+                        showBubble(`Delete failed: ${err.message}`);
+                    }
+                });
+            });
+
+        } catch (err) {
+            connectionsListContainer.innerHTML = `<div style="font-size: 11px; color: var(--accent-red); padding: 10px;">Error: ${escapeHtml(err.message)}</div>`;
         }
     }
 
+    // Routing Management Elements
+    const routingModeSelect = document.getElementById('routingModeSelect');
+    const routingModeDescription = document.getElementById('routingModeDescription');
+    const manualOverrideGroup = document.getElementById('manualOverrideGroup');
+    const manualProviderSelect = document.getElementById('manualProviderSelect');
+    const manualModelInput = document.getElementById('manualModelInput');
+    const taskOverrideReasoning = document.getElementById('taskOverrideReasoning');
+    const taskOverrideCoding = document.getElementById('taskOverrideCoding');
+    const taskOverrideVision = document.getElementById('taskOverrideVision');
+    const taskOverrideLightweight = document.getElementById('taskOverrideLightweight');
+    const policyFreeOnlyCheck = document.getElementById('policyFreeOnlyCheck');
+    const saveRoutingConfigBtn = document.getElementById('saveRoutingConfigBtn');
+
+    const routingModeDescriptions = {
+        auto: 'Automatically routes requests to the best available eligible connection based on required capabilities (vision, tools, reasoning).',
+        prefer_local: 'Attempts local Ollama execution first for privacy; falls back gracefully to free hosted models if local is offline.',
+        local_only: 'Strictly executes locally via Ollama. 100% offline, zero network data egress. Incompatible requests fail honestly.',
+        free_only: 'Strictly limits routing to confirmed free tiers. Guaranteed zero cost; never falls back to paid models.',
+        manual: 'Forces all requests to the specified manual provider and model.'
+    };
+
+    if (routingModeSelect) {
+        routingModeSelect.addEventListener('change', () => {
+            const mode = routingModeSelect.value;
+            if (routingModeDescription) {
+                routingModeDescription.textContent = routingModeDescriptions[mode] || '';
+            }
+            if (manualOverrideGroup) {
+                manualOverrideGroup.style.display = mode === 'manual' ? 'grid' : 'none';
+            }
+        });
+    }
+
+    async function loadRoutingConfig() {
+        if (!window.lucyIpc || typeof window.lucyIpc.getRoutingConfig !== 'function') return;
+        try {
+            const res = await window.lucyIpc.getRoutingConfig();
+            if (res && res.ok && res.config) {
+                const c = res.config;
+                if (routingModeSelect) routingModeSelect.value = c.mode || 'auto';
+                if (routingModeDescription) routingModeDescription.textContent = routingModeDescriptions[c.mode || 'auto'] || '';
+                if (manualOverrideGroup) manualOverrideGroup.style.display = c.mode === 'manual' ? 'grid' : 'none';
+                if (manualProviderSelect && c.manualProvider) manualProviderSelect.value = c.manualProvider;
+                if (manualModelInput && c.manualModel) manualModelInput.value = c.manualModel;
+                if (policyFreeOnlyCheck) policyFreeOnlyCheck.checked = Boolean(c.freeOnly);
+
+                const t = c.taskOverrides || {};
+                if (taskOverrideReasoning) taskOverrideReasoning.value = t.reasoning?.model || '';
+                if (taskOverrideCoding) taskOverrideCoding.value = t.coding?.model || '';
+                if (taskOverrideVision) taskOverrideVision.value = t.vision?.model || '';
+                if (taskOverrideLightweight) taskOverrideLightweight.value = t.lightweight?.model || '';
+            }
+        } catch (_) {}
+    }
+
+    if (saveRoutingConfigBtn) {
+        saveRoutingConfigBtn.addEventListener('click', async () => {
+            const mode = routingModeSelect.value;
+            const freeOnly = policyFreeOnlyCheck ? policyFreeOnlyCheck.checked : true;
+            const taskOverrides = {};
+
+            if (taskOverrideReasoning && taskOverrideReasoning.value.trim()) {
+                taskOverrides.reasoning = { model: taskOverrideReasoning.value.trim() };
+            }
+            if (taskOverrideCoding && taskOverrideCoding.value.trim()) {
+                taskOverrides.coding = { model: taskOverrideCoding.value.trim() };
+            }
+            if (taskOverrideVision && taskOverrideVision.value.trim()) {
+                taskOverrides.vision = { model: taskOverrideVision.value.trim() };
+            }
+            if (taskOverrideLightweight && taskOverrideLightweight.value.trim()) {
+                taskOverrides.lightweight = { model: taskOverrideLightweight.value.trim() };
+            }
+
+            saveRoutingConfigBtn.disabled = true;
+            saveRoutingConfigBtn.textContent = 'Saving...';
+
+            try {
+                if (window.lucyIpc && typeof window.lucyIpc.setRoutingConfig === 'function') {
+                    await window.lucyIpc.setRoutingConfig({
+                        mode,
+                        freeOnly,
+                        manualProvider: manualProviderSelect ? manualProviderSelect.value : undefined,
+                        manualModel: manualModelInput ? manualModelInput.value.trim() : undefined,
+                        taskOverrides
+                    });
+                    appendFeedEntry('Routing Policy Updated', `Global routing mode set to '${mode}'. Free-only: ${freeOnly}.`, 'normal', 'Policy Saved');
+                    showBubble('AI Routing policy saved!');
+                    await refreshStatus();
+                }
+            } catch (err) {
+                showBubble(`Failed to save routing: ${err.message}`);
+            } finally {
+                saveRoutingConfigBtn.disabled = false;
+                saveRoutingConfigBtn.textContent = 'Save Routing Policy';
+            }
+        });
+    }
+
+    // Diagnostics Elements
+    const lastRouteDetails = document.getElementById('lastRouteDetails');
+    const diagnosticsFeed = document.getElementById('diagnosticsFeed');
+    const refreshDiagnosticsBtn = document.getElementById('refreshDiagnosticsBtn');
+
+    async function loadRoutingDiagnostics() {
+        if (!window.lucyIpc || typeof window.lucyIpc.getRoutingDiagnostics !== 'function') return;
+        try {
+            const res = await window.lucyIpc.getRoutingDiagnostics();
+            if (res && res.ok) {
+                if (lastRouteDetails) {
+                    if (res.lastRoute) {
+                        const r = res.lastRoute;
+                        const labelPart = r.connectionLabel ? ` [${r.connectionLabel}]` : '';
+                        lastRouteDetails.innerHTML = `
+                            <span style="color: var(--accent-cyan); font-weight: 700;">${escapeHtml(r.provider)}</span> / 
+                            <span>${escapeHtml(r.model)}</span>${escapeHtml(labelPart)} 
+                            <span style="color: var(--text-dim); font-size: 10px; margin-left: 8px;">(${escapeHtml(r.reason || 'selected')})</span>
+                            <div style="font-size: 10px; color: var(--text-dim); margin-top: 2px;">
+                                Tokens: in=${r.usage?.promptTokens ?? '?'}, out=${r.usage?.completionTokens ?? '?'} • Cost: ${escapeHtml(r.cost?.amount != null ? '$' + r.cost.amount.toFixed(4) : (r.cost?.status || 'unknown'))}
+                            </div>
+                        `;
+                    } else {
+                        lastRouteDetails.textContent = 'No requests processed in this session yet.';
+                    }
+                }
+
+                if (diagnosticsFeed) {
+                    const events = res.events || [];
+                    if (events.length === 0) {
+                        diagnosticsFeed.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 10px;">No routing events recorded yet.</div>';
+                    } else {
+                        diagnosticsFeed.innerHTML = events.slice().reverse().map((ev) => {
+                            const timeStr = new Date(ev.timestamp).toLocaleTimeString();
+                            const isFail = ev.outcome === 'failed' || ev.fallbacks?.length > 0;
+                            const outcomeColor = ev.outcome === 'success' ? 'var(--accent-green)' : (isFail ? 'var(--accent-amber)' : 'var(--text-main)');
+                            const fallbacksStr = ev.fallbacks && ev.fallbacks.length > 0
+                                ? `<div style="color: var(--accent-amber); margin-top: 2px;">↳ Fallback attempts: ${ev.fallbacks.map((f) => `${escapeHtml(f.provider)} (${escapeHtml(f.reason)})`).join(' → ')}</div>`
+                                : '';
+
+                            return `
+                                <div style="border-bottom: 1px solid rgba(255,255,255,0.05); padding: 4px 0;">
+                                    <div style="display: flex; justify-content: space-between;">
+                                        <span style="color: var(--text-dim);">${escapeHtml(timeStr)}</span>
+                                        <span style="color: ${outcomeColor}; font-weight: 700;">${escapeHtml(ev.outcome || 'routed')}</span>
+                                    </div>
+                                    <div style="color: var(--text-main);">
+                                        <strong>${escapeHtml(ev.provider)}</strong> (${escapeHtml(ev.model)}) — <span style="color: var(--text-dim);">${escapeHtml(ev.reason || '')}</span>
+                                    </div>
+                                    ${fallbacksStr}
+                                </div>
+                            `;
+                        }).join('');
+                    }
+                }
+            }
+        } catch (_) {}
+    }
+
+    if (refreshDiagnosticsBtn) {
+        refreshDiagnosticsBtn.addEventListener('click', loadRoutingDiagnostics);
+    }
+
+    // Voice & System Configuration Handlers
     function populateVoiceOptions(selectedVoice = '') {
         if (!settingVoiceSelect) return;
         const synth = window.speechSynthesis;
@@ -896,28 +1224,9 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     }
 
-    // Initial voice config load
-    if (window.lucyIpc && typeof window.lucyIpc.getVoiceConfig === 'function') {
-        window.lucyIpc.getVoiceConfig().then((res) => {
-            if (res && res.config && voiceController) {
-                voiceController.setVoiceConfig(res.config);
-                if (res.config.wakeWordEnabled !== undefined) {
-                    voiceController.setWakeWordEnabled(res.config.wakeWordEnabled);
-                }
-                if (res.config.wakeWordSensitivity !== undefined && voiceController.wakeWordEngine) {
-                    voiceController.wakeWordEngine.setSensitivity(res.config.wakeWordSensitivity);
-                }
-            }
-        }).catch(() => {});
-    }
-
     async function openSettings() {
-        if (window.lucyIpc && typeof window.lucyIpc.getProviderConfig === 'function') {
-            const cfg = await window.lucyIpc.getProviderConfig();
-            if (cfg.provider) settingProvider.value = cfg.provider;
-            if (cfg.model) settingModel.value = cfg.model;
-            if (cfg.localBaseUrl) settingLocalUrl.value = cfg.localBaseUrl;
-        }
+        switchSettingsTab('tabConnections');
+        await loadConnectionsList();
 
         // Load persisted voice configuration
         if (window.lucyIpc && typeof window.lucyIpc.getVoiceConfig === 'function') {
@@ -957,9 +1266,6 @@ document.addEventListener('DOMContentLoaded', () => {
             populateVoiceOptions();
         }
 
-        settingApiKey.value = '';
-        updateSettingVisibility();
-        await checkKeyStatus();
         if (settingBackgroundMode && window.lucyIpc && typeof window.lucyIpc.getAppSettings === 'function') {
             try {
                 const appCfg = await window.lucyIpc.getAppSettings();
@@ -974,12 +1280,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function closeSettings() {
         settingsModal.classList.remove('active');
-        settingApiKey.value = '';
     }
 
+    const closeSettingsXBtn = document.getElementById('closeSettingsXBtn');
+    if (closeSettingsXBtn) closeSettingsXBtn.addEventListener('click', closeSettings);
     if (hudSettingsBtn) hudSettingsBtn.addEventListener('click', openSettings);
     if (sidebarSettingsBtn) sidebarSettingsBtn.addEventListener('click', openSettings);
-    cancelSettingsBtn.addEventListener('click', closeSettings);
+    if (cancelSettingsBtn) cancelSettingsBtn.addEventListener('click', closeSettings);
 
     const handleExitApp = () => {
         if (window.lucyIpc && typeof window.lucyIpc.exitApp === 'function') {
@@ -989,72 +1296,20 @@ document.addEventListener('DOMContentLoaded', () => {
     if (explicitExitBtn) explicitExitBtn.addEventListener('click', handleExitApp);
     if (hudExitBtn) hudExitBtn.addEventListener('click', handleExitApp);
 
-    saveSettingsBtn.addEventListener('click', async () => {
-        const provider = settingProvider.value;
-        const model = settingModel.value.trim() || defaultModels[provider];
-        const apiKey = settingApiKey.value.trim();
-        const localBaseUrl = settingLocalUrl.value.trim();
-
-        if (window.lucyIpc && typeof window.lucyIpc.setProviderConfig === 'function') {
-            await window.lucyIpc.setProviderConfig({
-                provider,
-                model,
-                apiKey,
-                localBaseUrl
-            });
-            appendFeedEntry('Settings Applied', `Provider updated to ${provider} (${model}).`, 'normal', 'Config Saved');
-            await refreshStatus();
-        } else {
-            appendFeedEntry('Settings Saved', `Provider simulated as ${provider} (${model}).`, 'normal', 'Preview Mode');
-        }
-
-        // Save Background Mode Setting
-        if (settingBackgroundMode && window.lucyIpc && typeof window.lucyIpc.setAppSettings === 'function') {
-            await window.lucyIpc.setAppSettings({
-                backgroundMode: settingBackgroundMode.checked
-            });
-        }
-
-        // Save Voice Settings
-        if (settingVoicePitch && settingVoiceRate) {
-            const voicePayload = {
-                pitch: parseFloat(settingVoicePitch.value) || 1.05,
-                rate: parseFloat(settingVoiceRate.value) || 1.02,
-                voiceName: settingVoiceSelect ? settingVoiceSelect.value : '',
-                preferredVoiceName: settingVoiceSelect ? settingVoiceSelect.value : '',
-                ttsEnabled: settingTtsEnabled ? settingTtsEnabled.checked : true,
-                wakeWordEnabled: settingWakeWordEnabled ? settingWakeWordEnabled.checked : false,
-                wakeWordSensitivity: settingWakeWordSensitivity ? parseFloat(settingWakeWordSensitivity.value) || 0.5 : 0.5
-            };
-            if (window.lucyIpc && typeof window.lucyIpc.setVoiceConfig === 'function') {
-                const voiceRes = await window.lucyIpc.setVoiceConfig(voicePayload);
-                if (voiceRes && !voiceRes.ok) {
-                    appendFeedEntry('Voice Config Warning', voiceRes.error || 'Failed to save voice configuration.', 'error', 'Voice Warning');
-                    showBubble('Voice configuration error: ' + (voiceRes.error || 'invalid settings'));
-                    return;
-                }
-            }
-            if (voiceController && typeof voiceController.setVoiceConfig === 'function') {
-                voiceController.setVoiceConfig(voicePayload);
-                if (typeof voiceController.setWakeWordEnabled === 'function') {
-                    voiceController.setWakeWordEnabled(voicePayload.wakeWordEnabled);
-                    if (voiceController.wakeWordEngine) {
-                        voiceController.wakeWordEngine.setSensitivity(voicePayload.wakeWordSensitivity);
-                    }
-                }
-            }
-            appendFeedEntry('Voice Updated', `Voice set to pitch ${voicePayload.pitch}, rate ${voicePayload.rate}.`, 'normal', 'Audio Config');
-        }
-
-        closeSettings();
-        showBubble('Settings updated safely!');
-        renderer.setVisualState({ emotion: 'happy' });
-    });
-
     if (settingWakeWordEnabled) {
         settingWakeWordEnabled.addEventListener('change', () => {
             if (wakeWordOptionsGroup) {
                 wakeWordOptionsGroup.style.display = settingWakeWordEnabled.checked ? 'flex' : 'none';
+            }
+        });
+    }
+
+    if (settingBackgroundMode) {
+        settingBackgroundMode.addEventListener('change', async () => {
+            if (window.lucyIpc && typeof window.lucyIpc.setAppSettings === 'function') {
+                await window.lucyIpc.setAppSettings({
+                    backgroundMode: settingBackgroundMode.checked
+                });
             }
         });
     }
@@ -1064,16 +1319,17 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    clearKeyBtn.addEventListener('click', async () => {
-        const provider = settingProvider.value;
-        if (window.lucyIpc && typeof window.lucyIpc.clearApiKey === 'function') {
-            await window.lucyIpc.clearApiKey(provider);
-            settingApiKey.value = '';
-            await checkKeyStatus();
-            appendFeedEntry('Secret Cleared', `Stored API key for ${provider} was securely deleted.`, 'consequential', 'DPAPI Removed');
-            await refreshStatus();
-        }
-    });
+    if (clearKeyBtn) {
+        clearKeyBtn.addEventListener('click', async () => {
+            const provider = settingProvider ? settingProvider.value : 'gemini';
+            if (window.lucyIpc && typeof window.lucyIpc.clearApiKey === 'function') {
+                await window.lucyIpc.clearApiKey(provider);
+                if (settingApiKey) settingApiKey.value = '';
+                appendFeedEntry('Secret Cleared', `Stored API key for ${provider} was securely deleted.`, 'consequential', 'DPAPI Removed');
+                await refreshStatus();
+            }
+        });
+    }
 
     // 7. Initial Status Refresh & Memory Metrics
     async function refreshStatus() {
@@ -1086,8 +1342,10 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const status = await window.lucyIpc.getSystemStatus();
             if (status.ok) {
-                const keyLabel = status.hasKey ? '✓ Configured' : '⚠ No Key';
-                hudProvider.textContent = `${status.provider} (${status.model}) [${keyLabel}]`;
+                const keyLabel = status.hasKey ? '✓ Active' : '⚠ No Key';
+                const labelPart = status.connectionLabel ? ` [${status.connectionLabel}]` : '';
+                const modePart = status.routingMode ? ` · ${status.routingMode}` : '';
+                hudProvider.textContent = `${status.provider} (${status.model})${labelPart}${modePart} [${keyLabel}]`;
                 hudPermission.textContent = `${status.permissionMode} (Gated)`;
             }
         } catch {

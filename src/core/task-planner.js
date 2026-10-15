@@ -1385,6 +1385,34 @@ Respond strictly in JSON if tool execution is required:
             };
         }
 
+        // Generic direct tool invocation: "execute <toolId>" or "run <toolId>"
+        const directToolMatch = request.match(/^(?:execute|run)\s+([a-zA-Z0-9_-]+)(?:\s+(.*))?$/i);
+        if (directToolMatch) {
+            const toolId = directToolMatch[1].trim();
+            const tool = (tools || []).find((t) => t.id === toolId || t.name === toolId);
+            if (tool) {
+                let params = {};
+                if (directToolMatch[2]) {
+                    try {
+                        params = JSON.parse(directToolMatch[2]);
+                    } catch (_) {}
+                }
+                return {
+                    objective: `Execute registered tool '${tool.id}'`,
+                    type: 'plan',
+                    steps: [
+                        {
+                            index: 1,
+                            title: `Execute ${tool.name || tool.id}`,
+                            toolId: tool.id,
+                            params,
+                            expectedOutcome: `Execution of ${tool.id} completed`
+                        }
+                    ]
+                };
+            }
+        }
+
         return null;
     }
 

@@ -31,6 +31,16 @@ contextBridge.exposeInMainWorld('lucyIpc', {
         ipcRenderer.on('lucy:streamChunk', (_event, data) => callback(data));
     },
     cancelRequest: (taskId) => ipcRenderer.invoke('lucy:cancelRequest', taskId),
+    // Multi-Provider & Model Orchestration APIs
+    getConnectionList: () => ipcRenderer.invoke('lucy:getConnectionList'),
+    saveConnection: (connection) => ipcRenderer.invoke('lucy:saveConnection', connection),
+    updateConnection: (updates) => ipcRenderer.invoke('lucy:updateConnection', updates),
+    deleteConnection: (connectionId) => ipcRenderer.invoke('lucy:deleteConnection', connectionId),
+    testConnection: (connectionId) => ipcRenderer.invoke('lucy:testConnection', connectionId),
+    getRoutingConfig: () => ipcRenderer.invoke('lucy:getRoutingConfig'),
+    setRoutingConfig: (config) => ipcRenderer.invoke('lucy:setRoutingConfig', config),
+    getModelCatalogue: () => ipcRenderer.invoke('lucy:getModelCatalogue'),
+    getRoutingDiagnostics: () => ipcRenderer.invoke('lucy:getRoutingDiagnostics'),
     // Multi-Provider & Ollama Discovery APIs (REQ-030 & REQ-031)
     discoverOllamaModels: (endpointUrl) => ipcRenderer.invoke('lucy:discoverOllamaModels', endpointUrl),
     // Memory & Continuity APIs

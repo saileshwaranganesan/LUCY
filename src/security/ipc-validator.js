@@ -154,9 +154,19 @@ function isFiniteNumber(val, min = -Infinity, max = Infinity) {
 const ALLOWED_PROVIDERS = Object.freeze(new Set([
     'gemini',
     'openrouter',
+    'groq',
+    'cerebras',
     'ollama',
     'custom-openai',
     'huggingface'
+]));
+
+const ALLOWED_ROUTING_MODES = Object.freeze(new Set([
+    'auto',
+    'prefer_local',
+    'local_only',
+    'free_only',
+    'manual'
 ]));
 
 const ALLOWED_MEMORY_CATEGORIES = Object.freeze(new Set([
@@ -588,6 +598,162 @@ function validateTranscribeAudioRequest(audioData, options = {}) {
     };
 }
 
+/**
+ * Validate lucy:saveConnection
+ * @param {unknown} payload
+ */
+function validateSaveConnection(payload) {
+    if (!isPlainObject(payload)) {
+        return { ok: false, code: 'INVALID_TYPE', error: 'Connection payload must be a plain object.' };
+    }
+    const { provider, label, apiKey, baseUrl, defaultModel, priority, freeOnly, enabled, id } = payload;
+    if (typeof provider !== 'string' || !ALLOWED_PROVIDERS.has(provider.toLowerCase())) {
+        return { ok: false, code: 'INVALID_PROVIDER', error: `Unsupported provider '${provider}'. Allowed: ${Array.from(ALLOWED_PROVIDERS).join(', ')}.` };
+    }
+    if (label !== undefined && label !== null) {
+        if (typeof label !== 'string' || label.length > 80 || /[\r\n]/.test(label)) {
+            return { ok: false, code: 'INVALID_LABEL', error: 'Label must be a single-line string up to 80 characters.' };
+        }
+    }
+    if (apiKey !== undefined && apiKey !== null && apiKey !== '') {
+        if (typeof apiKey !== 'string' || apiKey.length > 1024) {
+            return { ok: false, code: 'INVALID_API_KEY', error: 'API key must be a string up to 1024 characters.' };
+        }
+    }
+    if (baseUrl !== undefined && baseUrl !== null && baseUrl !== '') {
+        const urlCheck = validateEndpointUrl(baseUrl, { context: 'Connection endpoint', allowHttpLoopback: true });
+        if (!urlCheck.ok) return urlCheck;
+    }
+    if (defaultModel !== undefined && defaultModel !== null && defaultModel !== '') {
+        if (typeof defaultModel !== 'string' || defaultModel.length > 120 || /[\r\n]/.test(defaultModel)) {
+            return { ok: false, code: 'INVALID_MODEL', error: 'Model identifier must be a single-line string up to 120 characters.' };
+        }
+    }
+    if (priority !== undefined && priority !== null) {
+        if (!isFiniteNumber(priority, 1, 100)) {
+            return { ok: false, code: 'INVALID_PRIORITY', error: 'Priority must be an integer between 1 and 100.' };
+        }
+    }
+    if (freeOnly !== undefined && typeof freeOnly !== 'boolean') {
+        return { ok: false, code: 'INVALID_FREE_ONLY', error: 'freeOnly must be a boolean.' };
+    }
+    if (enabled !== undefined && typeof enabled !== 'boolean') {
+        return { ok: false, code: 'INVALID_ENABLED', error: 'enabled must be a boolean.' };
+    }
+    if (id !== undefined && id !== null) {
+        if (typeof id !== 'string' || id.length > 64 || !/^[a-zA-Z0-9_\-]+$/.test(id)) {
+            return { ok: false, code: 'INVALID_ID', error: 'Connection ID must be alphanumeric string with underscores or hyphens up to 64 chars.' };
+        }
+    }
+    return { ok: true, sanitized: payload };
+}
+
+/**
+ * Validate lucy:updateConnection
+ * @param {unknown} payload
+ */
+function validateUpdateConnection(payload) {
+    if (!isPlainObject(payload)) {
+        return { ok: false, code: 'INVALID_TYPE', error: 'Update payload must be a plain object.' };
+    }
+    const { id, enabled, label, defaultModel, priority, freeOnly, apiKey, baseUrl } = payload;
+    if (typeof id !== 'string' || !id.trim() || id.length > 64) {
+        return { ok: false, code: 'INVALID_ID', error: 'Connection ID must be a non-empty string.' };
+    }
+    if (enabled !== undefined && typeof enabled !== 'boolean') {
+        return { ok: false, code: 'INVALID_ENABLED', error: 'enabled must be a boolean.' };
+    }
+    if (label !== undefined && label !== null) {
+        if (typeof label !== 'string' || label.length > 80 || /[\r\n]/.test(label)) {
+            return { ok: false, code: 'INVALID_LABEL', error: 'Label must be a single-line string up to 80 characters.' };
+        }
+    }
+    if (apiKey !== undefined && apiKey !== null && apiKey !== '') {
+        if (typeof apiKey !== 'string' || apiKey.length > 1024) {
+            return { ok: false, code: 'INVALID_API_KEY', error: 'API key must be a string up to 1024 characters.' };
+        }
+    }
+    if (baseUrl !== undefined && baseUrl !== null && baseUrl !== '') {
+        const urlCheck = validateEndpointUrl(baseUrl, { context: 'Connection endpoint', allowHttpLoopback: true });
+        if (!urlCheck.ok) return urlCheck;
+    }
+    if (defaultModel !== undefined && defaultModel !== null && defaultModel !== '') {
+        if (typeof defaultModel !== 'string' || defaultModel.length > 120 || /[\r\n]/.test(defaultModel)) {
+            return { ok: false, code: 'INVALID_MODEL', error: 'Model identifier must be a single-line string up to 120 characters.' };
+        }
+    }
+    if (priority !== undefined && priority !== null) {
+        if (!isFiniteNumber(priority, 1, 100)) {
+            return { ok: false, code: 'INVALID_PRIORITY', error: 'Priority must be an integer between 1 and 100.' };
+        }
+    }
+    if (freeOnly !== undefined && typeof freeOnly !== 'boolean') {
+        return { ok: false, code: 'INVALID_FREE_ONLY', error: 'freeOnly must be a boolean.' };
+    }
+    return { ok: true, sanitized: payload };
+}
+
+/**
+ * Validate lucy:deleteConnection
+ * @param {unknown} payload
+ */
+function validateDeleteConnection(payload) {
+    const id = typeof payload === 'string' ? payload : (payload && payload.id);
+    if (typeof id !== 'string' || !id.trim() || id.length > 64) {
+        return { ok: false, code: 'INVALID_ID', error: 'Connection ID must be a non-empty string.' };
+    }
+    return { ok: true, sanitized: { id: id.trim() } };
+}
+
+/**
+ * Validate lucy:testConnection
+ * @param {unknown} payload
+ */
+function validateTestConnection(payload) {
+    const id = typeof payload === 'string' ? payload : (payload && payload.id);
+    if (typeof id !== 'string' || !id.trim() || id.length > 64) {
+        return { ok: false, code: 'INVALID_ID', error: 'Connection ID must be a non-empty string.' };
+    }
+    return { ok: true, sanitized: { id: id.trim() } };
+}
+
+/**
+ * Validate lucy:setRoutingConfig
+ * @param {unknown} config
+ */
+function validateSetRoutingConfig(config) {
+    if (!isPlainObject(config)) {
+        return { ok: false, code: 'INVALID_TYPE', error: 'Routing configuration must be a plain object.' };
+    }
+    const { mode, taskOverrides, manualProvider, manualModel, maxBudgetUsd } = config;
+    if (mode !== undefined) {
+        if (typeof mode !== 'string' || !ALLOWED_ROUTING_MODES.has(mode.toLowerCase())) {
+            return { ok: false, code: 'INVALID_MODE', error: `Unsupported routing mode '${mode}'. Allowed: ${Array.from(ALLOWED_ROUTING_MODES).join(', ')}.` };
+        }
+    }
+    if (manualProvider !== undefined && manualProvider !== null && manualProvider !== '') {
+        if (typeof manualProvider !== 'string' || !ALLOWED_PROVIDERS.has(manualProvider.toLowerCase())) {
+            return { ok: false, code: 'INVALID_PROVIDER', error: `Unsupported provider '${manualProvider}'.` };
+        }
+    }
+    if (manualModel !== undefined && manualModel !== null && manualModel !== '') {
+        if (typeof manualModel !== 'string' || manualModel.length > 120 || /[\r\n]/.test(manualModel)) {
+            return { ok: false, code: 'INVALID_MODEL', error: 'Manual model must be a single-line string up to 120 characters.' };
+        }
+    }
+    if (taskOverrides !== undefined && taskOverrides !== null) {
+        if (!isPlainObject(taskOverrides)) {
+            return { ok: false, code: 'INVALID_TASK_OVERRIDES', error: 'taskOverrides must be a plain object mapping task categories.' };
+        }
+    }
+    if (maxBudgetUsd !== undefined && maxBudgetUsd !== null) {
+        if (!isFiniteNumber(maxBudgetUsd, 0, 100000)) {
+            return { ok: false, code: 'INVALID_BUDGET', error: 'maxBudgetUsd must be a positive number.' };
+        }
+    }
+    return { ok: true, sanitized: config };
+}
+
 module.exports = {
     // Loopback & URL validation
     isLoopbackHost,
@@ -611,8 +777,16 @@ module.exports = {
     validateVoiceConfig,
     validateTranscribeAudioRequest,
 
+    // Multi-provider & Connection validators
+    validateSaveConnection,
+    validateUpdateConnection,
+    validateDeleteConnection,
+    validateTestConnection,
+    validateSetRoutingConfig,
+
     // Constant sets
     ALLOWED_PROVIDERS,
+    ALLOWED_ROUTING_MODES,
     ALLOWED_MEMORY_CATEGORIES,
     ALLOWED_VOICE_STATES
 };

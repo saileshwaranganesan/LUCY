@@ -23,6 +23,8 @@ const {
 const PROVIDER_TYPES = Object.freeze({
     GEMINI: 'gemini',
     OPENROUTER: 'openrouter',
+    GROQ: 'groq',
+    CEREBRAS: 'cerebras',
     OLLAMA: 'ollama',
     CUSTOM_OPENAI: 'custom-openai',
     HUGGINGFACE: 'huggingface'
@@ -31,6 +33,8 @@ const PROVIDER_TYPES = Object.freeze({
 const DEFAULT_MODELS = Object.freeze({
     [PROVIDER_TYPES.GEMINI]: 'gemini-2.0-flash',
     [PROVIDER_TYPES.OPENROUTER]: 'google/gemini-2.0-flash-001',
+    [PROVIDER_TYPES.GROQ]: 'llama-3.3-70b-versatile',
+    [PROVIDER_TYPES.CEREBRAS]: 'llama3.1-8b',
     [PROVIDER_TYPES.OLLAMA]: 'qwen2.5:1.5b',
     [PROVIDER_TYPES.CUSTOM_OPENAI]: 'gpt-4o-mini',
     [PROVIDER_TYPES.HUGGINGFACE]: 'meta-llama/Llama-3.2-3B-Instruct'
@@ -44,7 +48,19 @@ class ProviderAdapter {
         this.localBaseUrl = options.localBaseUrl || process.env.LUCY_LOCAL_MODEL_URL || 'http://127.0.0.1:11434';
         this.customOpenAiUrl = options.customOpenAiUrl || process.env.LUCY_CUSTOM_OPENAI_URL || null;
         this.huggingFaceUrl = options.huggingFaceUrl || process.env.LUCY_HUGGINGFACE_URL || 'https://router.huggingface.co/hf-inference/v1/chat/completions';
+        this.groqUrl = options.groqUrl || process.env.LUCY_GROQ_URL || 'https://api.groq.com/openai/v1/chat/completions';
+        this.cerebrasUrl = options.cerebrasUrl || process.env.LUCY_CEREBRAS_URL || 'https://api.cerebras.ai/v1/chat/completions';
+        this.modelRouter = options.modelRouter || null;
+        this.connectionManager = options.connectionManager || null;
         this.allowPaidFallback = false; // Strictly non-negotiable: NO automatic paid fallback
+    }
+
+    setModelRouter(router) {
+        this.modelRouter = router;
+    }
+
+    setConnectionManager(cm) {
+        this.connectionManager = cm;
     }
 
     setCustomOpenAiUrl(url) {
@@ -118,7 +134,7 @@ class ProviderAdapter {
     }
 
     /**
-     * Call the configured LLM endpoint
+     * Call the configured LLM endpoint or route intelligently through ModelRouter
      * @param {Object} request
      * @param {Array<{role: string, content: string}>} request.messages
      * @param {Array<Object>} [request.tools] - Tool definitions
@@ -126,9 +142,14 @@ class ProviderAdapter {
      * @param {number} [request.maxTokens=2048]
      * @param {AbortSignal} [request.signal] - Cancellation signal
      * @param {Function} [request.onChunk] - Incremental streaming callback ({ delta, accumulatedText, done })
+     * @param {Object} [routingOptions={}] - Optional routing overrides and flags
      * @returns {Promise<Object>} Formatted response with honest usage/cost tracking
      */
-    async complete(request = {}) {
+    async complete(request = {}, routingOptions = {}) {
+        if (this.modelRouter && routingOptions.bypassRouter !== true) {
+            return await this.modelRouter.complete(request, routingOptions);
+        }
+
         const { messages = [], tools = [], temperature = 0.7, maxTokens = 2048, signal, onChunk } = request;
 
         if (signal && signal.aborted) {
@@ -187,6 +208,10 @@ class ProviderAdapter {
                 return await this._callGemini(messages, tools, apiKey, { temperature, maxTokens, signal, onChunk });
             } else if (this.provider === PROVIDER_TYPES.OPENROUTER || this.provider === PROVIDER_TYPES.CUSTOM_OPENAI) {
                 return await this._callOpenAiCompatible(messages, tools, apiKey, { temperature, maxTokens, signal, onChunk });
+            } else if (this.provider === PROVIDER_TYPES.GROQ) {
+                return await this._callOpenAiCompatible(messages, tools, apiKey, { temperature, maxTokens, signal, onChunk, baseUrl: this.groqUrl });
+            } else if (this.provider === PROVIDER_TYPES.CEREBRAS) {
+                return await this._callOpenAiCompatible(messages, tools, apiKey, { temperature, maxTokens, signal, onChunk, baseUrl: this.cerebrasUrl });
             } else if (this.provider === PROVIDER_TYPES.OLLAMA) {
                 return await this._callOllama(messages, tools, { temperature, maxTokens, signal, onChunk });
             } else if (this.provider === PROVIDER_TYPES.HUGGINGFACE) {
@@ -222,10 +247,71 @@ class ProviderAdapter {
         }
     }
 
-    async _callGemini(messages, tools, apiKey, options) {
+    /**
+     * Dispatch completion with an explicit connection and model (used by ModelRouter & ConnectionManager)
+     * @param {Object} params
+     * @param {Object} params.connection
+     * @param {string} [params.apiKey]
+     * @param {string} [params.model]
+     * @param {Object} params.request
+     * @returns {Promise<Object>}
+     */
+    async completeWithConnection({ connection, apiKey, model, request = {} }) {
+        if (!connection || !connection.provider) {
+            throw new Error('Connection must specify a provider');
+        }
+
+        const prov = connection.provider;
+        const targetModel = model || connection.defaultModel || DEFAULT_MODELS[prov];
+        const key = apiKey || (this.connectionManager ? this.connectionManager.getApiKey(connection.id) : this.resolveApiKey(prov));
+        const { messages = [], tools = [], temperature = 0.7, maxTokens = 2048, signal, onChunk } = request;
+
+        const options = {
+            temperature,
+            maxTokens,
+            signal,
+            onChunk,
+            model: targetModel,
+            provider: prov,
+            baseUrl: connection.baseUrl
+        };
+
+        if (prov === PROVIDER_TYPES.GEMINI) {
+            return await this._callGemini(messages, tools, key, options);
+        } else if (prov === PROVIDER_TYPES.OPENROUTER) {
+            return await this._callOpenAiCompatible(messages, tools, key, { ...options, baseUrl: connection.baseUrl || 'https://openrouter.ai/api/v1/chat/completions' });
+        } else if (prov === PROVIDER_TYPES.GROQ) {
+            return await this._callOpenAiCompatible(messages, tools, key, { ...options, baseUrl: connection.baseUrl || this.groqUrl });
+        } else if (prov === PROVIDER_TYPES.CEREBRAS) {
+            return await this._callOpenAiCompatible(messages, tools, key, { ...options, baseUrl: connection.baseUrl || this.cerebrasUrl });
+        } else if (prov === PROVIDER_TYPES.CUSTOM_OPENAI) {
+            return await this._callOpenAiCompatible(messages, tools, key, { ...options, baseUrl: connection.baseUrl || this.customOpenAiUrl });
+        } else if (prov === PROVIDER_TYPES.OLLAMA) {
+            return await this._callOllama(messages, tools, { ...options, baseUrl: connection.baseUrl || this.localBaseUrl });
+        } else if (prov === PROVIDER_TYPES.HUGGINGFACE) {
+            return await this._callHuggingFace(messages, tools, key, { ...options, baseUrl: connection.baseUrl || this.huggingFaceUrl });
+        }
+        throw new Error(`Unsupported provider: ${prov}`);
+    }
+
+    /**
+     * Test a connection's validity and reachability
+     * @param {string} connectionId
+     * @returns {Promise<Object>}
+     */
+    async testConnection(connectionId) {
+        if (!this.connectionManager) {
+            throw new Error('ConnectionManager is not attached to ProviderAdapter');
+        }
+        return await this.connectionManager.testConnection(connectionId, this);
+    }
+
+    async _callGemini(messages, tools, apiKey, options = {}) {
+        const activeModel = options.model || this.model;
+        const activeProvider = options.provider || this.provider;
         const isStreaming = typeof options.onChunk === 'function';
         const action = isStreaming ? 'streamGenerateContent?alt=sse' : 'generateContent';
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:${action}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(activeModel)}:${action}`;
 
         // Format Gemini contents with multimodal support
         const contents = [];
@@ -297,8 +383,8 @@ class ProviderAdapter {
                 ok: false,
                 code: `http_${res.status}`,
                 error: `Gemini API returned HTTP ${res.status}: ${sanitizedErr.slice(0, 300)}`,
-                provider: this.provider,
-                model: this.model,
+                provider: activeProvider,
+                model: activeModel,
                 usage: { status: 'unknown' },
                 cost: { status: 'unknown' }
             };
@@ -308,7 +394,7 @@ class ProviderAdapter {
             return await this._consumeSseStream(res, (data) => {
                 const part = data.candidates?.[0]?.content?.parts?.[0];
                 return part?.text || '';
-            }, options.onChunk, fetchSignal);
+            }, options.onChunk, fetchSignal, { provider: activeProvider, model: activeModel });
         }
 
         const data = await res.json();
@@ -336,8 +422,8 @@ class ProviderAdapter {
 
         return {
             ok: true,
-            provider: this.provider,
-            model: this.model,
+            provider: activeProvider,
+            model: activeModel,
             content,
             toolCalls,
             hasToolCalls: toolCalls.length > 0,
@@ -346,14 +432,25 @@ class ProviderAdapter {
         };
     }
 
-    async _callOpenAiCompatible(messages, tools, apiKey, options) {
-        let baseUrl = this.provider === PROVIDER_TYPES.OPENROUTER
-            ? 'https://openrouter.ai/api/v1/chat/completions'
-            : (this.customOpenAiUrl || process.env.LUCY_CUSTOM_OPENAI_URL || 'https://api.openai.com/v1/chat/completions');
+    async _callOpenAiCompatible(messages, tools, apiKey, options = {}) {
+        const activeModel = options.model || this.model;
+        const activeProvider = options.provider || this.provider;
+        let baseUrl = options.baseUrl;
+        if (!baseUrl) {
+            if (activeProvider === PROVIDER_TYPES.OPENROUTER) {
+                baseUrl = 'https://openrouter.ai/api/v1/chat/completions';
+            } else if (activeProvider === PROVIDER_TYPES.GROQ) {
+                baseUrl = this.groqUrl;
+            } else if (activeProvider === PROVIDER_TYPES.CEREBRAS) {
+                baseUrl = this.cerebrasUrl;
+            } else {
+                baseUrl = this.customOpenAiUrl || process.env.LUCY_CUSTOM_OPENAI_URL || 'https://api.openai.com/v1/chat/completions';
+            }
+        }
 
         // SEC-007: Strictly enforce HTTPS for remote endpoints and validate loopback policy
         const urlValidation = validateEndpointUrl(baseUrl, {
-            context: this.provider === PROVIDER_TYPES.OPENROUTER ? 'OpenRouter' : 'Custom OpenAI',
+            context: activeProvider === PROVIDER_TYPES.OPENROUTER ? 'OpenRouter' : (activeProvider || 'OpenAI Compatible'),
             allowHttpLoopback: true
         });
 
@@ -362,8 +459,8 @@ class ProviderAdapter {
                 ok: false,
                 code: urlValidation.code || 'invalid_endpoint_url',
                 error: `Security Policy Violation: ${urlValidation.error}`,
-                provider: this.provider,
-                model: this.model,
+                provider: activeProvider,
+                model: activeModel,
                 usage: { status: 'unknown' },
                 cost: { status: 'unknown' }
             };
@@ -391,7 +488,7 @@ class ProviderAdapter {
         });
 
         const body = {
-            model: this.model,
+            model: activeModel,
             messages: formattedMessages,
             temperature: options.temperature,
             max_tokens: options.maxTokens,
@@ -427,9 +524,9 @@ class ProviderAdapter {
             return {
                 ok: false,
                 code: `http_${res.status}`,
-                error: `OpenAI compatible provider returned HTTP ${res.status}: ${sanitizedErr.slice(0, 300)}`,
-                provider: this.provider,
-                model: this.model,
+                error: `${activeProvider} returned HTTP ${res.status}: ${sanitizedErr.slice(0, 300)}`,
+                provider: activeProvider,
+                model: activeModel,
                 usage: { status: 'unknown' },
                 cost: { status: 'unknown' }
             };
@@ -439,7 +536,7 @@ class ProviderAdapter {
             return await this._consumeSseStream(res, (data) => {
                 const delta = data.choices?.[0]?.delta?.content;
                 return delta || '';
-            }, options.onChunk, fetchSignal);
+            }, options.onChunk, fetchSignal, { provider: activeProvider, model: activeModel });
         }
 
         const data = await res.json();
@@ -467,8 +564,8 @@ class ProviderAdapter {
 
         return {
             ok: true,
-            provider: this.provider,
-            model: this.model,
+            provider: activeProvider,
+            model: activeModel,
             content: msg.content || '',
             toolCalls,
             hasToolCalls: toolCalls.length > 0,
@@ -477,9 +574,12 @@ class ProviderAdapter {
         };
     }
 
-    async _callOllama(messages, tools, options) {
+    async _callOllama(messages, tools, options = {}) {
+        const activeBaseUrl = options.baseUrl || this.localBaseUrl;
+        const activeModel = options.model || this.model;
+        const activeProvider = options.provider || PROVIDER_TYPES.OLLAMA;
         // SEC-007: Strictly validate Ollama endpoint URL before dispatch
-        const urlValidation = validateEndpointUrl(this.localBaseUrl, {
+        const urlValidation = validateEndpointUrl(activeBaseUrl, {
             context: 'Ollama local',
             allowHttpLoopback: true
         });
@@ -489,8 +589,8 @@ class ProviderAdapter {
                 ok: false,
                 code: urlValidation.code || 'invalid_endpoint_url',
                 error: `Security Policy Violation: ${urlValidation.error}`,
-                provider: this.provider,
-                model: this.model,
+                provider: activeProvider,
+                model: activeModel,
                 usage: { status: 'unknown' },
                 cost: { status: 'unknown' }
             };
@@ -512,7 +612,7 @@ class ProviderAdapter {
         });
 
         const body = {
-            model: this.model,
+            model: activeModel,
             messages: formattedMessages,
             options: {
                 temperature: options.temperature
@@ -546,15 +646,15 @@ class ProviderAdapter {
                 ok: false,
                 code: `http_${res.status}`,
                 error: `Ollama returned HTTP ${res.status}: ${errText.slice(0, 300)}`,
-                provider: this.provider,
-                model: this.model,
+                provider: activeProvider,
+                model: activeModel,
                 usage: { status: 'unknown' },
                 cost: { status: 'unknown' }
             };
         }
 
         if (isStreaming) {
-            return await this._consumeNdjsonStream(res, options.onChunk, fetchSignal);
+            return await this._consumeNdjsonStream(res, options.onChunk, fetchSignal, { provider: activeProvider, model: activeModel });
         }
 
         const data = await res.json();
@@ -596,8 +696,8 @@ class ProviderAdapter {
 
         return {
             ok: true,
-            provider: this.provider,
-            model: this.model,
+            provider: activeProvider,
+            model: activeModel,
             content: msg.content || '',
             toolCalls,
             hasToolCalls: toolCalls.length > 0,
@@ -609,8 +709,10 @@ class ProviderAdapter {
     /**
      * REQ-031: Call Hugging Face Inference API
      */
-    async _callHuggingFace(messages, tools, apiKey, options) {
-        let baseUrl = this.huggingFaceUrl || 'https://router.huggingface.co/hf-inference/v1/chat/completions';
+    async _callHuggingFace(messages, tools, apiKey, options = {}) {
+        const activeModel = options.model || this.model;
+        const activeProvider = options.provider || PROVIDER_TYPES.HUGGINGFACE;
+        let baseUrl = options.baseUrl || this.huggingFaceUrl || 'https://router.huggingface.co/hf-inference/v1/chat/completions';
 
         // Enforce HTTPS
         const urlValidation = validateEndpointUrl(baseUrl, {
@@ -623,8 +725,8 @@ class ProviderAdapter {
                 ok: false,
                 code: urlValidation.code || 'invalid_endpoint_url',
                 error: `Security Policy Violation: ${urlValidation.error}`,
-                provider: this.provider,
-                model: this.model,
+                provider: activeProvider,
+                model: activeModel,
                 usage: { status: 'unknown' },
                 cost: { status: 'unknown' }
             };
@@ -635,7 +737,7 @@ class ProviderAdapter {
 
         const hasMultimodal = messages.some((m) => this._normalizeMultimodalMessage(m).hasImages);
         if (hasMultimodal) {
-            const modelLower = (this.model || '').toLowerCase();
+            const modelLower = (activeModel || '').toLowerCase();
             const isVisionModel = Boolean(
                 modelLower.includes('vision') ||
                 modelLower.includes('-vl') ||
@@ -649,9 +751,9 @@ class ProviderAdapter {
                 return {
                     ok: false,
                     code: 'unsupported_multimodal',
-                    error: `Configured Hugging Face model '${this.model}' does not support multimodal visual input. Please use Google Gemini, OpenAI/OpenRouter, or local Ollama with a vision model.`,
-                    provider: this.provider,
-                    model: this.model,
+                    error: `Configured Hugging Face model '${activeModel}' does not support multimodal visual input. Please use Google Gemini, OpenAI/OpenRouter, or local Ollama with a vision model.`,
+                    provider: activeProvider,
+                    model: activeModel,
                     usage: { status: 'unknown' },
                     cost: { status: 'unknown' }
                 };
@@ -675,7 +777,7 @@ class ProviderAdapter {
         });
 
         const body = {
-            model: this.model,
+            model: activeModel,
             messages: formattedHfMessages,
             temperature: options.temperature,
             max_tokens: options.maxTokens,
@@ -713,19 +815,19 @@ class ProviderAdapter {
             if (res.status === 401) {
                 userError = 'Hugging Face authentication failed: Invalid or missing Hugging Face API token.';
             } else if (res.status === 404) {
-                userError = `Hugging Face model '${this.model}' was not found or is unsupported on the serverless router.`;
+                userError = `Hugging Face model '${activeModel}' was not found or is unsupported on the serverless router.`;
             } else if (res.status === 429) {
                 userError = 'Hugging Face rate limit exceeded. Please wait or configure an inference endpoint.';
             } else if (res.status === 503) {
-                userError = `Hugging Face model '${this.model}' is currently loading. Please retry in a few moments.`;
+                userError = `Hugging Face model '${activeModel}' is currently loading. Please retry in a few moments.`;
             }
 
             return {
                 ok: false,
                 code: `http_${res.status}`,
                 error: userError,
-                provider: this.provider,
-                model: this.model,
+                provider: activeProvider,
+                model: activeModel,
                 usage: { status: 'unknown' },
                 cost: { status: 'unknown' }
             };
@@ -735,7 +837,7 @@ class ProviderAdapter {
             const streamResult = await this._consumeSseStream(res, (data) => {
                 const delta = data.choices?.[0]?.delta?.content;
                 return delta || '';
-            }, options.onChunk, fetchSignal);
+            }, options.onChunk, fetchSignal, { provider: activeProvider, model: activeModel });
 
             if (streamResult.ok) {
                 streamResult.cost = {
@@ -782,8 +884,8 @@ class ProviderAdapter {
 
         return {
             ok: true,
-            provider: this.provider,
-            model: this.model,
+            provider: activeProvider,
+            model: activeModel,
             content: msg.content || '',
             toolCalls,
             hasToolCalls: toolCalls.length > 0,
@@ -869,7 +971,7 @@ class ProviderAdapter {
     /**
      * Helper to parse and stream Server-Sent Events (SSE)
      */
-    async _consumeSseStream(response, extractDeltaFn, onChunk, signal) {
+    async _consumeSseStream(response, extractDeltaFn, onChunk, signal, context = {}) {
         const decoder = new TextDecoder();
         let buffer = '';
         let accumulatedText = '';
@@ -931,8 +1033,8 @@ class ProviderAdapter {
 
         return {
             ok: true,
-            provider: this.provider,
-            model: this.model,
+            provider: context.provider || this.provider,
+            model: context.model || this.model,
             content: accumulatedText,
             toolCalls: [],
             hasToolCalls: false,
@@ -944,7 +1046,7 @@ class ProviderAdapter {
     /**
      * Helper to parse and stream line-delimited JSON (NDJSON, e.g. Ollama)
      */
-    async _consumeNdjsonStream(response, onChunk, signal) {
+    async _consumeNdjsonStream(response, onChunk, signal, context = {}) {
         const decoder = new TextDecoder();
         let buffer = '';
         let accumulatedText = '';
@@ -992,8 +1094,8 @@ class ProviderAdapter {
 
         return {
             ok: true,
-            provider: this.provider,
-            model: this.model,
+            provider: context.provider || this.provider,
+            model: context.model || this.model,
             content: accumulatedText,
             toolCalls: [],
             hasToolCalls: false,

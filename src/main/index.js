@@ -28,6 +28,9 @@ const { Scheduler } = require('../core/scheduler.js');
 const { StudentWorkflows } = require('../workflows/student-workflows.js');
 const { registerStudentWorkflowTools } = require('../tools/student-workflow-tools.js');
 const { WhisperOfflineRecognitionEngine } = require('../voice/whisper-recognition.js');
+const { ConnectionManager } = require('../providers/connection-manager.js');
+const { ModelCatalogue } = require('../providers/model-catalogue.js');
+const { ModelRouter } = require('../providers/model-router.js');
 const {
     validateExecuteRequest,
     validateSetProviderConfig,
@@ -41,7 +44,13 @@ const {
     validateDiscoverOllamaModels,
     validateCancelRequest,
     validateVoiceConfig,
-    validateTranscribeAudioRequest
+    validateTranscribeAudioRequest,
+    validateSaveConnection,
+    validateUpdateConnection,
+    validateDeleteConnection,
+    validateTestConnection,
+    validateSetRoutingConfig,
+    ALLOWED_ROUTING_MODES
 } = require('../security/ipc-validator.js');
 
 // SEC-004: Single-Instance Application Lock
@@ -78,6 +87,9 @@ let coordinator = null;
 let permissionAuthority = null;
 let companionBridge = null;
 let credStore = null;
+let connectionManager = null;
+let modelCatalogue = null;
+let modelRouter = null;
 let browserManager = null;
 let desktopManager = null;
 let floatingCompanion = null;
@@ -372,6 +384,27 @@ function initAssistantBackend() {
     const providerAdapter = new ProviderAdapter({
         credentialStore: credStore
     });
+
+    connectionManager = new ConnectionManager({
+        configDir: memoryDir,
+        credentialStore: credStore
+    });
+    connectionManager.init();
+
+    modelCatalogue = new ModelCatalogue({
+        configDir: memoryDir
+    });
+
+    modelRouter = new ModelRouter({
+        providerAdapter,
+        connectionManager,
+        modelCatalogue,
+        configDir: memoryDir
+    });
+
+    providerAdapter.setModelRouter(modelRouter);
+    providerAdapter.setConnectionManager(connectionManager);
+
     registerVisualTools(toolRegistry, { providerAdapter, browserManager, desktopManager });
 
     const statusManager = new TaskStatusManager();
@@ -485,13 +518,125 @@ ipcMain.handle('lucy:getSystemStatus', async () => {
     if (!coordinator) return { ok: false };
     const provider = coordinator.providerAdapter.provider;
     const hasKey = Boolean(coordinator.providerAdapter.resolveApiKey(provider));
+    const lastRoute = modelRouter ? modelRouter.getLastUsedRoute() : null;
     return {
         ok: true,
-        provider,
-        model: coordinator.providerAdapter.model,
+        provider: lastRoute ? lastRoute.provider : provider,
+        model: lastRoute ? lastRoute.model : coordinator.providerAdapter.model,
+        connectionLabel: lastRoute ? lastRoute.connectionLabel : null,
+        routingMode: modelRouter ? modelRouter.mode : 'auto',
         permissionMode: permissionAuthority ? permissionAuthority.mode : 'standard',
         workspaceRoot: permissionAuthority ? permissionAuthority.workspaceRoot : process.cwd(),
         hasKey
+    };
+});
+
+// Multi-Provider & Model Orchestration IPC Handlers
+ipcMain.handle('lucy:getConnectionList', async () => {
+    if (!connectionManager) return { ok: false, error: 'ConnectionManager not initialized' };
+    try {
+        const connections = connectionManager.listSanitizedConnections();
+        return { ok: true, connections };
+    } catch (err) {
+        return { ok: false, error: err.message };
+    }
+});
+
+ipcMain.handle('lucy:saveConnection', async (_event, payload = {}) => {
+    if (!connectionManager) return { ok: false, error: 'ConnectionManager not initialized' };
+    const validation = validateSaveConnection(payload);
+    if (!validation.ok) {
+        return { ok: false, code: validation.code, error: validation.error };
+    }
+    try {
+        const saved = connectionManager.saveConnection(validation.sanitized);
+        return { ok: true, connection: saved };
+    } catch (err) {
+        return { ok: false, error: err.message };
+    }
+});
+
+ipcMain.handle('lucy:updateConnection', async (_event, payload = {}) => {
+    if (!connectionManager) return { ok: false, error: 'ConnectionManager not initialized' };
+    const validation = validateUpdateConnection(payload);
+    if (!validation.ok) {
+        return { ok: false, code: validation.code, error: validation.error };
+    }
+    try {
+        const updated = connectionManager.updateConnection(validation.sanitized.id, validation.sanitized);
+        return { ok: true, connection: updated };
+    } catch (err) {
+        return { ok: false, error: err.message };
+    }
+});
+
+ipcMain.handle('lucy:deleteConnection', async (_event, payload) => {
+    if (!connectionManager) return { ok: false, error: 'ConnectionManager not initialized' };
+    const validation = validateDeleteConnection(payload);
+    if (!validation.ok) {
+        return { ok: false, code: validation.code, error: validation.error };
+    }
+    try {
+        const deleted = connectionManager.deleteConnection(validation.sanitized.id);
+        return { ok: true, deleted };
+    } catch (err) {
+        return { ok: false, error: err.message };
+    }
+});
+
+ipcMain.handle('lucy:testConnection', async (_event, payload) => {
+    if (!connectionManager || !coordinator) return { ok: false, error: 'Provider services not initialized' };
+    const validation = validateTestConnection(payload);
+    if (!validation.ok) {
+        return { ok: false, code: validation.code, error: validation.error };
+    }
+    try {
+        const result = await connectionManager.testConnection(validation.sanitized.id, coordinator.providerAdapter);
+        return result;
+    } catch (err) {
+        return { ok: false, error: err.message };
+    }
+});
+
+ipcMain.handle('lucy:getRoutingConfig', async () => {
+    if (!modelRouter) return { ok: false, error: 'ModelRouter not initialized' };
+    return {
+        ok: true,
+        config: modelRouter.getConfig(),
+        routingModes: Array.from(ALLOWED_ROUTING_MODES),
+        recentRoute: modelRouter.getLastUsedRoute()
+    };
+});
+
+ipcMain.handle('lucy:setRoutingConfig', async (_event, config = {}) => {
+    if (!modelRouter) return { ok: false, error: 'ModelRouter not initialized' };
+    const validation = validateSetRoutingConfig(config);
+    if (!validation.ok) {
+        return { ok: false, code: validation.code, error: validation.error };
+    }
+    try {
+        const updated = modelRouter.setConfig(validation.sanitized);
+        return { ok: true, config: updated };
+    } catch (err) {
+        return { ok: false, error: err.message };
+    }
+});
+
+ipcMain.handle('lucy:getModelCatalogue', async () => {
+    if (!modelCatalogue) return { ok: false, error: 'ModelCatalogue not initialized' };
+    return {
+        ok: true,
+        models: modelCatalogue.listModels(),
+        providers: modelCatalogue.listProviders()
+    };
+});
+
+ipcMain.handle('lucy:getRoutingDiagnostics', async () => {
+    if (!modelRouter) return { ok: false, error: 'ModelRouter not initialized' };
+    return {
+        ok: true,
+        events: modelRouter.getDiagnostics(),
+        lastRoute: modelRouter.getLastUsedRoute()
     };
 });
 

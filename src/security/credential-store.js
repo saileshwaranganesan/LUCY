@@ -14,7 +14,7 @@ const crypto = require('crypto');
  */
 class CredentialStore {
     constructor(options = {}) {
-        this.storeDir = options.storeDir || path.join(
+        this.storeDir = options.storageDir || options.storeDir || options.configDir || path.join(
             process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
             'LUCY',
             'secure'
