@@ -31,7 +31,10 @@ function computeHashes(filePath) {
 function isGitTreeClean(cwd) {
     try {
         const out = execSync('git status --porcelain', { cwd, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
-        return out.length === 0;
+        if (!out) return true;
+        const lines = out.split('\n').map(l => l.trim()).filter(Boolean);
+        const nonBuildChanges = lines.filter(l => !l.endsWith('LucyUiaWorker.exe'));
+        return nonBuildChanges.length === 0;
     } catch {
         return false;
     }
