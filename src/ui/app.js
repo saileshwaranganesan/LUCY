@@ -58,6 +58,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const voiceRateVal = document.getElementById('voiceRateVal');
     const settingWakeWordEnabled = document.getElementById('settingWakeWordEnabled');
     const wakeWordOptionsGroup = document.getElementById('wakeWordOptionsGroup');
+    const settingBackgroundMode = document.getElementById('settingBackgroundMode');
+    const explicitExitBtn = document.getElementById('explicitExitBtn');
+    const hudExitBtn = document.getElementById('hudExitBtn');
     const settingWakeWordSensitivity = document.getElementById('settingWakeWordSensitivity');
     const wakeWordSensitivityVal = document.getElementById('wakeWordSensitivityVal');
 
@@ -957,6 +960,14 @@ document.addEventListener('DOMContentLoaded', () => {
         settingApiKey.value = '';
         updateSettingVisibility();
         await checkKeyStatus();
+        if (settingBackgroundMode && window.lucyIpc && typeof window.lucyIpc.getAppSettings === 'function') {
+            try {
+                const appCfg = await window.lucyIpc.getAppSettings();
+                if (appCfg && appCfg.settings) {
+                    settingBackgroundMode.checked = Boolean(appCfg.settings.backgroundMode);
+                }
+            } catch (_) {}
+        }
         settingsModal.classList.add('active');
         renderer.setVisualState({ emotion: 'curious' });
     }
@@ -969,6 +980,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (hudSettingsBtn) hudSettingsBtn.addEventListener('click', openSettings);
     if (sidebarSettingsBtn) sidebarSettingsBtn.addEventListener('click', openSettings);
     cancelSettingsBtn.addEventListener('click', closeSettings);
+
+    const handleExitApp = () => {
+        if (window.lucyIpc && typeof window.lucyIpc.exitApp === 'function') {
+            window.lucyIpc.exitApp();
+        }
+    };
+    if (explicitExitBtn) explicitExitBtn.addEventListener('click', handleExitApp);
+    if (hudExitBtn) hudExitBtn.addEventListener('click', handleExitApp);
 
     saveSettingsBtn.addEventListener('click', async () => {
         const provider = settingProvider.value;
@@ -987,6 +1006,13 @@ document.addEventListener('DOMContentLoaded', () => {
             await refreshStatus();
         } else {
             appendFeedEntry('Settings Saved', `Provider simulated as ${provider} (${model}).`, 'normal', 'Preview Mode');
+        }
+
+        // Save Background Mode Setting
+        if (settingBackgroundMode && window.lucyIpc && typeof window.lucyIpc.setAppSettings === 'function') {
+            await window.lucyIpc.setAppSettings({
+                backgroundMode: settingBackgroundMode.checked
+            });
         }
 
         // Save Voice Settings

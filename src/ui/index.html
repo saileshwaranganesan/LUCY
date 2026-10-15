@@ -76,6 +76,7 @@
           <button id="toggleTtsBtn" class="btn-action" style="padding: 6px 12px; font-size: 11px; background: rgba(255,255,255,0.08); box-shadow: none; border: 1px solid var(--bg-card-border);" title="Toggle assistant spoken voice responses">🔊 Voice: ON</button>
           <button id="hudMemoryBtn" class="btn-action" style="padding: 6px 12px; font-size: 11px; background: rgba(255,255,255,0.08); box-shadow: none; border: 1px solid var(--bg-card-border);" title="Manage persistent memory & task continuity">🧠 Memory</button>
           <button id="hudSettingsBtn" class="btn-action" style="padding: 6px 14px; font-size: 12px; background: rgba(255,255,255,0.08); box-shadow: none; border: 1px solid var(--bg-card-border);">⚙️ Settings</button>
+          <button id="hudExitBtn" class="btn-cancel" style="padding: 6px 10px; font-size: 11px; color: var(--accent-red); border: 1px solid rgba(255, 75, 75, 0.3);" title="Explicitly Exit L.U.C.Y.">✕ Exit</button>
         </div>
       </header>
 
@@ -241,6 +242,23 @@
               <div style="font-size: 10px; color: var(--text-muted); line-height: 1.3;">
                 🔒 <strong>Privacy Guarantee:</strong> 100% local MFCC-DTW acoustic inference. Zero audio uploaded to network.
               </div>
+            </div>
+          </div>
+
+          <!-- Persistent Background Runtime & Tray Section -->
+          <div style="border-top: 1px solid var(--bg-card-border); padding-top: 12px; display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <label style="font-size: 11px; text-transform: uppercase; color: var(--accent-cyan); font-weight: 700;">🔄 Background Runtime & Tray</label>
+              <label style="font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                <input type="checkbox" id="settingBackgroundMode" checked style="accent-color: var(--accent-cyan);" />
+                Keep running in background
+              </label>
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted); line-height: 1.3;">
+              Closing the main window hides it to the system tray while keeping the fairy companion and background tasks active. To terminate L.U.C.Y., use the Exit button below or in the system tray.
+            </div>
+            <div style="display: flex; justify-content: flex-end; margin-top: 4px;">
+              <button type="button" id="explicitExitBtn" class="btn-cancel" style="color: var(--accent-red); border-color: rgba(255, 75, 75, 0.4); font-size: 11px; padding: 4px 12px;">⏹️ Exit L.U.C.Y. Completely</button>
             </div>
           </div>
         </div>

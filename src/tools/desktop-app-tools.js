@@ -268,23 +268,60 @@ function registerDesktopTools(registry, desktopManager) {
     registry.registerTool({
         id: 'desktop_close_app',
         name: 'Desktop Application Closer',
-        description: 'Gracefully close or terminate a desktop application window',
+        description: 'Gracefully close or terminate a desktop application window with modal save-confirmation handling',
         riskTier: RISK_TIERS.CONSEQUENTIAL,
         schema: {
             type: 'object',
             properties: {
-                target: { type: 'string', description: 'AppId, PID, or window title' }
+                target: { type: 'string', description: 'AppId, PID, or window title' },
+                savePolicy: {
+                    type: 'string',
+                    enum: ['dont_save', 'save', 'cancel', 'ask'],
+                    description: 'Policy when a save confirmation dialog appears (dont_save for authorized disposable changes, save to preserve changes, cancel to abort, ask to prompt user)'
+                }
             },
             required: ['target']
         },
         handler: async (params) => {
-            return await desktopManager.closeApp(params.target);
+            return await desktopManager.closeApp(params.target, { savePolicy: params.savePolicy });
         },
         dryRunSimulate: async (params) => {
             return {
                 simulatedAction: 'close_app',
                 target: params.target,
-                effect: `Would request closing application window '${params.target}'`
+                savePolicy: params.savePolicy || 'ask',
+                effect: `Would request closing application window '${params.target}' with savePolicy '${params.savePolicy || 'ask'}'`
+            };
+        }
+    });
+
+    // 9. desktop_handle_dialog
+    registry.registerTool({
+        id: 'desktop_handle_dialog',
+        name: 'Desktop Modal Dialog Handler',
+        description: 'Detect and resolve modal save confirmation dialogs in desktop applications',
+        riskTier: RISK_TIERS.CONSEQUENTIAL,
+        schema: {
+            type: 'object',
+            properties: {
+                target: { type: 'string', description: 'AppId, PID, or window title' },
+                action: {
+                    type: 'string',
+                    enum: ['save', 'dont_save', 'cancel'],
+                    description: 'Action to perform on the dialog (save, dont_save, or cancel)'
+                }
+            },
+            required: ['target', 'action']
+        },
+        handler: async (params) => {
+            return await desktopManager.handleDialog(params.target, params.action);
+        },
+        dryRunSimulate: async (params) => {
+            return {
+                simulatedAction: 'handle_dialog',
+                target: params.target,
+                action: params.action,
+                effect: `Would invoke action '${params.action}' on confirmation dialog for '${params.target}'`
             };
         }
     });

@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, session } = require('electron');
+const { app, BrowserWindow, ipcMain, session, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 
 const fs = require('fs');
@@ -86,7 +86,148 @@ let memoryStore = null;
 let scheduler = null;
 let studentWorkflows = null;
 let whisperEngine = null;
+let tray = null;
+let isExplicitQuitting = false;
+let appConfigFile = null;
+let appSettings = {
+    backgroundMode: true,
+    closeToTray: true,
+    startMinimized: false
+};
 const pendingPermissionCallbacks = new Map();
+
+function getTrayIcon() {
+    const size = 16;
+    const buf = Buffer.alloc(size * size * 4);
+    for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+            const idx = (y * size + x) * 4;
+            const dx = Math.abs(x - 7.5);
+            const dy = Math.abs(y - 7.5);
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const starCross = (dx < 1.6 && dy < 6.5) || (dy < 1.6 && dx < 6.5);
+            const core = dist < 2.2;
+            const halo = dist < 5.5;
+
+            if (core) {
+                buf[idx] = 255; buf[idx + 1] = 255; buf[idx + 2] = 255; buf[idx + 3] = 255;
+            } else if (starCross) {
+                buf[idx] = 179; buf[idx + 1] = 136; buf[idx + 2] = 255; buf[idx + 3] = 245;
+            } else if (halo) {
+                buf[idx] = 128; buf[idx + 1] = 216; buf[idx + 2] = 255;
+                buf[idx + 3] = Math.max(0, Math.floor(180 - dist * 32));
+            } else {
+                buf[idx] = 0; buf[idx + 1] = 0; buf[idx + 2] = 0; buf[idx + 3] = 0;
+            }
+        }
+    }
+    return nativeImage.createFromBuffer(buf, { width: size, height: size });
+}
+
+function updateTrayMenu() {
+    if (!tray || tray.isDestroyed()) return;
+    const isMainVisible = mainWindow ? (mainWindow.isVisible() && !mainWindow.isMinimized()) : false;
+    const isCompanionOpen = floatingCompanion ? floatingCompanion.isOpen() : false;
+    const isPinned = floatingCompanion ? floatingCompanion.isPinned : true;
+
+    const template = [
+        {
+            label: isMainVisible ? 'Hide Main Window' : 'Open L.U.C.Y.',
+            click: () => {
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    if (mainWindow.isMinimized()) mainWindow.restore();
+                    if (isMainVisible) {
+                        mainWindow.hide();
+                    } else {
+                        mainWindow.show();
+                        mainWindow.focus();
+                    }
+                    updateTrayMenu();
+                } else {
+                    createWindow();
+                    updateTrayMenu();
+                }
+            }
+        },
+        {
+            label: isCompanionOpen ? 'Hide Floating Fairy' : 'Show Floating Fairy',
+            click: () => {
+                if (floatingCompanion) {
+                    if (isCompanionOpen) {
+                        floatingCompanion.hide();
+                    } else {
+                        floatingCompanion.show();
+                        floatingCompanion.summonToFront();
+                    }
+                    updateTrayMenu();
+                }
+            }
+        },
+        {
+            label: 'Pin Fairy to Top',
+            type: 'checkbox',
+            checked: isPinned,
+            click: (item) => {
+                if (floatingCompanion) {
+                    floatingCompanion.setPinned(item.checked);
+                }
+            }
+        },
+        { type: 'separator' },
+        {
+            label: 'Status: Running in Background',
+            enabled: false
+        },
+        { type: 'separator' },
+        {
+            label: 'Exit L.U.C.Y.',
+            click: () => {
+                isExplicitQuitting = true;
+                if (app && typeof app.quit === 'function') {
+                    app.quit();
+                }
+            }
+        }
+    ];
+
+    tray.setContextMenu(Menu.buildFromTemplate(template));
+}
+
+function initTray() {
+    if (tray && !tray.isDestroyed()) return tray;
+    try {
+        const icon = getTrayIcon();
+        tray = new Tray(icon);
+        tray.setToolTip('L.U.C.Y. — Desktop Assistant & Celestial Fairy');
+
+        tray.on('click', () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                if (mainWindow.isMinimized()) mainWindow.restore();
+                if (!mainWindow.isVisible()) mainWindow.show();
+                mainWindow.focus();
+            } else {
+                createWindow();
+            }
+            updateTrayMenu();
+        });
+
+        tray.on('double-click', () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                if (mainWindow.isMinimized()) mainWindow.restore();
+                mainWindow.show();
+                mainWindow.focus();
+            } else {
+                createWindow();
+            }
+            updateTrayMenu();
+        });
+
+        updateTrayMenu();
+    } catch (err) {
+        console.warn('[Tray] Failed to initialize system tray:', err.message);
+    }
+    return tray;
+}
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -127,21 +268,33 @@ function createWindow() {
         mainWindow.webContents.once('did-finish-load', () => {
             console.log('LUCY_ELECTRON_SMOKE_TEST: UI loaded cleanly, terminating smoke run.');
             setTimeout(() => {
+                isExplicitQuitting = true;
                 if (mainWindow) mainWindow.close();
                 app.quit();
             }, 500);
         });
     }
 
+    // Intercept main-window close: hide to tray instead of quitting when backgroundMode is active
+    mainWindow.on('close', (event) => {
+        if (!isExplicitQuitting && appSettings.backgroundMode) {
+            event.preventDefault();
+            mainWindow.hide();
+            updateTrayMenu();
+            return false;
+        }
+    });
+
     mainWindow.on('closed', () => {
         mainWindow = null;
         if (floatingCompanion) {
-            try { floatingCompanion.destroy(); } catch (_) {}
+            floatingCompanion.setMainWindow(null);
         }
         for (const [auditId, resolve] of pendingPermissionCallbacks.entries()) {
             try { resolve(false); } catch (_) {}
         }
         pendingPermissionCallbacks.clear();
+        updateTrayMenu();
     });
 
     if (floatingCompanion) {
@@ -156,6 +309,15 @@ function initAssistantBackend() {
         : path.join(process.env.APPDATA || os.homedir(), 'LUCY');
 
     voiceConfigFile = path.join(userDataDir, 'voice-config.json');
+    appConfigFile = path.join(userDataDir, 'app-config.json');
+    try {
+        if (fs.existsSync(appConfigFile)) {
+            const saved = JSON.parse(fs.readFileSync(appConfigFile, 'utf8'));
+            if (saved && typeof saved === 'object') {
+                appSettings = { ...appSettings, ...saved };
+            }
+        }
+    } catch (_) {}
 
     const memoryDir = isPackaged
         ? path.join(userDataDir, 'memory')
@@ -700,6 +862,35 @@ ipcMain.handle('lucy:transcribeAudio', async (_event, audioData, options = {}) =
     );
 });
 
+// Persistent Background Runtime IPC Handlers
+ipcMain.handle('lucy:getAppSettings', async () => {
+    return { ok: true, settings: { ...appSettings } };
+});
+
+ipcMain.handle('lucy:setAppSettings', async (_event, updates = {}) => {
+    if (updates && typeof updates === 'object') {
+        if (typeof updates.backgroundMode === 'boolean') appSettings.backgroundMode = updates.backgroundMode;
+        if (typeof updates.closeToTray === 'boolean') appSettings.closeToTray = updates.closeToTray;
+        try {
+            if (appConfigFile) {
+                fs.writeFileSync(appConfigFile, JSON.stringify(appSettings, null, 2), 'utf8');
+            }
+        } catch (err) {
+            console.warn('[Settings] Failed to save app-config.json:', err.message);
+        }
+        updateTrayMenu();
+    }
+    return { ok: true, settings: { ...appSettings } };
+});
+
+ipcMain.handle('lucy:exitApp', async () => {
+    isExplicitQuitting = true;
+    if (app && typeof app.quit === 'function') {
+        app.quit();
+    }
+    return { ok: true };
+});
+
 if (gotSingleInstanceLock && app && typeof app.whenReady === 'function') {
     app.whenReady().then(() => {
         // Safely allow microphone capture for local assistant UI without unhandled prompt crashes
@@ -715,21 +906,33 @@ if (gotSingleInstanceLock && app && typeof app.whenReady === 'function') {
 
         initAssistantBackend();
         createWindow();
+        initTray();
 
         app.on('activate', () => {
-            if (BrowserWindow.getAllWindows().length === 0) {
+            if (!mainWindow || mainWindow.isDestroyed()) {
                 createWindow();
+            } else {
+                if (mainWindow.isMinimized()) mainWindow.restore();
+                mainWindow.show();
+                mainWindow.focus();
             }
+            updateTrayMenu();
         });
     });
 
     app.on('window-all-closed', () => {
-        if (process.platform !== 'darwin') {
+        if (isExplicitQuitting || !appSettings.backgroundMode || process.platform === 'darwin') {
             app.quit();
         }
+        // In persistent background mode on Windows, remain running!
     });
 
     app.on('before-quit', async () => {
+        isExplicitQuitting = true;
+        if (tray && !tray.isDestroyed()) {
+            try { tray.destroy(); } catch (_) {}
+            tray = null;
+        }
         // Fail-closed all pending permission confirmations
         for (const [auditId, resolve] of pendingPermissionCallbacks.entries()) {
             try { resolve(false); } catch (_) {}

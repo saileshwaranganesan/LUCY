@@ -26,7 +26,9 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
             typeText: async () => ({}),
             clickElement: async () => ({}),
             takeScreenshot: async () => ({}),
-            closeApp: async () => ({}),
+            closeApp: async () => ({ closed: true }),
+            detectDialog: async () => ({ dialogOpen: false }),
+            handleDialog: async () => ({ handled: true, action: 'dont_save' }),
             validateExecutable: () => ({ safe: true, isAllowlisted: true, resolvedPath: 'notepad.exe' })
         };
 
@@ -44,6 +46,7 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
         assert.ok(toolIds.includes('desktop_click_element'));
         assert.ok(toolIds.includes('desktop_take_screenshot'));
         assert.ok(toolIds.includes('desktop_close_app'));
+        assert.ok(toolIds.includes('desktop_handle_dialog'));
 
         // Validate Risk Tiers
         assert.equal(registry.getTool('desktop_list_apps').riskTier, RISK_TIERS.SAFE_READ);
@@ -54,6 +57,7 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
         assert.equal(registry.getTool('desktop_type_text').riskTier, RISK_TIERS.CONSEQUENTIAL);
         assert.equal(registry.getTool('desktop_click_element').riskTier, RISK_TIERS.CONSEQUENTIAL);
         assert.equal(registry.getTool('desktop_close_app').riskTier, RISK_TIERS.CONSEQUENTIAL);
+        assert.equal(registry.getTool('desktop_handle_dialog').riskTier, RISK_TIERS.CONSEQUENTIAL);
     });
 
     await suite.test('Unit: Executable Allowlist and Validation', () => {
@@ -266,8 +270,122 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
         assert.ok(shot.width > 0 && shot.height > 0);
         assert.ok(typeof shot.base64 === 'string' && shot.base64.length > 500);
 
-        // 7. Close Notepad
-        const closeRes = await realManager.closeApp({ pid: notepadApp.pid });
+        // 7. Close Notepad with savePolicy: dont_save for authorized test changes
+        const closeRes = await realManager.closeApp({ pid: notepadApp.pid }, { savePolicy: 'dont_save' });
+        assert.ok(closeRes);
+        assert.equal(closeRes.closed, true);
+    });
+
+    await suite.test('Integration: Modal Dialog Detection and Discarding Semantics on Notepad', async () => {
+        const os = require('node:os');
+        const tmpFile = path.join(os.tmpdir(), 'L.U.C.Y. Desktop Automation Test Ba.txt');
+        fs.writeFileSync(tmpFile, 'Original test baseline ' + Date.now() + '\n', 'utf8');
+
+        // 1. Launch fresh Notepad instance with named file
+        const launchRes = await realManager.launchApp('notepad.exe', `"${tmpFile}"`);
+        assert.ok(launchRes.appId);
+        await new Promise(r => setTimeout(r, 1500));
+
+        // 2. Type disposable test changes into document
+        const uniqueText = 'L.U.C.Y. Modal Dialog Regression Test ' + Date.now();
+        await realManager.typeText('Notepad', uniqueText);
+        await new Promise(r => setTimeout(r, 600));
+
+        // 3. Attempt to close WITHOUT policy (default: ask/ambiguous)
+        // Must NOT silently kill or discard! Must report dialogOpen: true, closed: false
+        const ambiguousClose = await realManager.closeApp('Notepad');
+        assert.ok(ambiguousClose);
+        assert.equal(ambiguousClose.closed, false);
+        assert.equal(ambiguousClose.dialogOpen, true);
+        assert.ok(ambiguousClose.availableActions.includes('dont_save'));
+        assert.ok(ambiguousClose.availableActions.includes('save'));
+
+        // 4. Now explicitly resolve with authorized disposable discard: dont_save
+        const handleRes = await realManager.handleDialog('Notepad', 'dont_save');
+        assert.ok(handleRes);
+        assert.equal(handleRes.handled, true);
+        assert.equal(handleRes.action, 'dont_save');
+
+        // 5. Verify no dialog remains open
+        await new Promise(r => setTimeout(r, 600));
+        const detAfter = await realManager.detectDialog('Notepad');
+        assert.equal(detAfter.dialogOpen, false);
+
+        // Clean up window & file
+        await realManager.closeApp('Notepad', { savePolicy: 'dont_save' }).catch(() => {});
+        try { fs.unlinkSync(tmpFile); } catch (_) {}
+    });
+
+    await suite.test('Integration: Modal Dialog Cancel Semantics (Keep Window Open)', async () => {
+        const os = require('node:os');
+        const tmpFile = path.join(os.tmpdir(), 'L.U.C.Y. Cancel Test ' + Date.now() + '.txt');
+        fs.writeFileSync(tmpFile, 'Cancel baseline\n', 'utf8');
+
+        // 1. Launch with named file
+        await realManager.launchApp('notepad.exe', `"${tmpFile}"`);
+        await new Promise(r => setTimeout(r, 1200));
+
+        // 2. Type dirty changes
+        await realManager.typeText('Notepad', 'Changes to cancel');
+        await new Promise(r => setTimeout(r, 600));
+
+        // 3. Close with ambiguous policy -> dialog open
+        const amb = await realManager.closeApp('Notepad');
+        assert.equal(amb.closed, false);
+        assert.equal(amb.dialogOpen, true);
+
+        // 4. Handle dialog with 'cancel'
+        const cancelRes = await realManager.handleDialog('Notepad', 'cancel');
+        assert.equal(cancelRes.handled, true);
+        assert.equal(cancelRes.action, 'cancel');
+
+        // 5. Verify window remains alive and open
+        await new Promise(r => setTimeout(r, 500));
+        const apps = await realManager.listApps();
+        const stillOpen = apps.some(a => (a.name || '').includes('Notepad') || a.processName === 'Notepad');
+        assert.equal(stillOpen, true, 'Window must remain open after cancel action');
+
+        // Clean up
+        await realManager.closeApp('Notepad', { savePolicy: 'dont_save' }).catch(() => {});
+        await new Promise(r => setTimeout(r, 800));
+        try { fs.unlinkSync(tmpFile); } catch (_) {}
+    });
+
+    await suite.test('Integration: Modal Dialog Save Semantics and Content Verification', async () => {
+        const os = require('node:os');
+        const tmpFile = path.join(os.tmpdir(), 'L.U.C.Y. Save Verify ' + Date.now() + '.txt');
+        fs.writeFileSync(tmpFile, 'Original header\n', 'utf8');
+
+        // 1. Launch with named file
+        await realManager.launchApp('notepad.exe', `"${tmpFile}"`);
+        await new Promise(r => setTimeout(r, 1500));
+
+        // 2. Type authorized changes
+        const uniquePayload = 'Verified persisted payload ' + Date.now();
+        await realManager.typeText('Notepad', uniquePayload);
+        await new Promise(r => setTimeout(r, 600));
+
+        // 3. Close with savePolicy: 'save'
+        const saveRes = await realManager.closeApp('Notepad', { savePolicy: 'save' });
+        assert.ok(saveRes);
+        assert.equal(saveRes.dialogHandled, true);
+        assert.equal(saveRes.actionTaken, 'save');
+
+        // 4. Verify disk file content
+        await new Promise(r => setTimeout(r, 1000));
+        const savedText = fs.readFileSync(tmpFile, 'utf8');
+        assert.ok(savedText.includes(uniquePayload), 'Persisted file must contain authorized saved text');
+
+        // Clean up
+        try { fs.unlinkSync(tmpFile); } catch (_) {}
+    });
+
+    await suite.test('Integration: Notepad Clean Close with No Unsaved Changes', async () => {
+        const launchRes = await realManager.launchApp('notepad.exe');
+        assert.ok(launchRes.appId);
+        await new Promise(r => setTimeout(r, 1200));
+
+        const closeRes = await realManager.closeApp('Notepad');
         assert.ok(closeRes);
         assert.equal(closeRes.closed, true);
     });
@@ -305,7 +423,7 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
             }
 
             // 6. Close Calculator
-            const closeRes = await realManager.closeApp({ pid: calcApp.pid });
+            const closeRes = await realManager.closeApp('Calculator');
             assert.ok(closeRes);
             assert.equal(closeRes.closed, true);
         }

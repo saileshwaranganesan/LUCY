@@ -72,5 +72,9 @@ contextBridge.exposeInMainWorld('lucyIpc', {
     setVoiceConfig: (config) => ipcRenderer.invoke('lucy:setVoiceConfig', config),
     // Offline Speech Recognition (REQ-027)
     getWhisperStatus: () => ipcRenderer.invoke('lucy:getWhisperStatus'),
-    transcribeAudio: (audioData, options) => ipcRenderer.invoke('lucy:transcribeAudio', audioData, options)
+    transcribeAudio: (audioData, options) => ipcRenderer.invoke('lucy:transcribeAudio', audioData, options),
+    // Background Mode & Application Lifecycle APIs
+    getAppSettings: () => ipcRenderer.invoke('lucy:getAppSettings'),
+    setAppSettings: (settings) => ipcRenderer.invoke('lucy:setAppSettings', settings),
+    exitApp: () => ipcRenderer.invoke('lucy:exitApp')
 });

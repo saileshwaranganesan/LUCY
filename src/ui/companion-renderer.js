@@ -476,34 +476,40 @@ class CelestialFamiliarRenderer {
         // 5. Back Hair Volume (Soft feminine silhouette framing head & shoulders)
         this._renderBackHair(palette);
 
-        // 6. Petite Fairy Dress / Multi-Layered Petal Skirt
+        // 6. Slender Porcelain Legs & Delicate Fairy Boots (Drawn before skirt)
+        this._renderFairyLegsAndBoots(palette);
+
+        // 7. Petite Fairy Dress / Multi-Layered Petal Skirt
         this._renderPetalDress(palette);
 
-        // 7. Petite Fairy Torso & Glowing Star Brooch
-        this._renderFairyTorso(palette);
+        // 8. Slender Porcelain Neck & Defined Feminine Shoulders
+        this._renderFairyNeckAndShoulders(palette);
 
-        // 8. Cute Rounded Chibi Head & Luminous Porcelain Face
+        // 9. Fitted Magical Bodice & Glowing Star Brooch
+        this._renderFairyBodice(palette);
+
+        // 10. Slender Arms & Delicate Folded Fairy Hands
+        this._renderFairyArmsAndHands(palette);
+
+        // 11. Cute Rounded Chibi Head & Luminous Porcelain Face
         this._renderFairyHead(palette);
 
-        // 9. Pointed Fairy Elf Ears with Soft Blush
+        // 12. Pointed Fairy Elf Ears with Soft Blush
         this._renderFairyEars(palette);
 
-        // 10. Soft Celestial Hair: Layered Bangs & Floating Side Curls
+        // 13. Soft Celestial Hair: Layered Bangs & Floating Side Curls
         this._renderFairyHair(palette);
 
-        // 11. Delicate Starlight Tiara / Circlet with Glowing Star Crystal
+        // 14. Delicate Starlight Tiara / Circlet with Glowing Star Crystal
         this._renderFairyTiara(palette);
 
-        // 12. Expressive Chibi/Anime Eyes with Look-At Tracking & Blinking
+        // 15. Expressive Chibi/Anime Eyes with Look-At Tracking & Blinking
         this._renderFairyEyes(palette);
 
-        // 13. Rosy Cheeks & Animated Speaking Mouth
+        // 16. Rosy Cheeks, Cute Petite Nose & Animated Speaking Mouth
         this._renderCheeksAndMouth(palette, time);
 
-        // 14. Delicate Little Fairy Hands Resting Gracefully
-        this._renderFairyHands(palette);
-
-        // 15. Draw Burst Particles (Hearts / Sparkles from Pet or Magic)
+        // 17. Draw Burst Particles (Hearts / Sparkles from Pet or Magic)
         this._renderBurstParticles();
 
         this.ctx.restore();
@@ -625,13 +631,14 @@ class CelestialFamiliarRenderer {
     }
 
     _renderSoftAura(palette) {
-        const auraGrad = this.ctx.createRadialGradient(0, -6, 10, 0, -6, 65);
-        auraGrad.addColorStop(0, palette.aura);
-        auraGrad.addColorStop(0.6, palette.aura.replace(/[\d.]+\)$/, '0.08)'));
+        // Restrained ethereal aura (subtle, non-blinding starlight glow)
+        const auraGrad = this.ctx.createRadialGradient(0, -6, 10, 0, -6, 48);
+        auraGrad.addColorStop(0, palette.aura ? palette.aura.replace(/[\d.]+\)$/, '0.18)') : 'rgba(112, 214, 255, 0.18)');
+        auraGrad.addColorStop(0.65, palette.aura ? palette.aura.replace(/[\d.]+\)$/, '0.04)') : 'rgba(112, 214, 255, 0.04)');
         auraGrad.addColorStop(1, 'transparent');
 
         this.ctx.beginPath();
-        this.ctx.arc(0, -6, 65, 0, Math.PI * 2);
+        this.ctx.arc(0, -6, 48, 0, Math.PI * 2);
         this.ctx.fillStyle = auraGrad;
         this.ctx.fill();
     }
@@ -645,93 +652,296 @@ class CelestialFamiliarRenderer {
         backHairGrad.addColorStop(1, 'rgba(40, 20, 60, 0.8)');
 
         this.ctx.beginPath();
-        this.ctx.ellipse(0, -22, 30, 32, 0, 0, Math.PI * 2);
+        this.ctx.ellipse(0, -22, 28, 30, 0, 0, Math.PI * 2);
         this.ctx.fillStyle = backHairGrad;
         this.ctx.shadowColor = palette.core;
-        this.ctx.shadowBlur = 10;
+        this.ctx.shadowBlur = 6;
         this.ctx.fill();
+        this.ctx.restore();
+    }
+
+    _renderFairyLegsAndBoots(palette) {
+        this.ctx.save();
+        const sway = this.state.skirtSway * 0.4;
+
+        // Render pair of slender humanoid legs: Left leg (-1) and Right leg (1)
+        [-1, 1].forEach((side) => {
+            const lx = side * 5.5 + sway * 0.3;
+            const kneeY = 30;
+            const ankleY = 40;
+            const bootY = 46;
+
+            // --- Porcelain Leg (Thigh to Ankle) ---
+            const legGrad = this.ctx.createLinearGradient(lx, 18, lx, ankleY);
+            legGrad.addColorStop(0, '#ffffff');
+            legGrad.addColorStop(0.5, '#fff6f8');
+            legGrad.addColorStop(1, '#fce7f3');
+
+            this.ctx.beginPath();
+            // Thigh
+            this.ctx.moveTo(lx - 2.8, 18);
+            // Slender knee contour
+            this.ctx.quadraticCurveTo(lx - 3.0, kneeY - 3, lx - 2.2, kneeY);
+            // Slender calf and ankle
+            this.ctx.quadraticCurveTo(lx - 2.5, (kneeY + ankleY) / 2, lx - 1.8, ankleY);
+            this.ctx.lineTo(lx + 1.8, ankleY);
+            this.ctx.quadraticCurveTo(lx + 2.5, (kneeY + ankleY) / 2, lx + 2.2, kneeY);
+            this.ctx.quadraticCurveTo(lx + 3.0, kneeY - 3, lx + 2.8, 18);
+            this.ctx.closePath();
+            this.ctx.fillStyle = legGrad;
+            this.ctx.fill();
+
+            // Subtle cute pink blush on knee
+            this.ctx.beginPath();
+            this.ctx.arc(lx, kneeY, 1.6, 0, Math.PI * 2);
+            this.ctx.fillStyle = 'rgba(255, 133, 161, 0.35)';
+            this.ctx.fill();
+
+            // --- Delicate Fairy Boot / Slipper ---
+            const bootGrad = this.ctx.createLinearGradient(lx, ankleY - 2, lx, bootY);
+            bootGrad.addColorStop(0, palette.core);
+            bootGrad.addColorStop(0.5, palette.dress || '#c084fc');
+            bootGrad.addColorStop(1, '#ffffff');
+
+            this.ctx.beginPath();
+            // Boot cuff with gentle petal flare
+            this.ctx.moveTo(lx - 3.0, ankleY - 1.5);
+            this.ctx.lineTo(lx + 3.0, ankleY - 1.5);
+            this.ctx.quadraticCurveTo(lx + 3.2, ankleY + 3, lx + 2.2, bootY - 1.5);
+            // Pointed fairy slipper toe arching slightly forward
+            this.ctx.quadraticCurveTo(lx + side * 1.5, bootY + 2, lx, bootY + 2.2);
+            this.ctx.quadraticCurveTo(lx - side * 1.5, bootY, lx - 2.2, bootY - 1.5);
+            this.ctx.quadraticCurveTo(lx - 3.2, ankleY + 3, lx - 3.0, ankleY - 1.5);
+            this.ctx.closePath();
+            this.ctx.fillStyle = bootGrad;
+            this.ctx.shadowColor = palette.core;
+            this.ctx.shadowBlur = 4;
+            this.ctx.fill();
+
+            // Tiny golden star crystal on boot cuff
+            this.ctx.beginPath();
+            this.ctx.arc(lx, ankleY - 0.5, 1.2, 0, Math.PI * 2);
+            this.ctx.fillStyle = palette.accent || '#ffd166';
+            this.ctx.shadowColor = palette.accent || '#ffd166';
+            this.ctx.shadowBlur = 4;
+            this.ctx.fill();
+        });
+
         this.ctx.restore();
     }
 
     _renderPetalDress(palette) {
         this.ctx.save();
-        this.ctx.translate(0, 14);
-
+        this.ctx.translate(0, 13);
         const sway = this.state.skirtSway;
-        const petalGrad = this.ctx.createLinearGradient(0, 0, 0, 28);
-        petalGrad.addColorStop(0, palette.dress);
-        petalGrad.addColorStop(0.6, 'rgba(196, 181, 253, 0.5)');
-        petalGrad.addColorStop(1, 'rgba(255, 255, 255, 0.7)');
 
-        // Center Petal
+        // Flared translucent petal skirt blossoming from slender waist
+        const petalGrad = this.ctx.createLinearGradient(0, 0, 0, 18);
+        petalGrad.addColorStop(0, palette.dress || 'rgba(179, 136, 255, 0.6)');
+        petalGrad.addColorStop(0.65, 'rgba(230, 200, 255, 0.55)');
+        petalGrad.addColorStop(1, 'rgba(255, 255, 255, 0.8)');
+
+        // Back layer petal
         this.ctx.beginPath();
-        this.ctx.moveTo(0, 0);
-        this.ctx.quadraticCurveTo(-11 + sway, 14, 0 + sway * 1.1, 27);
-        this.ctx.quadraticCurveTo(11 + sway, 14, 0, 0);
+        this.ctx.moveTo(-5, 0);
+        this.ctx.quadraticCurveTo(-14 + sway * 0.7, 9, -6 + sway, 17);
+        this.ctx.quadraticCurveTo(0, 13, 6 + sway, 17);
+        this.ctx.quadraticCurveTo(14 + sway * 0.7, 9, 5, 0);
+        this.ctx.closePath();
+        this.ctx.fillStyle = 'rgba(150, 110, 210, 0.45)';
+        this.ctx.fill();
+
+        // Left Flared Petal
+        this.ctx.beginPath();
+        this.ctx.moveTo(-6, 0);
+        this.ctx.quadraticCurveTo(-17 + sway * 0.8, 7, -12 + sway, 16);
+        this.ctx.quadraticCurveTo(-6 + sway * 0.5, 14, -1, 0);
+        this.ctx.closePath();
         this.ctx.fillStyle = petalGrad;
         this.ctx.fill();
 
-        // Left Layered Petal
+        // Right Flared Petal
         this.ctx.beginPath();
-        this.ctx.moveTo(-5, -1);
-        this.ctx.quadraticCurveTo(-22 + sway * 0.8, 11, -14 + sway, 24);
-        this.ctx.quadraticCurveTo(-3, 15, -1, 1);
+        this.ctx.moveTo(6, 0);
+        this.ctx.quadraticCurveTo(17 + sway * 0.8, 7, 12 + sway, 16);
+        this.ctx.quadraticCurveTo(6 + sway * 0.5, 14, 1, 0);
+        this.ctx.closePath();
         this.ctx.fillStyle = petalGrad;
         this.ctx.fill();
 
-        // Right Layered Petal
+        // Center Front Petal
         this.ctx.beginPath();
-        this.ctx.moveTo(5, -1);
-        this.ctx.quadraticCurveTo(22 + sway * 0.8, 11, 14 + sway, 24);
-        this.ctx.quadraticCurveTo(3, 15, 1, 1);
+        this.ctx.moveTo(-3, 0);
+        this.ctx.quadraticCurveTo(-8 + sway, 8, 0 + sway * 1.1, 15.5);
+        this.ctx.quadraticCurveTo(8 + sway, 8, 3, 0);
+        this.ctx.closePath();
         this.ctx.fillStyle = petalGrad;
         this.ctx.fill();
 
         this.ctx.restore();
     }
 
-    _renderFairyTorso(palette) {
+    _renderFairyNeckAndShoulders(palette) {
         this.ctx.save();
-        // Petite feminine bodice
-        const torsoGrad = this.ctx.createRadialGradient(0, 3, 2, 0, 5, 16);
-        torsoGrad.addColorStop(0, '#ffffff');
-        torsoGrad.addColorStop(0.5, palette.core);
-        torsoGrad.addColorStop(1, 'rgba(50, 30, 80, 0.85)');
-
+        // Slender porcelain neck connecting head to shoulders
         this.ctx.beginPath();
-        this.ctx.ellipse(0, 5, 13, 14, 0, 0, Math.PI * 2);
-        this.ctx.fillStyle = torsoGrad;
-        this.ctx.shadowColor = palette.core;
-        this.ctx.shadowBlur = 8;
+        this.ctx.moveTo(-3.5, -8);
+        this.ctx.lineTo(-3.5, 0);
+        this.ctx.lineTo(3.5, 0);
+        this.ctx.lineTo(3.5, -8);
+        this.ctx.closePath();
+        this.ctx.fillStyle = '#fff0f5';
         this.ctx.fill();
 
-        // Glowing Star Crystal Brooch on chest
+        // Soft neck shadow under chin
         this.ctx.beginPath();
-        this.ctx.arc(0, 3, 3.2, 0, Math.PI * 2);
+        this.ctx.moveTo(-3.5, -8);
+        this.ctx.quadraticCurveTo(0, -6, 3.5, -8);
+        this.ctx.lineTo(3.5, -5);
+        this.ctx.quadraticCurveTo(0, -3.5, -3.5, -5);
+        this.ctx.closePath();
+        this.ctx.fillStyle = 'rgba(230, 180, 210, 0.4)';
+        this.ctx.fill();
+
+        // Defined feminine shoulders
+        this.ctx.beginPath();
+        this.ctx.ellipse(0, 1, 12.5, 3.2, 0, 0, Math.PI * 2);
+        this.ctx.fillStyle = '#fff5f8';
+        this.ctx.fill();
+        this.ctx.restore();
+    }
+
+    _renderFairyBodice(palette) {
+        this.ctx.save();
+        // Fitted feminine bodice tapering to slender waist
+        const bodiceGrad = this.ctx.createLinearGradient(0, 0, 0, 13);
+        bodiceGrad.addColorStop(0, '#ffffff');
+        bodiceGrad.addColorStop(0.4, palette.core);
+        bodiceGrad.addColorStop(0.9, palette.hairAccent || '#8b5cf6');
+        bodiceGrad.addColorStop(1, 'rgba(50, 25, 75, 0.9)');
+
+        this.ctx.beginPath();
+        // Sweetheart neckline at top of chest
+        this.ctx.moveTo(-11, 1);
+        this.ctx.quadraticCurveTo(-5, 4, 0, 2.5);
+        this.ctx.quadraticCurveTo(5, 4, 11, 1);
+        // Taper gracefully inward to slender fairy waist at y=13
+        this.ctx.quadraticCurveTo(9, 7, 7, 13);
+        this.ctx.lineTo(-7, 13);
+        this.ctx.quadraticCurveTo(-9, 7, -11, 1);
+        this.ctx.closePath();
+        this.ctx.fillStyle = bodiceGrad;
+        this.ctx.shadowColor = palette.core;
+        this.ctx.shadowBlur = 6;
+        this.ctx.fill();
+
+        // Delicate golden filigree / corset seam lines
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, 3);
+        this.ctx.lineTo(0, 13);
+        this.ctx.moveTo(-4, 4);
+        this.ctx.lineTo(-3, 13);
+        this.ctx.moveTo(4, 4);
+        this.ctx.lineTo(3, 13);
+        this.ctx.strokeStyle = 'rgba(255, 209, 102, 0.65)';
+        this.ctx.lineWidth = 0.8;
+        this.ctx.stroke();
+
+        // Glowing Star Brooch / Heart Gem at center chest
+        this.ctx.beginPath();
+        this.ctx.arc(0, 4, 2.8, 0, Math.PI * 2);
         this.ctx.fillStyle = palette.accent || '#ffd166';
         this.ctx.shadowColor = palette.accent || '#ffd166';
         this.ctx.shadowBlur = 8;
         this.ctx.fill();
 
+        // Tiny golden waist belt band
+        this.ctx.beginPath();
+        this.ctx.moveTo(-7.5, 12.5);
+        this.ctx.lineTo(7.5, 12.5);
+        this.ctx.strokeStyle = palette.accent || '#ffd166';
+        this.ctx.lineWidth = 1.4;
+        this.ctx.stroke();
+
         this.ctx.restore();
+    }
+
+    _renderFairyArmsAndHands(palette) {
+        this.ctx.save();
+        const isRaised = (this.state.emotion === 'pet' || this.state.emotion === 'magic');
+        const armColor = '#fff5f8';
+        this.ctx.strokeStyle = armColor;
+        this.ctx.lineWidth = 2.4;
+        this.ctx.lineCap = 'round';
+        this.ctx.lineJoin = 'round';
+
+        if (isRaised) {
+            // Playfully raised arms celebrating or welcoming
+            this.ctx.beginPath();
+            this.ctx.moveTo(-10, 1);
+            this.ctx.quadraticCurveTo(-16, 4, -13, 9);
+            this.ctx.stroke();
+
+            this.ctx.beginPath();
+            this.ctx.moveTo(10, 1);
+            this.ctx.quadraticCurveTo(16, 4, 13, 9);
+            this.ctx.stroke();
+
+            this.ctx.fillStyle = armColor;
+            this.ctx.beginPath();
+            this.ctx.arc(-13, 9, 2.2, 0, Math.PI * 2);
+            this.ctx.arc(13, 9, 2.2, 0, Math.PI * 2);
+            this.ctx.fill();
+        } else {
+            // Natural feminine pose: slender arms gracefully bending inward to waist
+            this.ctx.beginPath();
+            this.ctx.moveTo(-10.5, 1.5);
+            this.ctx.quadraticCurveTo(-13.5, 6, -2.5, 10.5);
+            this.ctx.stroke();
+
+            this.ctx.beginPath();
+            this.ctx.moveTo(10.5, 1.5);
+            this.ctx.quadraticCurveTo(13.5, 6, 2.5, 10.5);
+            this.ctx.stroke();
+
+            // Delicate hands folded softly together
+            this.ctx.fillStyle = armColor;
+            this.ctx.beginPath();
+            this.ctx.ellipse(-2.2, 10.5, 2.2, 1.6, -Math.PI / 8, 0, Math.PI * 2);
+            this.ctx.ellipse(2.2, 10.5, 2.2, 1.6, Math.PI / 8, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+
+        this.ctx.restore();
+    }
+
+    _renderFairyTorso(palette) {
+        // Compatibility alias: renders both neck/shoulders and fitted bodice
+        this._renderFairyNeckAndShoulders(palette);
+        this._renderFairyBodice(palette);
     }
 
     _renderFairyHead(palette) {
         this.ctx.save();
         const headY = -20;
 
-        // Cute rounded chibi head with soft pearlescent skin gradient
-        const headGrad = this.ctx.createRadialGradient(-5, headY - 6, 4, 0, headY, 28);
+        // Cute rounded chibi head with gentle chin contour and porcelain skin
+        const headGrad = this.ctx.createRadialGradient(-4, headY - 5, 4, 0, headY, 26);
         headGrad.addColorStop(0, '#ffffff');
-        headGrad.addColorStop(0.5, '#fff5f8');
-        headGrad.addColorStop(0.85, '#fae8f3');
-        headGrad.addColorStop(1, 'rgba(180, 140, 200, 0.45)');
+        headGrad.addColorStop(0.55, '#fff6f8');
+        headGrad.addColorStop(0.85, '#faeaf4');
+        headGrad.addColorStop(1, 'rgba(190, 150, 210, 0.35)');
 
         this.ctx.beginPath();
-        this.ctx.ellipse(0, headY, 26, 25, 0, 0, Math.PI * 2);
+        // Head outline with cute tapered jaw and rounded chin
+        this.ctx.moveTo(-22, headY - 6);
+        this.ctx.bezierCurveTo(-23, headY + 10, -12, headY + 18, 0, headY + 18);
+        this.ctx.bezierCurveTo(12, headY + 18, 23, headY + 10, 22, headY - 6);
+        this.ctx.bezierCurveTo(22, headY - 22, -22, headY - 22, -22, headY - 6);
+        this.ctx.closePath();
         this.ctx.fillStyle = headGrad;
-        this.ctx.shadowColor = 'rgba(255, 200, 220, 0.4)';
-        this.ctx.shadowBlur = 12;
+        this.ctx.shadowColor = 'rgba(255, 210, 230, 0.35)';
+        this.ctx.shadowBlur = 8;
         this.ctx.fill();
 
         this.ctx.restore();
@@ -741,26 +951,28 @@ class CelestialFamiliarRenderer {
         this.ctx.save();
         const headY = -20;
 
-        // Delicate pointed elf/fairy ears peeking from sides
+        // Delicate pointed elf/fairy ears peeking gracefully from sides
         [-1, 1].forEach((side) => {
             this.ctx.beginPath();
-            this.ctx.moveTo(side * 22, headY - 3);
-            this.ctx.quadraticCurveTo(side * 30, headY - 7, side * 34, headY - 11);
-            this.ctx.quadraticCurveTo(side * 29, headY + 3, side * 22, headY + 5);
+            this.ctx.moveTo(side * 20, headY - 2);
+            this.ctx.quadraticCurveTo(side * 26, headY - 5, side * 28, headY - 8);
+            this.ctx.quadraticCurveTo(side * 25, headY + 2, side * 20, headY + 4);
+            this.ctx.closePath();
             this.ctx.fillStyle = '#fff0f5';
             this.ctx.fill();
 
             // Soft inner ear blush
             this.ctx.beginPath();
-            this.ctx.moveTo(side * 23, headY - 2);
-            this.ctx.quadraticCurveTo(side * 28, headY - 5, side * 31, headY - 8);
-            this.ctx.quadraticCurveTo(side * 27, headY + 1, side * 23, headY + 3);
+            this.ctx.moveTo(side * 21, headY - 1);
+            this.ctx.quadraticCurveTo(side * 24, headY - 3, side * 26, headY - 5);
+            this.ctx.quadraticCurveTo(side * 23, headY + 1, side * 21, headY + 2);
+            this.ctx.closePath();
             this.ctx.fillStyle = 'rgba(255, 133, 161, 0.55)';
             this.ctx.fill();
 
             // Tiny pearl earring
             this.ctx.beginPath();
-            this.ctx.arc(side * 24, headY + 5, 1.4, 0, Math.PI * 2);
+            this.ctx.arc(side * 21.5, headY + 4, 1.3, 0, Math.PI * 2);
             this.ctx.fillStyle = '#ffffff';
             this.ctx.shadowColor = palette.accent;
             this.ctx.shadowBlur = 4;

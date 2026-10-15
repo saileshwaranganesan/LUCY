@@ -570,17 +570,60 @@ class DesktopAutomationManager {
     }
 
     /**
-     * Gracefully close a target application.
+     * Gracefully close a target application with optional modal save dialog resolution.
+     * @param {string|number|Object} target - App identifier, PID, or title
+     * @param {Object} [options]
+     * @param {'dont_save'|'save'|'cancel'|'ask'} [options.savePolicy] - Policy for handling unsaved confirmation dialogs
      */
     async closeApp(target, options = {}) {
         const payload = this._resolveTargetPayload(target);
+        if (options.savePolicy) {
+            payload.savePolicy = options.savePolicy;
+        } else if (options.dialogAction) {
+            payload.savePolicy = options.dialogAction;
+        }
+
         const result = await this.sendCommand('close_app', payload);
 
-        if (payload.appId) {
+        if (result && result.closed && payload.appId) {
             this.trackedApps.delete(payload.appId);
         }
 
         return result;
+    }
+
+    /**
+     * Detect if a modal confirmation dialog is currently active for an application.
+     */
+    async detectDialog(target) {
+        const payload = this._resolveTargetPayload(target);
+        return await this.sendCommand('detect_dialog', payload);
+    }
+
+    /**
+     * Handle an active modal dialog by invoking the specified action.
+     * @param {string|number|Object} target
+     * @param {'save'|'dont_save'|'cancel'} action
+     */
+    async handleDialog(target, action, options = {}) {
+        if (!action || !['save', 'dont_save', 'cancel'].includes(action.toLowerCase())) {
+            throw new Error(`Invalid dialog action: '${action}'. Must be one of: save, dont_save, cancel`);
+        }
+        const payload = this._resolveTargetPayload(target);
+        payload.action = action.toLowerCase();
+        const result = await this.sendCommand('handle_dialog', payload);
+        if (result && result.processExited && payload.appId) {
+            this.trackedApps.delete(payload.appId);
+        }
+        return result;
+    }
+
+    /**
+     * Close the currently active tab in an application (via Ctrl+W shortcut).
+     */
+    async closeTab(target) {
+        const payload = this._resolveTargetPayload(target);
+        return await this.sendCommand('close_tab', payload);
     }
 
     /**
@@ -626,6 +669,7 @@ class DesktopAutomationManager {
             if (target.appId) out.appId = target.appId;
             if (target.pid) out.pid = target.pid;
             if (target.title) out.title = target.title;
+            if (target.windowHandle) out.windowHandle = target.windowHandle;
             return out;
         }
 
