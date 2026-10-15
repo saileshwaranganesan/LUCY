@@ -12,11 +12,11 @@ The release artifacts are stored in the project's release output directory: `dis
 
 | File Name | File Size | Target Description | SHA-256 Digest |
 |---|---|---|---|
-| **`L.U.C.Y-Setup-0.1.0-win-x64.exe`** | 95,596,587 B (91.17 MB) | Standard Windows Installer (NSIS). Creates Start Menu & Desktop shortcuts, includes uninstaller. | `79d0df160154e59376209c11cfd08dec401bcc17988ebbe3eb4b9dfbe1551a7f` |
-| **`L.U.C.Y-Portable-0.1.0-win-x64.exe`** | 95,367,045 B (90.95 MB) | Portable executable. Runs directly without installation or administrator privileges. | `b0734214d26116562b970a90310f9b3c8afb715536bc3ff98efef7078278662d` |
-| **`L.U.C.Y-Setup-0.1.0-win-x64.exe.blockmap`** | 101,301 B (0.10 MB) | Differential update blockmap for Electron auto-updater. | `5843f8b334944137d4795e61c686a39952bdd890329fa4e14dc6e96c0253a9a6` |
+| **`L.U.C.Y-Setup-0.1.0-win-x64.exe`** | 170,155,304 B (~162.27 MB) | Standard Windows Installer (NSIS). Creates Start Menu & Desktop shortcuts, includes uninstaller. | `f56ea3e3b6087b499fc832533f2ba3c5f83b5d211746aa6f7279bd9f8c7511b2` |
+| **`L.U.C.Y-Portable-0.1.0-win-x64.exe`** | 169,925,762 B (~162.05 MB) | Portable executable. Runs directly without installation or administrator privileges. | `2117d0557855ecf63bec8695d15715591db1187289efdb8e1ccb1f19bc22a7f4` |
+| **`L.U.C.Y-Setup-0.1.0-win-x64.exe.blockmap`** | 179,606 B (~0.17 MB) | Differential update blockmap for Electron auto-updater. | `56b5b5e1a8b4d4b3e23eaf8f4d3a1c3f259b91b6282c65046d11632eadbb480f` |
 | **`SHA256SUMS.txt`** | Standard GNU format | Cryptographic checksum manifest for verification with `sha256sum -c` or PowerShell. | — |
-| **`release-manifest.json`** | ~1 KB | Machine-readable release metadata with source revision commit, build timestamps, and hashes. | — |
+| **`release-manifest.json`** | ~3.4 KB | Machine-readable release metadata with source revision commit, build timestamps, and hashes. | — |
 
 To verify artifact integrity on Windows:
 ```powershell
@@ -34,12 +34,13 @@ Get-FileHash dist-release\L.U.C.Y-Setup-0.1.0-win-x64.exe -Algorithm SHA256
 - **Operating System:** Windows 10 (version 1809+) or Windows 11 (64-bit).
 - **Architecture:** x64 (AMD64 / Intel 64-bit).
 - **Hardware:**
-  - Minimum 4 GB RAM (8 GB recommended for 3D companion levitation and animations).
-  - Graphics hardware supporting WebGL 1.0/2.0 (automatic resilient fallback to 2D familiar is provided if WebGL is unavailable).
+  - Minimum 4 GB RAM (8 GB recommended for multitasking and desktop automation).
+  - Standard display adapter (hardware acceleration supported).
 - **External Dependencies:** **NONE.**
   - Node.js, Python, or .NET development tools are **NOT** required.
   - The native Windows UI Automation engine (`LucyUiaWorker.exe`) is pre-compiled and bundled directly with the application.
-  - The Three.js WebGL companion engine and 3D dragon mesh (`dragon.glb`, CC0-1.0) are fully bundled.
+  - The canonical `CelestialFamiliarRenderer` fairy companion engine is fully bundled with zero external asset dependencies.
+  - The offline speech recognition runtime (`whisper-cli.exe` and `ggml-tiny.en.bin`) is pre-packaged.
 
 ---
 
@@ -73,8 +74,8 @@ Because this open-source build is distributed without an expensive commercial EV
 L.U.C.Y. launches immediately in **Offline Mode**. You do not need an internet connection or an AI API key to:
 - Inspect running desktop applications (`desktop_list_apps`).
 - Automate allowlisted Windows applications such as Notepad or Calculator.
-- Interact with the 3D desktop companion (drag, pet, float/dock).
-- Store and retrieve local memories via BM25 keyword search.
+- Interact with the floating fairy companion (drag, pet, float/dock, resizable bounds, tricks).
+- Store and retrieve local memories via BM25 keyword search in SQLite.
 - Test system tools in safe dry-run mode.
 
 ### Adding an AI Provider (Optional)
@@ -84,6 +85,7 @@ To enable cloud intelligence:
    - **Google Gemini API** (recommended for speed and multimodal capabilities)
    - **OpenRouter**
    - **Ollama** (for local offline LLMs)
+   - **Hugging Face** (serverless inference router)
 3. Enter your API key. Keys are masked (`type="password"`) and encrypted using **Windows DPAPI** (`CryptProtectData`), keyed to your current Windows user account.
 4. Click **Save Configuration**.
 
@@ -98,7 +100,7 @@ L.U.C.Y. maintains a strict physical separation between application program file
 | **Program Files** | `%LOCALAPPDATA%\Programs\LUCY\` | Application executable (`LUCY.exe`), ASAR bundles, libraries, and uninstaller. Replaced during upgrades; removed on uninstall. |
 | **User Memory Store** | `%APPDATA%\lucy-desktop-assistant\memory\lucy-memory-store.json` | Persistent conversation history, semantic facts, user preferences, and routines. **Preserved across reinstalls and uninstalls.** |
 | **Task Continuity** | `%APPDATA%\lucy-desktop-assistant\memory\task-checkpoints.json` | Checkpoints for interrupted multi-step workflows. |
-| **Window State** | `%APPDATA%\lucy-desktop-assistant\companion-window-bounds.json` | Saved screen coordinates for the 3D floating companion. |
+| **Window State** | `%APPDATA%\lucy-desktop-assistant\companion-window-bounds.json` | Saved screen coordinates and dimensions for the floating fairy companion. |
 | **User Workspace** | `%APPDATA%\lucy-desktop-assistant\workspace\` | Safe contained directory for file read/write operations. |
 | **Protected Credentials** | `%APPDATA%\LUCY\secure\credentials.dpapi` | Windows DPAPI encrypted API keys. **Preserved across reinstalls.** |
 

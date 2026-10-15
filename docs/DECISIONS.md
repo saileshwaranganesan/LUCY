@@ -210,3 +210,15 @@
   2. Formatted native vision payloads for Gemini (`parts.inlineData`), OpenAI/OpenRouter (`image_url`), Ollama (`images`), and honest unsupported reporting for text-only Hugging Face models.
   3. Created `visual_inspect` tool (`SAFE_READ`) for screen/browser/file reasoning, with strict permission gates enforced on subsequent consequential actions.
   4. Unified the visual companion character: both the main application HUD and the desktop floating window instantiate `CelestialFamiliarRenderer` (the agreed feminine fantasy fairy), resolving the previous runtime discrepancy.
+
+### ADR-025: Floating Fairy UX 2.0, Persistent Background Lifecycle & Performance Optimization
+- **Date**: 2026-10-15
+- **Status**: Implemented & Verified
+- **Context**: The floating companion window was fixed at 320x380 and could not be resized without clipping; floating controls contained redundant wave and sparkle buttons; greeting and chat text overlapped the character's face; closing the main window terminated the floating companion; and idle rendering consumed unnecessary CPU/GPU cycles.
+- **Decision**:
+  1. **Dynamic Resizing with Bounds Clamping**: Made the floating window user-resizable with strict aspect-ratio and size clamping (`[180x220]` minimum to `[520x600]` maximum). Position and dimensions are persisted to `companion-window-bounds.json` with 400ms debouncing.
+  2. **Streamlined 3-Button Control Dock**: Replaced redundant buttons with clean controls: Chat/Talk (`talkBtn`), Pin/Always-On-Top (`pinBtn`), and Full Return to Main App (`returnBtn`). Unwanted wave and sparkle buttons were eliminated.
+  3. **Adjacent Side Conversation Panel**: Rendered conversational speech and user interaction in an adjacent non-overlapping glassmorphic side panel, keeping the fairy's face, mouth, and expressive eyes fully visible at all times.
+  4. **Adaptive Idle Performance Loop**: Implemented a 3-tier adaptive framerate loop (24 FPS idle, 60 FPS active interaction, 0 FPS when hidden/obscured), reducing background memory to a stable ~159 MB and minimizing CPU usage.
+  5. **Persistent Background Operation & Tray Restore**: Configured background mode where closing the main window hides it to the Windows system notification tray (`Tray`), allowing the floating companion to remain alive and interactive on the desktop. The main window can be restored via tray menu, second-instance launch, or the companion Return button. Clean explicit exit shuts down all windows, workers, and background schedulers with zero orphaned processes.
+  6. **Expressive Fairy Tricks & Voice Settings**: Added interactive tricks (spin, jump, fly, bounce) and voice settings preview with pitch/rate/volume controls.
