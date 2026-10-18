@@ -14,11 +14,11 @@
  * Licenced under Apache-2.0 / MIT. Zero third-party audio dependencies.
  */
 
-const SAMPLE_RATE = 16000;
+const SYNTH_SAMPLE_RATE = 16000;
 
 // Second-order digital resonator (biquad bandpass formant filter)
 class FormantResonator {
-    constructor(sampleRate = SAMPLE_RATE) {
+    constructor(sampleRate = SYNTH_SAMPLE_RATE) {
         this.sampleRate = sampleRate;
         this.x1 = 0;
         this.x2 = 0;
@@ -48,7 +48,7 @@ class FormantResonator {
 
 // Bandpass filter for fricatives /s/
 class NoiseBandpass {
-    constructor(lowFreq, highFreq, sampleRate = SAMPLE_RATE) {
+    constructor(lowFreq, highFreq, sampleRate = SYNTH_SAMPLE_RATE) {
         this.sampleRate = sampleRate;
         const center = (lowFreq + highFreq) / 2;
         const bw = highFreq - lowFreq;
@@ -106,7 +106,7 @@ function synthesizePhoneme({
     gain = 0.5,
     noiseGen = null
 }) {
-    const numSamples = Math.floor((durationMs / 1000) * SAMPLE_RATE);
+    const numSamples = Math.floor((durationMs / 1000) * SYNTH_SAMPLE_RATE);
     const output = new Float32Array(numSamples);
     const noise = noiseGen || new SeededNoise(42);
 
@@ -115,10 +115,10 @@ function synthesizePhoneme({
     }
 
     if (type === 'fricative') {
-        const bp = new NoiseBandpass(fricativeLow, fricativeHigh, SAMPLE_RATE);
+        const bp = new NoiseBandpass(fricativeLow, fricativeHigh, SYNTH_SAMPLE_RATE);
         for (let i = 0; i < numSamples; i++) {
             // Envelope: ramp up 20ms, ramp down 20ms
-            const env = Math.min(1.0, i / (0.02 * SAMPLE_RATE), (numSamples - i) / (0.02 * SAMPLE_RATE));
+            const env = Math.min(1.0, i / (0.02 * SYNTH_SAMPLE_RATE), (numSamples - i) / (0.02 * SYNTH_SAMPLE_RATE));
             const white = noise.next();
             output[i] = bp.process(white) * gain * env;
         }
@@ -127,8 +127,8 @@ function synthesizePhoneme({
 
     if (type === 'stop') {
         // Stop: silent closure for durationMs - burstMs, then sharp burst
-        const closureSamples = Math.floor(((durationMs - burstMs) / 1000) * SAMPLE_RATE);
-        const bp = new NoiseBandpass(burstFreq - 300, burstFreq + 300, SAMPLE_RATE);
+        const closureSamples = Math.floor(((durationMs - burstMs) / 1000) * SYNTH_SAMPLE_RATE);
+        const bp = new NoiseBandpass(burstFreq - 300, burstFreq + 300, SYNTH_SAMPLE_RATE);
         for (let i = closureSamples; i < numSamples; i++) {
             const burstProgress = (i - closureSamples) / (numSamples - closureSamples);
             const env = Math.exp(-burstProgress * 5);
@@ -138,11 +138,11 @@ function synthesizePhoneme({
     }
 
     // Voiced phoneme / vowel
-    const r1 = new FormantResonator(SAMPLE_RATE);
-    const r2 = new FormantResonator(SAMPLE_RATE);
-    const r3 = new FormantResonator(SAMPLE_RATE);
+    const r1 = new FormantResonator(SYNTH_SAMPLE_RATE);
+    const r2 = new FormantResonator(SYNTH_SAMPLE_RATE);
+    const r3 = new FormantResonator(SYNTH_SAMPLE_RATE);
 
-    const samplesPerPeriod = Math.floor(SAMPLE_RATE / f0);
+    const samplesPerPeriod = Math.floor(SYNTH_SAMPLE_RATE / f0);
     let periodIndex = 0;
 
     for (let i = 0; i < numSamples; i++) {
@@ -173,7 +173,7 @@ function synthesizePhoneme({
         const y3 = r3.process(glottal) * 0.25;
 
         // Smooth onset/offset envelope
-        const env = Math.min(1.0, i / (0.015 * SAMPLE_RATE), (numSamples - i) / (0.015 * SAMPLE_RATE));
+        const env = Math.min(1.0, i / (0.015 * SYNTH_SAMPLE_RATE), (numSamples - i) / (0.015 * SYNTH_SAMPLE_RATE));
         output[i] = (y1 + y2 + y3) * gain * env;
     }
 
@@ -321,7 +321,8 @@ function synthesizeLookSee(options = {}) {
  * Synthesizes pure silence
  */
 function synthesizeSilence(durationMs = 500) {
-    const numSamples = Math.floor((durationMs / 1000) * SAMPLE_RATE);
+    const ms = (typeof durationMs === 'object' && durationMs !== null) ? (durationMs.durationMs || 500) : (Number(durationMs) || 500);
+    const numSamples = Math.floor((ms / 1000) * SYNTH_SAMPLE_RATE);
     return new Float32Array(numSamples);
 }
 
@@ -329,11 +330,13 @@ function synthesizeSilence(durationMs = 500) {
  * Synthesizes stationary background white/room noise
  */
 function synthesizeBackgroundNoise(durationMs = 500, amplitude = 0.01) {
-    const numSamples = Math.floor((durationMs / 1000) * SAMPLE_RATE);
+    const ms = (typeof durationMs === 'object' && durationMs !== null) ? (durationMs.durationMs || 500) : (Number(durationMs) || 500);
+    const amp = (typeof durationMs === 'object' && durationMs !== null && durationMs.amplitude !== undefined) ? durationMs.amplitude : amplitude;
+    const numSamples = Math.floor((ms / 1000) * SYNTH_SAMPLE_RATE);
     const output = new Float32Array(numSamples);
     const noise = new SeededNoise(777);
     for (let i = 0; i < numSamples; i++) {
-        output[i] = noise.next() * amplitude;
+        output[i] = noise.next() * amp;
     }
     return output;
 }
@@ -342,23 +345,36 @@ function synthesizeBackgroundNoise(durationMs = 500, amplitude = 0.01) {
  * Synthesizes pure sine tone
  */
 function synthesizeSineTone(freq = 440, durationMs = 500, amplitude = 0.5) {
-    const numSamples = Math.floor((durationMs / 1000) * SAMPLE_RATE);
+    const numSamples = Math.floor((durationMs / 1000) * SYNTH_SAMPLE_RATE);
     const output = new Float32Array(numSamples);
-    const step = (2 * Math.PI * freq) / SAMPLE_RATE;
+    const step = (2 * Math.PI * freq) / SYNTH_SAMPLE_RATE;
     for (let i = 0; i < numSamples; i++) {
         output[i] = Math.sin(i * step) * amplitude;
     }
     return output;
 }
 
-module.exports = {
-    SAMPLE_RATE,
-    synthesizeHeyLucy,
-    synthesizeLucy,
-    synthesizeHeyLucky,
-    synthesizeHello,
-    synthesizeLookSee,
-    synthesizeSilence,
-    synthesizeBackgroundNoise,
-    synthesizeSineTone
-};
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        SAMPLE_RATE: SYNTH_SAMPLE_RATE,
+        synthesizeHeyLucy,
+        synthesizeLucy,
+        synthesizeHeyLucky,
+        synthesizeHello,
+        synthesizeLookSee,
+        synthesizeSilence,
+        synthesizeBackgroundNoise,
+        synthesizeSineTone
+    };
+}
+
+if (typeof window !== 'undefined') {
+    window.synthesizeHeyLucy = synthesizeHeyLucy;
+    window.synthesizeLucy = synthesizeLucy;
+    window.synthesizeHeyLucky = synthesizeHeyLucky;
+    window.synthesizeHello = synthesizeHello;
+    window.synthesizeLookSee = synthesizeLookSee;
+    window.synthesizeSilence = synthesizeSilence;
+    window.synthesizeBackgroundNoise = synthesizeBackgroundNoise;
+    window.synthesizeSineTone = synthesizeSineTone;
+}

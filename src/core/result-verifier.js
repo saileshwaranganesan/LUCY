@@ -94,8 +94,20 @@ class ResultVerifier {
                     return await this._verifyFileDelete(step, toolResult, options);
                 case 'file_list':
                     return await this._verifyFileList(step, toolResult, options);
+                case 'file_search':
+                    return await this._verifyFileSearch(step, toolResult);
+                case 'file_mkdir':
+                    return await this._verifyFileMkdir(step, toolResult, options);
+                case 'file_copy':
+                    return await this._verifyFileCopy(step, toolResult, options);
+                case 'file_move':
+                    return await this._verifyFileMove(step, toolResult, options);
+                case 'file_open_external':
+                    return await this._verifyFileOpenExternal(step, toolResult, options);
                 case 'desktop_launch_app':
                     return await this._verifyAppLaunch(step, toolResult, options);
+                case 'desktop_focus_window':
+                    return await this._verifyDesktopFocus(step, toolResult);
                 case 'desktop_type_text':
                     return await this._verifyDesktopTypeText(step, toolResult, options);
                 case 'desktop_click_element':
@@ -106,10 +118,15 @@ class ResultVerifier {
                     return await this._verifyDesktopRead(step, toolResult, options);
                 case 'browser_navigate':
                     return await this._verifyBrowserNavigate(step, toolResult, options);
+                case 'browser_search':
+                    return await this._verifyBrowserSearch(step, toolResult);
+                case 'browser_scroll':
+                    return await this._verifyBrowserScroll(step, toolResult);
                 case 'browser_extract':
                     return await this._verifyBrowserExtract(step, toolResult, options);
                 case 'browser_click':
                 case 'browser_fill':
+                case 'browser_select_option':
                     return await this._verifyBrowserAction(step, toolResult, options);
                 case 'student_synthesize_study_guide':
                 case 'student_generate_study_guide':
@@ -327,39 +344,67 @@ class ResultVerifier {
 
     async _verifyDesktopTypeText(step, toolResult) {
         const result = toolResult.result || toolResult;
+        const tier = result?.tier || step.automationTier || (result?.physicalInputUsed ? 4 : 3);
+        const tierName = result?.tierName || (tier === 4 ? 'Tier 4 — Physical mouse/keyboard fallback' : 'Tier 3 — Windows UI Automation');
+        const physicalInputUsed = Boolean(result?.physicalInputUsed);
+
         if (result && result.verified) {
             return {
                 status: VERIFICATION_STATUSES.VERIFIED,
                 verified: true,
                 method: 'uia_text_insertion_receipt',
                 details: `Text insertion into '${step.params?.target}' verified via UI Automation.`,
-                evidence: { target: step.params?.target, textLength: (step.params?.text || '').length }
+                tier,
+                tierName,
+                physicalInputUsed,
+                targetApp: step.params?.target,
+                targetControl: result?.controlName || null,
+                action: step.toolId,
+                evidence: { target: step.params?.target, textLength: (step.params?.text || '').length, tier, physicalInputUsed }
             };
         }
         return {
             status: VERIFICATION_STATUSES.INCONCLUSIVE,
             verified: false,
             method: 'uia_text_insertion_receipt',
-            failureReason: 'Text insertion executed but was not verified by UI Automation.'
+            tier,
+            tierName,
+            physicalInputUsed,
+            requiresUserIntervention: Boolean(result?.reason === 'TIER3_UIA_UNSUPPORTED' || result?.reason === 'TARGET_FOCUS_LOST'),
+            failureReason: result?.error || 'Text insertion executed but was not verified by UI Automation.'
         };
     }
 
     async _verifyDesktopClick(step, toolResult) {
         const result = toolResult.result || toolResult;
-        if (result && (result.clicked || result.action === 'click')) {
+        const tier = result?.tier || step.automationTier || (result?.physicalInputUsed ? 4 : 3);
+        const tierName = result?.tierName || (tier === 4 ? 'Tier 4 — Physical mouse/keyboard fallback' : 'Tier 3 — Windows UI Automation');
+        const physicalInputUsed = Boolean(result?.physicalInputUsed);
+
+        if (result && (result.verified || result.clicked || result.action === 'click' || result.action === 'invoked' || result.action === 'toggled' || result.action === 'selected' || result.action === 'bm_click')) {
             return {
                 status: VERIFICATION_STATUSES.VERIFIED,
                 verified: true,
                 method: 'uia_click_receipt',
                 details: `Click action on '${step.params?.name || step.params?.target}' verified.`,
-                evidence: { target: step.params?.target }
+                tier,
+                tierName,
+                physicalInputUsed,
+                targetApp: step.params?.target,
+                targetControl: step.params?.name || step.params?.automationId || result?.name || null,
+                action: step.toolId,
+                evidence: { target: step.params?.target, action: result.action, tier, physicalInputUsed }
             };
         }
         return {
             status: VERIFICATION_STATUSES.INCONCLUSIVE,
             verified: false,
             method: 'uia_click_receipt',
-            failureReason: 'Click command returned without confirmation receipt.'
+            tier,
+            tierName,
+            physicalInputUsed,
+            requiresUserIntervention: Boolean(result?.reason === 'TIER3_UIA_UNSUPPORTED' || result?.reason === 'TARGET_FOCUS_LOST'),
+            failureReason: result?.error || 'Click command returned without confirmation receipt.'
         };
     }
 
@@ -509,6 +554,173 @@ class ResultVerifier {
             verified: false,
             method: 'visual_analysis_payload_check',
             failureReason: 'Visual inspection returned without model analysis text.'
+        };
+    }
+
+    async _verifyFileSearch(step, toolResult) {
+        const result = toolResult.result || toolResult;
+        if (result && Array.isArray(result.matches)) {
+            return {
+                status: VERIFICATION_STATUSES.VERIFIED,
+                verified: true,
+                method: 'file_search_results_check',
+                details: `File search for "${step.params?.query}" verified with ${result.matches.length} result(s).`,
+                evidence: { count: result.matches.length, query: step.params?.query }
+            };
+        }
+        return {
+            status: VERIFICATION_STATUSES.INCONCLUSIVE,
+            verified: false,
+            method: 'file_search_results_check',
+            failureReason: 'File search did not return a valid matches array.'
+        };
+    }
+
+    async _verifyFileMkdir(step, toolResult, options = {}) {
+        const dirPath = this._resolveWorkspacePath(step.params?.path, toolResult, options);
+        if (dirPath && fs.existsSync(dirPath)) {
+            const stat = fs.statSync(dirPath);
+            if (stat.isDirectory()) {
+                return {
+                    status: VERIFICATION_STATUSES.VERIFIED,
+                    verified: true,
+                    method: 'file_mkdir_directory_check',
+                    details: `Directory '${step.params.path}' confirmed created and present on disk.`,
+                    evidence: { path: step.params.path }
+                };
+            }
+        }
+        return {
+            status: VERIFICATION_STATUSES.FAILED,
+            verified: false,
+            method: 'file_mkdir_directory_check',
+            failureReason: `Directory '${step.params?.path}' does not exist on disk after creation.`
+        };
+    }
+
+    async _verifyFileCopy(step, toolResult, options = {}) {
+        const dstPath = this._resolveWorkspacePath(step.params?.destination, toolResult, options);
+        const srcPath = this._resolveWorkspacePath(step.params?.source, toolResult, options);
+        if (dstPath && fs.existsSync(dstPath)) {
+            const dstStat = fs.statSync(dstPath);
+            let verifiedSize = true;
+            if (srcPath && fs.existsSync(srcPath)) {
+                const srcStat = fs.statSync(srcPath);
+                verifiedSize = dstStat.size === srcStat.size;
+            }
+            if (verifiedSize) {
+                return {
+                    status: VERIFICATION_STATUSES.VERIFIED,
+                    verified: true,
+                    method: 'file_copy_stat_check',
+                    details: `Copied file verified at destination '${step.params.destination}' (${dstStat.size} bytes).`,
+                    evidence: { source: step.params.source, destination: step.params.destination, sizeBytes: dstStat.size }
+                };
+            }
+        }
+        return {
+            status: VERIFICATION_STATUSES.FAILED,
+            verified: false,
+            method: 'file_copy_stat_check',
+            failureReason: `Destination file '${step.params?.destination}' not found or size mismatch after copy.`
+        };
+    }
+
+    async _verifyFileMove(step, toolResult, options = {}) {
+        const dstPath = this._resolveWorkspacePath(step.params?.destination, toolResult, options);
+        const srcPath = this._resolveWorkspacePath(step.params?.source, toolResult, options);
+        const dstExists = dstPath && fs.existsSync(dstPath);
+        const srcExists = srcPath && fs.existsSync(srcPath);
+        if (dstExists && !srcExists) {
+            return {
+                status: VERIFICATION_STATUSES.VERIFIED,
+                verified: true,
+                method: 'file_move_dual_existence_check',
+                details: `Moved file successfully verified at '${step.params.destination}' and absent from source '${step.params.source}'.`,
+                evidence: { source: step.params.source, destination: step.params.destination }
+            };
+        }
+        return {
+            status: VERIFICATION_STATUSES.FAILED,
+            verified: false,
+            method: 'file_move_dual_existence_check',
+            failureReason: `File move verification failed: destination exists=${Boolean(dstExists)}, source removed=${!srcExists}.`
+        };
+    }
+
+    async _verifyFileOpenExternal(step, toolResult, options = {}) {
+        const targetPath = this._resolveWorkspacePath(step.params?.path, toolResult, options);
+        if (targetPath && fs.existsSync(targetPath) && toolResult.ok) {
+            return {
+                status: VERIFICATION_STATUSES.VERIFIED,
+                verified: true,
+                method: 'file_open_external_check',
+                details: `Verified file '${step.params.path}' exists and launched with registered application.`,
+                evidence: { path: step.params.path }
+            };
+        }
+        return {
+            status: VERIFICATION_STATUSES.FAILED,
+            verified: false,
+            method: 'file_open_external_check',
+            failureReason: `Target file '${step.params?.path}' does not exist or opener failed.`
+        };
+    }
+
+    async _verifyDesktopFocus(step, toolResult) {
+        const result = toolResult.result || toolResult;
+        if (result && (result.focused || result.windowHandle)) {
+            return {
+                status: VERIFICATION_STATUSES.VERIFIED,
+                verified: true,
+                method: 'desktop_focus_receipt',
+                details: `Application window for '${step.params?.target}' successfully brought to foreground.`,
+                evidence: { target: step.params?.target, windowHandle: result.windowHandle }
+            };
+        }
+        return {
+            status: VERIFICATION_STATUSES.INCONCLUSIVE,
+            verified: false,
+            method: 'desktop_focus_receipt',
+            failureReason: `Focus command for '${step.params?.target}' returned without foreground confirmation.`
+        };
+    }
+
+    async _verifyBrowserSearch(step, toolResult) {
+        const result = toolResult.result || toolResult;
+        if (result && result.ok !== false && result.status === 'search_completed') {
+            return {
+                status: VERIFICATION_STATUSES.VERIFIED,
+                verified: true,
+                method: 'browser_search_receipt',
+                details: `Browser search for "${result.query}" on ${result.engine} completed and results displayed (${result.resultCount || 0} items).`,
+                evidence: { query: result.query, engine: result.engine, resultCount: result.resultCount }
+            };
+        }
+        return {
+            status: VERIFICATION_STATUSES.INCONCLUSIVE,
+            verified: false,
+            method: 'browser_search_receipt',
+            failureReason: 'Browser search did not return a confirmed completed status.'
+        };
+    }
+
+    async _verifyBrowserScroll(step, toolResult) {
+        const result = toolResult.result || toolResult;
+        if (result && result.ok !== false && (result.status === 'scrolled' || result.status === 'scrolled_to_element')) {
+            return {
+                status: VERIFICATION_STATUSES.VERIFIED,
+                verified: true,
+                method: 'browser_scroll_receipt',
+                details: `Page scroll completed (${result.direction || 'to element'}).`,
+                evidence: { scrollY: result.scrollY }
+            };
+        }
+        return {
+            status: VERIFICATION_STATUSES.INCONCLUSIVE,
+            verified: false,
+            method: 'browser_scroll_receipt',
+            failureReason: 'Browser scroll did not return confirmation.'
         };
     }
 

@@ -16,12 +16,25 @@
  * Licenced under Apache-2.0 / MIT. Zero cloud network calls.
  */
 
-const { extractAudioFeatures } = require('./acoustic-feature-extractor.js');
-const { synthesizeHeyLucy, synthesizeLucy } = require('./acoustic-synthesizer.js');
+const _extractAudioFeatures = (typeof require !== 'undefined')
+    ? require('./acoustic-feature-extractor.js').extractAudioFeatures
+    : (typeof window !== 'undefined' ? window.extractAudioFeatures : globalThis.extractAudioFeatures);
+
+const _synthesizeHeyLucy = (typeof require !== 'undefined')
+    ? require('./acoustic-synthesizer.js').synthesizeHeyLucy
+    : (typeof window !== 'undefined' ? window.synthesizeHeyLucy : globalThis.synthesizeHeyLucy);
+
+const _synthesizeLucy = (typeof require !== 'undefined')
+    ? require('./acoustic-synthesizer.js').synthesizeLucy
+    : (typeof window !== 'undefined' ? window.synthesizeLucy : globalThis.synthesizeLucy);
 
 // Precomputed reference acoustic profiles (computed once on module load)
-const REF_HEY_LUCY = extractAudioFeatures(synthesizeHeyLucy({ seed: 42, f0: 135 }));
-const REF_LUCY = extractAudioFeatures(synthesizeLucy({ seed: 84, f0: 140 }));
+const REF_HEY_LUCY = typeof _extractAudioFeatures === 'function' && typeof _synthesizeHeyLucy === 'function'
+    ? _extractAudioFeatures(_synthesizeHeyLucy({ seed: 42, f0: 135 }))
+    : [];
+const REF_LUCY = typeof _extractAudioFeatures === 'function' && typeof _synthesizeLucy === 'function'
+    ? _extractAudioFeatures(_synthesizeLucy({ seed: 84, f0: 140 }))
+    : [];
 
 // Frame distance combining MFCC, HFER, and ZCR
 function computeFrameDistance(frameA, frameB) {
@@ -193,7 +206,7 @@ class AcousticWakeModel {
         if (Array.isArray(input)) {
             frames = input;
         } else {
-            frames = extractAudioFeatures(input);
+            frames = typeof _extractAudioFeatures === 'function' ? _extractAudioFeatures(input) : [];
         }
 
         if (!frames || frames.length < 15) {
@@ -253,11 +266,22 @@ class AcousticWakeModel {
     }
 }
 
-module.exports = {
-    AcousticWakeModel,
-    REF_HEY_LUCY,
-    REF_LUCY,
-    dtwDistance,
-    computeFrameDistance,
-    evaluatePhoneticLandmarks
-};
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        AcousticWakeModel,
+        REF_HEY_LUCY,
+        REF_LUCY,
+        dtwDistance,
+        computeFrameDistance,
+        evaluatePhoneticLandmarks
+    };
+}
+
+if (typeof window !== 'undefined') {
+    window.AcousticWakeModel = AcousticWakeModel;
+    window.REF_HEY_LUCY = REF_HEY_LUCY;
+    window.REF_LUCY = REF_LUCY;
+    window.dtwDistance = dtwDistance;
+    window.computeFrameDistance = computeFrameDistance;
+    window.evaluatePhoneticLandmarks = evaluatePhoneticLandmarks;
+}

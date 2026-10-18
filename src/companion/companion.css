@@ -1,15 +1,15 @@
-/* L.U.C.Y. Desktop Fairy Companion Styling — UX 2.0 Edition */
+/* L.U.C.Y. Desktop Fairy Companion Styling — Refined Celestial Edition */
 :root {
-  --accent-cyan: #70d6ff;
+  --accent-cyan: #00f2fe;
   --accent-magenta: #ff85a1;
   --accent-purple: #b388ff;
   --accent-violet: #9d4edd;
   --accent-gold: #ffd166;
   --accent-green: #06d6a0;
   --accent-red: #ef476f;
-  --bg-glass: rgba(14, 18, 36, 0.86);
-  --border-glass: rgba(179, 136, 255, 0.28);
-  --border-glass-hover: rgba(179, 136, 255, 0.55);
+  --bg-glass: rgba(12, 17, 34, 0.9);
+  --border-glass: rgba(255, 255, 255, 0.12);
+  --border-glass-hover: rgba(0, 242, 254, 0.45);
   --text-main: #f8fafc;
   --text-dim: #94a3b8;
   --text-muted: #64748b;
@@ -31,6 +31,13 @@ html, body {
   font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
 }
 
+/* Reused & adapted from dengyie/OpenPet (MIT License) - Tactile Grab & Drag feedback */
+body.is-dragging,
+body.is-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
 #companionContainer {
   position: relative;
   width: 100%;
@@ -39,8 +46,8 @@ html, body {
   flex-direction: column;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 8px 8px 8px;
-  pointer-events: none;
+  padding: 4px;
+  pointer-events: auto;
 }
 
 /* Top Bar */
@@ -50,7 +57,7 @@ html, body {
   justify-content: space-between;
   align-items: center;
   z-index: 20;
-  pointer-events: auto;
+  pointer-events: none;
   flex-shrink: 0;
 }
 
@@ -62,14 +69,23 @@ html, body {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.16);
-  padding: 2px 8px;
+  padding: 3px 9px;
   border-radius: 16px;
-  font-size: 8.5px;
+  font-size: 10px;
   font-weight: 700;
   color: var(--text-main);
   letter-spacing: 0.5px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
   cursor: move;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              visibility 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              background 0.15s ease,
+              border-color 0.15s ease;
 }
 
 .status-dot {
@@ -86,6 +102,7 @@ html, body {
   50% { opacity: 1; transform: scale(1.3); }
 }
 
+/* Close Control: Hidden by default, smoothly revealed on companion hover/focus */
 .top-close-btn {
   background: rgba(14, 18, 36, 0.7);
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -98,14 +115,23 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              visibility 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              background 0.15s ease,
+              color 0.15s ease,
+              border-color 0.15s ease;
 }
 
 .top-close-btn:hover {
   background: rgba(239, 71, 111, 0.35);
   color: var(--accent-red);
   border-color: rgba(239, 71, 111, 0.6);
-  transform: scale(1.12);
+  transform: translateY(-4px) scale(1.12);
 }
 
 /* Companion Body: Fairy Stage + Adjacent Side Panel */
@@ -126,7 +152,7 @@ html, body {
 /* Fairy Canvas Stage */
 .fairy-stage {
   flex: 1;
-  min-width: 100px;
+  min-width: 60px;
   height: 100%;
   display: flex;
   align-items: center;
@@ -182,7 +208,7 @@ html, body {
 }
 
 .side-panel-title {
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--accent-magenta);
   letter-spacing: 0.3px;
@@ -193,7 +219,7 @@ html, body {
   background: transparent;
   border: none;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 11px;
   cursor: pointer;
   padding: 1px 4px;
   border-radius: 4px;
@@ -222,8 +248,8 @@ html, body {
 }
 
 .typewriter-text {
-  font-size: 10px;
-  line-height: 1.35;
+  font-size: 11px;
+  line-height: 1.4;
   color: var(--text-main);
   word-break: break-word;
   white-space: pre-wrap;
@@ -232,7 +258,7 @@ html, body {
 .typewriter-cursor {
   display: inline-block;
   width: 2px;
-  height: 10px;
+  height: 11px;
   background: var(--accent-cyan);
   margin-left: 2px;
   vertical-align: middle;
@@ -258,9 +284,9 @@ html, body {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: var(--text-main);
-  font-size: 9px;
+  font-size: 10.5px;
   font-weight: 600;
-  padding: 3px 7px;
+  padding: 4px 8px;
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -327,7 +353,7 @@ html, body {
   color: var(--accent-gold);
 }
 
-/* Bottom Glassmorphic Control Dock (Clean 3-Button Layout) */
+/* Bottom Glassmorphic Control Dock (Clean 3-Button Layout): Hidden by default, revealed on companion hover/focus */
 .control-dock {
   position: relative;
   z-index: 30;
@@ -341,17 +367,16 @@ html, body {
   padding: 4px 12px;
   border-radius: 20px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), 0 0 14px rgba(179, 136, 255, 0.15);
-  pointer-events: auto;
-  opacity: 0.94;
-  transition: opacity 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(6px);
+  transition: opacity 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              visibility 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.2s ease,
+              box-shadow 0.2s ease;
   flex-shrink: 0;
-}
-
-.control-dock:hover {
-  opacity: 1;
-  transform: translateY(-1px);
-  border-color: var(--border-glass-hover);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.6), 0 0 18px rgba(179, 136, 255, 0.25);
 }
 
 .dock-btn {
@@ -398,7 +423,7 @@ html, body {
   background: rgba(112, 214, 255, 0.2);
 }
 
-/* Tactile Resize Grip at Bottom-Right Corner */
+/* Tactile Resize Grip at Bottom-Right Corner: Hidden by default, revealed on hover */
 .resize-grip {
   position: absolute;
   bottom: 2px;
@@ -408,12 +433,68 @@ html, body {
   cursor: nwse-resize;
   background: linear-gradient(135deg, transparent 50%, rgba(179, 136, 255, 0.45) 50%, rgba(179, 136, 255, 0.45) 68%, transparent 68%, transparent 80%, rgba(179, 136, 255, 0.8) 80%);
   z-index: 50;
-  pointer-events: auto;
+  pointer-events: none;
   border-radius: 2px;
-  transition: opacity 0.15s ease;
-  opacity: 0.6;
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(0.85);
+  transition: opacity 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              visibility 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.resize-grip:hover {
+/* Hover & Focus-Within Reveal Rules for Controls and Status Indicators */
+#companionContainer:hover .status-pill,
+#companionContainer:hover .top-close-btn,
+#companionContainer:hover .control-dock,
+#companionContainer:hover .resize-grip,
+#companionContainer:focus-within .status-pill,
+#companionContainer:focus-within .top-close-btn,
+#companionContainer:focus-within .control-dock,
+#companionContainer:focus-within .resize-grip,
+#companionContainer.controls-visible .status-pill,
+#companionContainer.controls-visible .top-close-btn,
+#companionContainer.controls-visible .control-dock,
+#companionContainer.controls-visible .resize-grip {
+  opacity: 0.94;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+#companionContainer:hover .resize-grip,
+#companionContainer:focus-within .resize-grip,
+#companionContainer.controls-visible .resize-grip {
+  opacity: 0.6;
+  transform: scale(1);
+}
+
+#companionContainer:hover .status-pill:hover,
+#companionContainer:focus-within .status-pill:hover,
+#companionContainer.controls-visible .status-pill:hover {
+  opacity: 1;
+  border-color: var(--border-glass-hover);
+}
+
+#companionContainer:hover .top-close-btn:hover,
+#companionContainer:focus-within .top-close-btn:hover,
+#companionContainer.controls-visible .top-close-btn:hover {
+  opacity: 1;
+  transform: translateY(-4px) scale(1.12);
+}
+
+#companionContainer:hover .control-dock:hover,
+#companionContainer:focus-within .control-dock:hover,
+#companionContainer.controls-visible .control-dock:hover {
+  opacity: 1;
+  transform: translateY(-1px);
+  border-color: var(--border-glass-hover);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.6), 0 0 18px rgba(179, 136, 255, 0.25);
+}
+
+#companionContainer:hover .resize-grip:hover,
+#companionContainer:focus-within .resize-grip:hover,
+#companionContainer.controls-visible .resize-grip:hover {
   opacity: 1;
 }
+

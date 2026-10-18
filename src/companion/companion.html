@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' file: blob:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' file: blob:;">
   <title>L.U.C.Y. — Fairy Companion</title>
   <link rel="stylesheet" href="companion.css">
 </head>
@@ -26,7 +26,7 @@
       </div>
 
       <!-- Adjacent Side Conversation Panel (Never overlaps Lucy's face) -->
-      <div class="side-panel" id="sideConversationPanel" role="region" aria-label="Lucy Conversation Panel">
+      <div class="side-panel collapsed" id="sideConversationPanel" role="region" aria-label="Lucy Conversation Panel">
         <div class="side-panel-header">
           <span class="side-panel-title">✨ Lucy</span>
           <button class="side-panel-dismiss" id="sideDismissBtn" title="Dismiss speech panel" aria-label="Dismiss">✕</button>
@@ -43,6 +43,8 @@
               <button class="trick-option" data-trick="jump" title="Vertical jump & cushion">🦘 Jump</button>
               <button class="trick-option" data-trick="fly" title="Swoop flight loop">🦋 Fly</button>
               <button class="trick-option" data-trick="bounce" title="Happy double bounce">✨ Bounce</button>
+              <button class="trick-option" data-trick="somersault" title="Full 360-degree aerial loop">🤸 Somersault</button>
+              <button class="trick-option" data-trick="dance" title="Starlight melody dance">💃 Dance</button>
             </div>
           </div>
         </div>
@@ -60,6 +62,7 @@
     <div class="resize-grip" id="resizeGrip" title="Drag to resize companion window"></div>
   </div>
 
+  <script src="pet-interactions.js"></script>
   <script src="../ui/companion-renderer.js"></script>
   <script src="companion-app.js"></script>
 </body>

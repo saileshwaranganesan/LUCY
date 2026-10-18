@@ -61,11 +61,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const voiceVolumeVal = document.getElementById('voiceVolumeVal');
     const settingWakeWordEnabled = document.getElementById('settingWakeWordEnabled');
     const wakeWordOptionsGroup = document.getElementById('wakeWordOptionsGroup');
-    const settingBackgroundMode = document.getElementById('settingBackgroundMode');
+    const settingCloseActionModal = document.getElementById('settingCloseActionModal');
+    const settingBackgroundListeningModal = document.getElementById('settingBackgroundListeningModal');
+    const settingCompanionPinnedModal = document.getElementById('settingCompanionPinnedModal');
+    const lifecycleStateBadge = document.getElementById('lifecycleStateBadge');
     const explicitExitBtn = document.getElementById('explicitExitBtn');
     const hudExitBtn = document.getElementById('hudExitBtn');
     const settingWakeWordSensitivity = document.getElementById('settingWakeWordSensitivity');
     const wakeWordSensitivityVal = document.getElementById('wakeWordSensitivityVal');
+    const settingContinuousConversation = document.getElementById('settingContinuousConversation');
+    const settingBargeInEnabled = document.getElementById('settingBargeInEnabled');
+    const settingVadSensitivity = document.getElementById('settingVadSensitivity');
 
     // Memory & Continuity Elements
     const hudMemoryBtn = document.getElementById('hudMemoryBtn');
@@ -74,14 +80,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeMemoryModalBtn = document.getElementById('closeMemoryModalBtn');
     const tabMemoriesBtn = document.getElementById('tabMemoriesBtn');
     const tabContinuityBtn = document.getElementById('tabContinuityBtn');
+    const tabProjectsBtn = document.getElementById('tabProjectsBtn');
     const tabAddMemoryBtn = document.getElementById('tabAddMemoryBtn');
     const paneMemories = document.getElementById('paneMemories');
     const paneContinuity = document.getElementById('paneContinuity');
+    const paneProjects = document.getElementById('paneProjects');
     const paneAddMemory = document.getElementById('paneAddMemory');
     const toggleLongTermCheckbox = document.getElementById('toggleLongTermCheckbox');
     const memorySearchInput = document.getElementById('memorySearchInput');
     const clearCategoryBtn = document.getElementById('clearCategoryBtn');
+    const exportMemoryBtn = document.getElementById('exportMemoryBtn');
+    const importMemoryBtn = document.getElementById('importMemoryBtn');
+    const memoryFileInput = document.getElementById('memoryFileInput');
     const memoryListContainer = document.getElementById('memoryListContainer');
+    const projectSnapshotsContainer = document.getElementById('projectSnapshotsContainer');
     const interruptedTasksList = document.getElementById('interruptedTasksList');
     const addMemoryCategory = document.getElementById('addMemoryCategory');
     const addMemoryKey = document.getElementById('addMemoryKey');
@@ -94,21 +106,179 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let isDryRun = false;
     let pendingPermissionResolve = null;
+    let switchJarvisView = null;
 
-    // 1. Initialize Creature Companion Renderer
-    const renderer = new CelestialFamiliarRenderer(canvas);
+    // 1. Initialize Creature Companion Renderer with dynamic stage sizing
+    const creatureStage = document.getElementById('creatureStage');
+    function resizeMainCompanionCanvas() {
+        if (!canvas || !creatureStage) return;
+        const rect = creatureStage.getBoundingClientRect();
+        const stageW = Math.max(120, Math.floor(rect.width));
+        const stageH = Math.max(120, Math.floor(rect.height));
+        const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? Math.min(2.5, window.devicePixelRatio) : 1;
+
+        canvas.style.width = stageW + 'px';
+        canvas.style.height = stageH + 'px';
+
+        if (renderer && typeof renderer.onResize === 'function') {
+            renderer.onResize(stageW, stageH, dpr);
+        }
+    }
+
+    const stageRect = creatureStage ? creatureStage.getBoundingClientRect() : null;
+    const initialStageW = (stageRect && stageRect.width > 0) ? Math.floor(stageRect.width) : (canvas ? canvas.width : 280);
+    const initialStageH = (stageRect && stageRect.height > 0) ? Math.floor(stageRect.height) : (canvas ? canvas.height : 270);
+
+    const renderer = new CelestialFamiliarRenderer(canvas, {
+        width: initialStageW,
+        height: initialStageH
+    });
     renderer.start();
     window.companionRenderer = renderer;
 
-    // 1b. Initialize Voice Controller
+    requestAnimationFrame(() => {
+        resizeMainCompanionCanvas();
+    });
+    window.addEventListener('resize', resizeMainCompanionCanvas);
+    if (typeof ResizeObserver !== 'undefined' && creatureStage) {
+        new ResizeObserver(() => resizeMainCompanionCanvas()).observe(creatureStage);
+    }
+
+    // 1b. Initialize Voice Controller & Wake-Word State Handlers
+    function updateWakeWordBadge(info = {}) {
+        const state = typeof info === 'string' ? info : (info.state || 'disabled');
+        const err = info.error || '';
+        const keyword = info.keyword || 'Hey Lucy';
+
+        const updateElem = (badge) => {
+            if (!badge) return;
+            badge.removeAttribute('title');
+            switch (state) {
+                case 'disabled':
+                    badge.textContent = 'Disabled';
+                    badge.style.background = 'rgba(255, 255, 255, 0.08)';
+                    badge.style.color = 'var(--text-dim)';
+                    badge.style.border = '1px solid rgba(255, 255, 255, 0.12)';
+                    badge.style.boxShadow = 'none';
+                    break;
+                case 'initializing':
+                    badge.textContent = 'Initialising...';
+                    badge.style.background = 'rgba(0, 242, 254, 0.15)';
+                    badge.style.color = 'var(--accent-cyan)';
+                    badge.style.border = '1px solid rgba(0, 242, 254, 0.4)';
+                    badge.style.boxShadow = '0 0 6px rgba(0, 242, 254, 0.2)';
+                    break;
+                case 'listening':
+                case 'listening_wake':
+                    badge.textContent = 'Listening for "Hey Lucy"';
+                    badge.style.background = 'rgba(0, 245, 212, 0.15)';
+                    badge.style.color = 'var(--accent-green)';
+                    badge.style.border = '1px solid rgba(0, 245, 212, 0.5)';
+                    badge.style.boxShadow = '0 0 8px rgba(0, 245, 212, 0.25)';
+                    break;
+                case 'triggered':
+                    badge.textContent = `"${keyword}" Detected!`;
+                    badge.style.background = 'rgba(255, 209, 102, 0.25)';
+                    badge.style.color = 'var(--accent-gold)';
+                    badge.style.border = '1px solid rgba(255, 209, 102, 0.6)';
+                    badge.style.boxShadow = '0 0 10px rgba(255, 209, 102, 0.4)';
+                    break;
+                case 'waiting_for_command':
+                    badge.textContent = 'Waiting for Command...';
+                    badge.style.background = 'rgba(255, 110, 199, 0.2)';
+                    badge.style.color = 'var(--accent-pink)';
+                    badge.style.border = '1px solid rgba(255, 110, 199, 0.5)';
+                    badge.style.boxShadow = '0 0 8px rgba(255, 110, 199, 0.3)';
+                    break;
+                case 'processing_command':
+                    badge.textContent = 'Processing Command...';
+                    badge.style.background = 'rgba(157, 78, 221, 0.2)';
+                    badge.style.color = 'var(--accent-purple)';
+                    badge.style.border = '1px solid rgba(157, 78, 221, 0.5)';
+                    badge.style.boxShadow = 'none';
+                    break;
+                case 'speaking':
+                    badge.textContent = 'Speaking...';
+                    badge.style.background = 'rgba(0, 245, 212, 0.15)';
+                    badge.style.color = 'var(--accent-green)';
+                    badge.style.border = '1px solid rgba(0, 245, 212, 0.5)';
+                    badge.style.boxShadow = 'none';
+                    break;
+                case 'paused':
+                    badge.textContent = 'Paused';
+                    badge.style.background = 'rgba(255, 255, 255, 0.08)';
+                    badge.style.color = 'var(--text-dim)';
+                    badge.style.border = '1px solid rgba(255, 255, 255, 0.12)';
+                    badge.style.boxShadow = 'none';
+                    break;
+                case 'standby':
+                    badge.textContent = 'Standby';
+                    badge.style.background = 'rgba(255, 255, 255, 0.08)';
+                    badge.style.color = 'var(--text-dim)';
+                    badge.style.border = '1px solid rgba(255, 255, 255, 0.12)';
+                    badge.style.boxShadow = 'none';
+                    break;
+                case 'failed':
+                case 'unavailable':
+                    badge.textContent = 'Failed / Unavailable';
+                    badge.style.background = 'rgba(255, 75, 75, 0.2)';
+                    badge.style.color = 'var(--accent-red)';
+                    badge.style.border = '1px solid rgba(255, 75, 75, 0.5)';
+                    badge.style.boxShadow = 'none';
+                    if (err) badge.title = `Microphone / Wake-Word Error: ${err}`;
+                    break;
+                default:
+                    badge.textContent = state.toUpperCase();
+                    badge.style.background = 'rgba(255, 255, 255, 0.08)';
+                    badge.style.color = 'var(--text-dim)';
+                    badge.style.boxShadow = 'none';
+            }
+        };
+
+        const sideBadge = document.getElementById('wakeWordStatusBadge');
+        const modalBadge = document.getElementById('modalWakeWordStatusBadge');
+        updateElem(sideBadge);
+        updateElem(modalBadge);
+    }
+
+    function syncWakeWordUI(enabled) {
+        const checkWakeWord = document.getElementById('checkWakeWordActive');
+        const settingWakeWord = document.getElementById('settingWakeWordEnabled');
+        const optionsGroup = document.getElementById('wakeWordOptionsGroup');
+
+        if (checkWakeWord) checkWakeWord.checked = Boolean(enabled);
+        if (settingWakeWord) settingWakeWord.checked = Boolean(enabled);
+        if (optionsGroup) optionsGroup.style.display = enabled ? 'flex' : 'none';
+    }
+
+    async function handleWakeWordToggle(isEnabled) {
+        syncWakeWordUI(isEnabled);
+        if (voiceController) {
+            voiceController.setWakeWordEnabled(isEnabled);
+        }
+        if (window.lucyIpc && typeof window.lucyIpc.setVoiceConfig === 'function') {
+            await window.lucyIpc.setVoiceConfig({ wakeWordEnabled: isEnabled });
+        }
+        showBubble(isEnabled ? 'Wake-word detection active: say "Hey Lucy".' : 'Wake-word detection disabled.');
+    }
+
     let voiceController = null;
     if (typeof createVoiceController === 'function') {
         voiceController = createVoiceController({
             globalScope: window,
+            continuousConversation: true,
+            bargeInEnabled: true,
+            enableVad: true,
+            vadSensitivity: 'normal',
+            onWakeWordStateChange: updateWakeWordBadge,
             onWakeWord: (result) => {
-                showBubble(`Heard "${result.keyword}"! How can I help?`);
+                const heardMsg = `Heard "${result.keyword}"! How can I help?`;
+                showBubble(heardMsg);
                 appendFeedEntry('Voice Activation', `Wake phrase detected: "${result.keyword}" (${(result.confidence * 100).toFixed(0)}% confidence).`, 'normal', 'Wake-Word');
                 renderer.setVisualState({ emotion: 'listening' });
+                if (voiceController && voiceController.ttsEnabled) {
+                    voiceController.speak("I'm listening! How can I help?").catch(() => {});
+                }
             },
             onStateChange: ({ voiceState, text }) => {
                 if (voiceState === 'listening') {
@@ -136,7 +306,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (stopVoiceBtn) stopVoiceBtn.style.display = 'inline-block';
                     statusLabel.textContent = 'SPEAKING';
                     statusDot.style.background = 'var(--accent-green)';
-                    renderer.setVisualState({ emotion: 'speaking' });
+                    if (renderer.state.emotion !== 'pet' && !String(renderer.state.emotion).startsWith('trick_')) {
+                        renderer.setVisualState({ emotion: 'speaking' });
+                    }
                     emotionLabel.textContent = 'Speaking';
                 } else if (voiceState === 'idle') {
                     if (micBtn) {
@@ -147,8 +319,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (['SPEAKING', 'LISTENING', 'PROCESSING'].includes(statusLabel.textContent)) {
                         statusLabel.textContent = 'READY';
                         statusDot.style.background = 'var(--accent-cyan)';
-                        renderer.setVisualState({ emotion: 'happy' });
-                        emotionLabel.textContent = 'Happy';
+                        if (renderer.state.emotion !== 'pet' && !String(renderer.state.emotion).startsWith('trick_')) {
+                            renderer.setVisualState({ emotion: 'happy' });
+                            emotionLabel.textContent = 'Happy';
+                        }
                     }
                 }
 
@@ -217,6 +391,9 @@ document.addEventListener('DOMContentLoaded', () => {
             toggleTtsBtn.textContent = isEnabled ? '🔊 Voice: ON' : '🔇 Voice: OFF';
             toggleTtsBtn.style.color = isEnabled ? 'inherit' : 'var(--text-muted)';
             showBubble(isEnabled ? 'Spoken responses enabled.' : 'Spoken responses muted (text-only mode).');
+            if (isEnabled) {
+                voiceController.speak('Spoken responses enabled. Ready for instructions.').catch(() => {});
+            }
         });
     }
 
@@ -227,39 +404,187 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // 2. Creature Interactions
-    canvas.addEventListener('click', () => {
-        showBubble('Sparkle! ✨ What would you like me to do?');
-        renderer.setVisualState({ emotion: 'happy' });
-    });
+    // 2. Creature Pet Interactions & Trick Stunts
+    const petManager = (typeof PetInteractionManager !== 'undefined')
+        ? new PetInteractionManager()
+        : (window.PetInteractionManager ? new window.PetInteractionManager() : null);
 
-    petBtn.addEventListener('click', () => {
-        showBubble('Hehe, thank you! Ready to work! 🌟');
-        renderer.setVisualState({ emotion: 'happy' });
-    });
+    function handlePetInteraction(customPhrase) {
+        if (petManager && !petManager.canTriggerPet()) {
+            return;
+        }
 
-    toggleDryRunBtn.addEventListener('click', () => {
-        isDryRun = !isDryRun;
-        toggleDryRunBtn.textContent = `Dry-Run: ${isDryRun ? 'ON' : 'OFF'}`;
-        toggleDryRunBtn.style.color = isDryRun ? 'var(--accent-amber)' : 'inherit';
-        showBubble(isDryRun ? 'Dry-run active: tool executions will be simulated.' : 'Real execution mode active.');
-    });
+        const phrase = customPhrase || (petManager ? petManager.getNextAffectionPhrase() : "Aww, that tickles! ✨");
+        
+        // 1. Play real visual pet reaction: heart burst, raised arms, happy curved eyes, blush
+        renderer.setVisualState({ emotion: 'pet' });
+        showBubble(phrase);
+
+        // 2. Audible speech output strictly respecting user's voice setting
+        if (voiceController && voiceController.ttsEnabled) {
+            // Prevent audio overlap on rapid petting: cancel previous speech immediately
+            voiceController.stopSpeaking();
+            voiceController.speak(phrase).catch(() => {});
+        }
+
+        // 3. Forward visual state to floating companion if active
+        if (window.lucyIpc && window.lucyIpc.sendVisualState) {
+            window.lucyIpc.sendVisualState({ emotion: 'pet', speechBubble: phrase });
+        }
+    }
+
+    if (canvas) {
+        canvas.addEventListener('click', () => {
+            handlePetInteraction();
+        });
+    }
+
+    if (petBtn) {
+        petBtn.addEventListener('click', () => {
+            handlePetInteraction();
+        });
+    }
+
+    // Main window trick stunts dropdown
+    const trickMenuBtnMain = document.getElementById('trickMenuBtnMain');
+    const trickDropdownMain = document.getElementById('trickDropdownMain');
+
+    if (trickMenuBtnMain && trickDropdownMain) {
+        trickMenuBtnMain.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isVisible = trickDropdownMain.style.display === 'block';
+            trickDropdownMain.style.display = isVisible ? 'none' : 'block';
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('#trickMenuBtnMain') && !e.target.closest('#trickDropdownMain')) {
+                trickDropdownMain.style.display = 'none';
+            }
+        });
+
+        const trickButtons = trickDropdownMain.querySelectorAll('.main-trick-opt');
+        trickButtons.forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const trickName = btn.getAttribute('data-trick');
+                trickDropdownMain.style.display = 'none';
+                if (trickName && typeof renderer.playTrick === 'function') {
+                    renderer.playTrick(trickName);
+                    const trickDef = petManager ? petManager.getTrick(trickName) : null;
+                    const msg = trickDef ? trickDef.message : `Playing ${trickName}! ✨`;
+                    showBubble(msg);
+
+                    if (voiceController && voiceController.ttsEnabled) {
+                        voiceController.stopSpeaking();
+                        voiceController.speak(msg).catch(() => {});
+                    }
+
+                    if (window.lucyIpc && window.lucyIpc.playCompanionTrick) {
+                        window.lucyIpc.playCompanionTrick(trickName).catch(() => {});
+                    }
+                }
+            });
+        });
+    }
+
+    // Listen for pet interactions originating from desktop floating companion
+    if (window.lucyIpc && window.lucyIpc.onPetInteraction) {
+        window.lucyIpc.onPetInteraction((data) => {
+            const phrase = data?.phrase || (petManager ? petManager.getNextAffectionPhrase() : "Aww, that tickles! ✨");
+            if (voiceController && voiceController.ttsEnabled) {
+                voiceController.stopSpeaking();
+                voiceController.speakResponse(phrase).catch(() => {});
+            }
+        });
+    }
+
+    function syncDryRunUI() {
+        if (toggleDryRunBtn) {
+            toggleDryRunBtn.textContent = `Dry-Run: ${isDryRun ? 'ON' : 'OFF'}`;
+            toggleDryRunBtn.style.color = isDryRun ? 'var(--accent-amber)' : 'inherit';
+        }
+        const toggleDryRunSettingsBtn = document.getElementById('toggleDryRunSettingsBtn');
+        if (toggleDryRunSettingsBtn) {
+            toggleDryRunSettingsBtn.textContent = `Dry-Run: ${isDryRun ? 'ON' : 'OFF'}`;
+            toggleDryRunSettingsBtn.style.color = isDryRun ? 'var(--accent-amber)' : 'inherit';
+            toggleDryRunSettingsBtn.style.borderColor = isDryRun ? 'rgba(255, 184, 0, 0.4)' : '';
+        }
+    }
+
+    if (toggleDryRunBtn) {
+        toggleDryRunBtn.addEventListener('click', () => {
+            isDryRun = !isDryRun;
+            syncDryRunUI();
+            showBubble(isDryRun ? 'Dry-run active: tool executions will be simulated.' : 'Real execution mode active.');
+        });
+    }
 
     // 2b. Floating Fairy Companion Lifecycle Controller
     let isFairyTransitioning = false;
     let isFairyFloating = false;
-    const creatureStage = document.getElementById('creatureStage');
     const inlineReturnBtn = document.getElementById('inlineReturnBtn');
     const inlineSummonBtn = document.getElementById('inlineSummonBtn');
+
+    // Centralized Authoritative Companion UI Synchronization
+    function syncCompanionUI(isFloating, options = {}) {
+        isFairyFloating = Boolean(isFloating);
+
+        // 1. Sidebar Primary Toggle Button
+        if (toggleFloatingBtn) {
+            toggleFloatingBtn.textContent = isFairyFloating ? '↩️ Dock Pet' : '🪟 Float Pet';
+            toggleFloatingBtn.title = isFairyFloating ? 'Dock Lucy back into main application' : 'Float companion to desktop';
+            toggleFloatingBtn.disabled = false;
+            toggleFloatingBtn.classList.toggle('active', isFairyFloating);
+        }
+
+        // 2. Settings Companion Toggle Button
+        const settingsToggleFloat = document.getElementById('settingsToggleFloatBtn');
+        if (settingsToggleFloat) {
+            settingsToggleFloat.textContent = isFairyFloating ? '↩️ Dock Pet to App' : '🪟 Float Pet to Desktop';
+            settingsToggleFloat.title = isFairyFloating ? 'Dock Lucy back into main application' : 'Float companion to desktop';
+            settingsToggleFloat.disabled = false;
+            settingsToggleFloat.classList.toggle('active', isFairyFloating);
+        }
+
+        // 3. Embedded Creature Stage & Renderer Lifecycle
+        if (creatureStage) {
+            if (isFairyFloating) {
+                creatureStage.classList.remove('fairy-flying-out', 'fairy-flying-in');
+                creatureStage.classList.add('fairy-on-desktop');
+                renderer.stop();
+            } else {
+                creatureStage.classList.remove('fairy-flying-out', 'fairy-flying-in', 'fairy-on-desktop');
+                renderer.start();
+                if (options.playLanding) {
+                    renderer.setVisualState({ emotion: 'landing' });
+                    showBubble("I'm back! Ready to assist. ✨");
+                    if (typeof resizeMainCompanionCanvas === 'function') {
+                        resizeMainCompanionCanvas();
+                    }
+                    if (voiceController && voiceController.ttsEnabled) {
+                        voiceController.speak("I'm back! Ready to assist.").catch(() => {});
+                    }
+                    setTimeout(() => {
+                        renderer.setVisualState({ emotion: 'happy' });
+                    }, 500);
+                }
+            }
+        }
+    }
 
     async function floatFairyToDesktop() {
         if (isFairyTransitioning || isFairyFloating) return;
         isFairyTransitioning = true;
         if (toggleFloatingBtn) toggleFloatingBtn.disabled = true;
+        const settingsToggleFloat = document.getElementById('settingsToggleFloatBtn');
+        if (settingsToggleFloat) settingsToggleFloat.disabled = true;
 
         // 1. Fairy acknowledges and plays takeoff flight
         renderer.setVisualState({ emotion: 'takeoff' });
         showBubble('Taking flight to your desktop! ✨');
+        if (voiceController && voiceController.ttsEnabled) {
+            voiceController.speak("Taking flight to your desktop!").catch(() => {});
+        }
 
         // 2. Animate embedded stage flight out
         if (creatureStage) {
@@ -273,33 +598,24 @@ document.addEventListener('DOMContentLoaded', () => {
             await window.lucyIpc.toggleCompanionWindow({ action: 'float' });
         }
 
-        // 4. Mark embedded stage as floating on desktop
-        if (creatureStage) {
-            creatureStage.classList.remove('fairy-flying-out');
-            creatureStage.classList.add('fairy-on-desktop');
-        }
-        renderer.stop(); // Stop embedded loop to conserve resources
-
-        isFairyFloating = true;
-        if (toggleFloatingBtn) {
-            toggleFloatingBtn.textContent = '↩️ Dock Pet';
-            toggleFloatingBtn.title = 'Dock Lucy back into main application';
-            toggleFloatingBtn.disabled = false;
-        }
+        // 4. Update authoritative UI state across all buttons & stage
+        syncCompanionUI(true);
         isFairyTransitioning = false;
     }
 
-    async function dockFairyToApp() {
+    async function dockFairyToApp(options = {}) {
         if (isFairyTransitioning || !isFairyFloating) return;
         isFairyTransitioning = true;
         if (toggleFloatingBtn) toggleFloatingBtn.disabled = true;
+        const settingsToggleFloat = document.getElementById('settingsToggleFloatBtn');
+        if (settingsToggleFloat) settingsToggleFloat.disabled = true;
 
-        // 1. Request floating window to return and hide
-        if (window.lucyIpc && window.lucyIpc.toggleCompanionWindow) {
+        // 1. Request floating window to return and hide if not already requested
+        if (!options.alreadyDocked && window.lucyIpc && window.lucyIpc.toggleCompanionWindow) {
             await window.lucyIpc.toggleCompanionWindow({ action: 'dock' });
         }
 
-        // 2. Prepare embedded stage for landing
+        // 2. Prepare embedded stage for landing animation
         if (creatureStage) {
             creatureStage.classList.remove('fairy-on-desktop');
             creatureStage.classList.add('fairy-flying-in');
@@ -309,20 +625,18 @@ document.addEventListener('DOMContentLoaded', () => {
         renderer.start();
         renderer.setVisualState({ emotion: 'landing' });
         showBubble("I'm back! Ready to assist. ✨");
+        if (typeof resizeMainCompanionCanvas === 'function') {
+            resizeMainCompanionCanvas();
+        }
+        if (voiceController && voiceController.ttsEnabled) {
+            voiceController.speak("I'm back! Ready to assist.").catch(() => {});
+        }
 
         await new Promise((r) => setTimeout(r, 500));
 
-        if (creatureStage) {
-            creatureStage.classList.remove('fairy-flying-in');
-        }
+        // 4. Update authoritative UI state across all buttons & stage
+        syncCompanionUI(false);
         renderer.setVisualState({ emotion: 'happy' });
-
-        isFairyFloating = false;
-        if (toggleFloatingBtn) {
-            toggleFloatingBtn.textContent = '🪟 Float Pet';
-            toggleFloatingBtn.title = 'Float companion to desktop';
-            toggleFloatingBtn.disabled = false;
-        }
         isFairyTransitioning = false;
     }
 
@@ -330,12 +644,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // Query initial status on startup
         if (window.lucyIpc && window.lucyIpc.getCompanionStatus) {
             window.lucyIpc.getCompanionStatus().then((res) => {
-                if (res && res.isOpen) {
-                    isFairyFloating = true;
-                    if (creatureStage) creatureStage.classList.add('fairy-on-desktop');
-                    renderer.stop();
-                    toggleFloatingBtn.textContent = '↩️ Dock Pet';
-                    toggleFloatingBtn.title = 'Dock Lucy back into main application';
+                if (res && typeof res.isOpen === 'boolean') {
+                    syncCompanionUI(res.isOpen);
                 }
             }).catch(() => {});
         }
@@ -364,15 +674,17 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (window.lucyIpc && window.lucyIpc.onCompanionWindowToggled) {
-            window.lucyIpc.onCompanionWindowToggled(async ({ isOpen }) => {
-                if (!isOpen && isFairyFloating) {
-                    await dockFairyToApp();
-                } else if (isOpen && !isFairyFloating) {
-                    isFairyFloating = true;
-                    if (creatureStage) creatureStage.classList.add('fairy-on-desktop');
-                    renderer.stop();
-                    toggleFloatingBtn.textContent = '↩️ Dock Pet';
-                    toggleFloatingBtn.title = 'Dock Lucy back into main application';
+            window.lucyIpc.onCompanionWindowToggled(async ({ isOpen, returning }) => {
+                if (!isOpen) {
+                    if (isFairyFloating) {
+                        await dockFairyToApp({ alreadyDocked: Boolean(returning) });
+                    } else {
+                        syncCompanionUI(false, { playLanding: Boolean(returning) });
+                    }
+                } else if (isOpen) {
+                    if (!isFairyFloating) {
+                        syncCompanionUI(true);
+                    }
                 }
             });
         }
@@ -400,6 +712,23 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
         taskFeed.appendChild(entry);
         taskFeed.scrollTop = taskFeed.scrollHeight;
+
+        // Mirror execution step receipts to the Actions view timeline
+        const actionsFeed = document.getElementById('actionsTimelineFeed');
+        if (actionsFeed) {
+            const emptyNotice = actionsFeed.querySelector('div[style*="text-align: center"]');
+            if (emptyNotice) emptyNotice.remove();
+            const actionEntry = document.createElement('div');
+            actionEntry.className = `log-entry ${type}`;
+            actionEntry.innerHTML = `
+                <div class="log-meta">
+                    <span>${escapeHtml(title)}</span>
+                    <span>${escapeHtml(meta || new Date().toLocaleTimeString())}</span>
+                </div>
+                <div style="font-size: 11px; white-space: pre-wrap; word-break: break-word;">${escapeHtml(message)}</div>
+            `;
+            actionsFeed.prepend(actionEntry);
+        }
     }
 
     function escapeHtml(str) {
@@ -599,6 +928,11 @@ document.addEventListener('DOMContentLoaded', () => {
             renderer.setVisualState({ emotion: 'worried' });
             statusLabel.textContent = 'FAILED';
             statusDot.style.background = 'var(--accent-red)';
+            const errMsg = `I encountered an issue executing that command: ${err.message || 'Execution halted.'}`;
+            showBubble(errMsg);
+            if (voiceController && voiceController.ttsEnabled) {
+                voiceController.speakResponse(errMsg).catch(() => {});
+            }
         } finally {
             currentActiveTaskId = null;
             if (cancelStreamBtn) cancelStreamBtn.style.display = 'none';
@@ -626,7 +960,11 @@ document.addEventListener('DOMContentLoaded', () => {
             renderer.setVisualState({ emotion: 'curious' });
             statusLabel.textContent = 'CANCELLED';
             statusDot.style.background = 'var(--accent-amber)';
-            showBubble('Response was cancelled.');
+            const cancelMsg = 'Response was cancelled.';
+            showBubble(cancelMsg);
+            if (voiceController && voiceController.ttsEnabled) {
+                voiceController.speak(cancelMsg).catch(() => {});
+            }
             return;
         }
 
@@ -636,11 +974,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 activeStreamingEntry = null;
                 streamingBuffer = '';
             }
-            appendFeedEntry('Task Failed', response.error || 'Execution stopped', 'error', 'Verification Failed');
+            const failReason = response.error || response.replyText || 'Execution stopped';
+            appendFeedEntry('Task Failed', failReason, 'error', 'Verification Failed');
             renderer.setVisualState({ emotion: 'worried' });
             statusLabel.textContent = 'FAILED';
             statusDot.style.background = 'var(--accent-red)';
-            showBubble('I hit a snag. Please review the activity log.');
+            const failSpeech = response.replyText || (response.error ? `I hit a snag: ${response.error}` : 'I hit a snag executing that task. Please review the activity log.');
+            showBubble(failSpeech);
+            if (voiceController && voiceController.ttsEnabled) {
+                voiceController.speakResponse(failSpeech).catch(() => {});
+            }
+            loadRoutingDiagnostics();
             return;
         }
 
@@ -681,6 +1025,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // Finalize streaming entry or add completed message
+        const completedReply = response.replyText || streamingBuffer || (response.executedSteps && response.executedSteps.length ? 'All planned steps verified and completed!' : 'Task finished successfully.');
         if (activeStreamingEntry) {
             activeStreamingEntry.className = 'log-entry normal';
             activeStreamingEntry.innerHTML = `
@@ -688,24 +1033,25 @@ document.addEventListener('DOMContentLoaded', () => {
                     <span>Task Completed</span>
                     <span>Verified Complete</span>
                 </div>
-                <div style="white-space: pre-wrap; word-break: break-word;">${escapeHtml(response.replyText || streamingBuffer || 'Task finished successfully.')}</div>
+                <div style="white-space: pre-wrap; word-break: break-word;">${escapeHtml(completedReply)}</div>
             `;
             activeStreamingEntry = null;
             streamingBuffer = '';
         } else {
-            appendFeedEntry('Task Completed', response.replyText || 'Task finished successfully.', 'normal', 'Verified Complete');
+            appendFeedEntry('Task Completed', completedReply, 'normal', 'Verified Complete');
         }
 
         renderer.setVisualState({ emotion: 'happy' });
         statusLabel.textContent = 'COMPLETED';
         statusDot.style.background = 'var(--accent-green)';
-        showBubble(response.replyText || 'All planned steps verified and completed!');
+        showBubble(completedReply);
 
-        if (response.replyText && voiceController && voiceController.ttsEnabled) {
-            voiceController.speakResponse(response.replyText);
+        if (completedReply && voiceController && voiceController.ttsEnabled) {
+            voiceController.speakResponse(completedReply).catch(() => {});
         }
 
         await refreshStatus();
+        loadRoutingDiagnostics();
     }
 
     sendBtn.addEventListener('click', handleCommand);
@@ -776,35 +1122,49 @@ document.addEventListener('DOMContentLoaded', () => {
         'custom-openai': 'gpt-4o-mini'
     };
 
-    // Tab Navigation
-    const settingsTabBtns = document.querySelectorAll('.settings-tab-btn');
+    // Tab Navigation for AI & Sub-Panels
+    const settingsTabBtns = document.querySelectorAll('.settings-tab-btn, .settings-sub-tab-btn');
     const settingsTabContents = document.querySelectorAll('.settings-tab-content');
 
     function switchSettingsTab(targetTabId) {
+        const idMapping = {
+            connections: 'tabConnections',
+            routing: 'tabRouting',
+            diagnostics: 'tabDiagnostics',
+            tabConnections: 'tabConnections',
+            tabRouting: 'tabRouting',
+            tabDiagnostics: 'tabDiagnostics'
+        };
+        const resolvedId = idMapping[targetTabId] || targetTabId;
+
         settingsTabBtns.forEach((btn) => {
-            const isTarget = btn.getAttribute('data-tab') === targetTabId;
+            const tabAttr = btn.getAttribute('data-tab') || btn.getAttribute('data-ai-sub');
+            const isTarget = (tabAttr === targetTabId || btn.getAttribute('data-tab') === resolvedId || btn.getAttribute('data-ai-sub') === targetTabId);
             btn.classList.toggle('active', isTarget);
-            btn.style.background = isTarget ? 'rgba(0, 242, 254, 0.15)' : 'rgba(255,255,255,0.05)';
-            btn.style.borderColor = isTarget ? 'var(--accent-cyan)' : 'var(--bg-card-border)';
-            btn.style.color = isTarget ? 'var(--accent-cyan)' : 'var(--text-dim)';
-        });
-        settingsTabContents.forEach((content) => {
-            content.style.display = content.id === targetTabId ? 'flex' : 'none';
+            if (btn.classList.contains('settings-tab-btn')) {
+                btn.style.background = isTarget ? 'rgba(0, 242, 254, 0.15)' : 'rgba(255,255,255,0.05)';
+                btn.style.borderColor = isTarget ? 'var(--accent-cyan)' : 'var(--bg-card-border)';
+                btn.style.color = isTarget ? 'var(--accent-cyan)' : 'var(--text-muted)';
+            }
         });
 
-        if (targetTabId === 'tabConnections') {
+        settingsTabContents.forEach((content) => {
+            content.style.display = (content.id === resolvedId) ? 'flex' : 'none';
+        });
+
+        if (resolvedId === 'tabConnections') {
             loadConnectionsList();
-        } else if (targetTabId === 'tabRouting') {
+        } else if (resolvedId === 'tabRouting') {
             loadRoutingConfig();
-        } else if (targetTabId === 'tabDiagnostics') {
+        } else if (resolvedId === 'tabDiagnostics') {
             loadRoutingDiagnostics();
         }
     }
 
     settingsTabBtns.forEach((btn) => {
         btn.addEventListener('click', () => {
-            const tabId = btn.getAttribute('data-tab');
-            switchSettingsTab(tabId);
+            const tabId = btn.getAttribute('data-ai-sub') || btn.getAttribute('data-tab');
+            if (tabId) switchSettingsTab(tabId);
         });
     });
 
@@ -937,19 +1297,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const statusColors = {
                 connected: 'var(--accent-green)',
+                unverified: 'var(--accent-cyan)',
                 configured: 'var(--accent-cyan)',
+                not_configured: 'var(--text-dim)',
                 rate_limited: 'var(--accent-amber)',
                 temporarily_unavailable: 'var(--accent-amber)',
                 invalid_credential: 'var(--accent-red)',
+                model_unavailable: 'var(--accent-amber)',
+                policy_ineligible: 'var(--accent-red)',
+                failed: 'var(--accent-red)',
                 disabled: 'var(--text-dim)'
             };
 
             const statusLabels = {
-                connected: '● Connected',
-                configured: '● Ready',
+                connected: '● Validated / Ready',
+                unverified: '○ Unverified Key',
+                configured: '○ Unverified Key',
+                not_configured: '○ Not Configured',
                 rate_limited: '● Rate Limited',
-                temporarily_unavailable: '● Unavailable',
+                temporarily_unavailable: '● Unreachable',
                 invalid_credential: '● Invalid Key',
+                model_unavailable: '● Model Unavailable',
+                policy_ineligible: '● Ineligible (Paid)',
+                failed: '● Request Failed',
                 disabled: '○ Disabled'
             };
 
@@ -1179,11 +1549,17 @@ document.addEventListener('DOMContentLoaded', () => {
                     } else {
                         diagnosticsFeed.innerHTML = events.slice().reverse().map((ev) => {
                             const timeStr = new Date(ev.timestamp).toLocaleTimeString();
-                            const isFail = ev.outcome === 'failed' || ev.fallbacks?.length > 0;
-                            const outcomeColor = ev.outcome === 'success' ? 'var(--accent-green)' : (isFail ? 'var(--accent-amber)' : 'var(--text-main)');
+                            const isFail = ev.outcome === 'failed' || ev.outcome === 'no_route' || ev.fallbacks?.length > 0;
+                            const outcomeColor = (ev.outcome === 'success' || ev.outcome === 'failover_success')
+                                ? 'var(--accent-green)'
+                                : (ev.outcome === 'no_route' ? 'var(--accent-red)' : (isFail ? 'var(--accent-amber)' : 'var(--text-main)'));
                             const fallbacksStr = ev.fallbacks && ev.fallbacks.length > 0
                                 ? `<div style="color: var(--accent-amber); margin-top: 2px;">↳ Fallback attempts: ${ev.fallbacks.map((f) => `${escapeHtml(f.provider)} (${escapeHtml(f.reason)})`).join(' → ')}</div>`
                                 : '';
+
+                            const provDisplay = ev.provider ? escapeHtml(ev.provider) : (ev.outcome === 'no_route' ? 'No Eligible Route' : 'Unknown Provider');
+                            const modelDisplay = ev.model && ev.model !== 'none' ? ` (${escapeHtml(ev.model)})` : '';
+                            const reasonDisplay = escapeHtml(ev.reason || ev.error || 'No route available');
 
                             return `
                                 <div style="border-bottom: 1px solid rgba(255,255,255,0.05); padding: 4px 0;">
@@ -1192,7 +1568,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                         <span style="color: ${outcomeColor}; font-weight: 700;">${escapeHtml(ev.outcome || 'routed')}</span>
                                     </div>
                                     <div style="color: var(--text-main);">
-                                        <strong>${escapeHtml(ev.provider)}</strong> (${escapeHtml(ev.model)}) — <span style="color: var(--text-dim);">${escapeHtml(ev.reason || '')}</span>
+                                        <strong>${provDisplay}</strong>${modelDisplay} — <span style="color: var(--text-dim);">${reasonDisplay}</span>
                                     </div>
                                     ${fallbacksStr}
                                 </div>
@@ -1212,13 +1588,31 @@ document.addEventListener('DOMContentLoaded', () => {
     function populateVoiceOptions(selectedVoice = '') {
         if (!settingVoiceSelect) return;
         const synth = window.speechSynthesis;
-        if (!synth || typeof synth.getVoices !== 'function') return;
-        const voices = synth.getVoices() || [];
-        settingVoiceSelect.innerHTML = '<option value="">Default (Auto-select female/natural voice)</option>';
+        const voices = synth && typeof synth.getVoices === 'function' ? (synth.getVoices() || []) : [];
+        settingVoiceSelect.innerHTML = '';
+
+        const optDefault = document.createElement('option');
+        optDefault.value = '';
+        optDefault.textContent = 'Default (Kokoro-82M Bella — Soft & Natural Fairy)';
+        if (!selectedVoice) optDefault.selected = true;
+        settingVoiceSelect.appendChild(optDefault);
+
+        const optBella = document.createElement('option');
+        optBella.value = 'af_bella';
+        optBella.textContent = 'Kokoro-82M — Bella (Soft, Warm & Natural Fairy)';
+        if (selectedVoice === 'af_bella') optBella.selected = true;
+        settingVoiceSelect.appendChild(optBella);
+
+        const optSky = document.createElement('option');
+        optSky.value = 'af_sky';
+        optSky.textContent = 'Kokoro-82M — Sky (Bright, Ethereal & Melodic Fairy)';
+        if (selectedVoice === 'af_sky') optSky.selected = true;
+        settingVoiceSelect.appendChild(optSky);
+
         for (const v of voices) {
             const opt = document.createElement('option');
             opt.value = v.name;
-            opt.textContent = `${v.name} (${v.lang || 'en'}) [Local System Voice]${v.default ? ' ★' : ''}`;
+            opt.textContent = `${v.name} (${v.lang || 'en'}) [Windows SAPI5]${v.default ? ' ★' : ''}`;
             if (v.name === selectedVoice) {
                 opt.selected = true;
             }
@@ -1263,6 +1657,25 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    if (settingWakeWordEnabled) {
+        settingWakeWordEnabled.addEventListener('change', () => {
+            handleWakeWordToggle(settingWakeWordEnabled.checked);
+        });
+    }
+
+    if (settingWakeWordSensitivity) {
+        settingWakeWordSensitivity.addEventListener('input', () => {
+            const val = parseFloat(settingWakeWordSensitivity.value) || 0.5;
+            if (wakeWordSensitivityVal) {
+                wakeWordSensitivityVal.textContent = val.toFixed(2);
+            }
+            if (voiceController) {
+                voiceController.setWakeWordSensitivity(val);
+            }
+            persistVoiceSettings();
+        });
+    }
+
     async function persistVoiceSettings() {
         if (!window.lucyIpc || typeof window.lucyIpc.setVoiceConfig !== 'function') return;
         const config = {
@@ -1272,12 +1685,27 @@ document.addEventListener('DOMContentLoaded', () => {
             volume: settingVoiceVolume ? parseFloat(settingVoiceVolume.value) : 1.0,
             ttsEnabled: settingTtsEnabled ? settingTtsEnabled.checked : true,
             wakeWordEnabled: settingWakeWordEnabled ? settingWakeWordEnabled.checked : false,
-            wakeWordSensitivity: settingWakeWordSensitivity ? parseFloat(settingWakeWordSensitivity.value) : 0.5
+            wakeWordSensitivity: settingWakeWordSensitivity ? parseFloat(settingWakeWordSensitivity.value) : 0.5,
+            continuousConversation: settingContinuousConversation ? settingContinuousConversation.checked : true,
+            bargeInEnabled: settingBargeInEnabled ? settingBargeInEnabled.checked : true,
+            vadSensitivity: settingVadSensitivity ? settingVadSensitivity.value : 'normal'
         };
         try {
             await window.lucyIpc.setVoiceConfig(config);
             if (voiceController) {
                 voiceController.setVoiceConfig(config);
+                if (config.continuousConversation !== undefined) {
+                    voiceController.setContinuousConversation(config.continuousConversation);
+                }
+                if (config.bargeInEnabled !== undefined) {
+                    voiceController.setBargeInEnabled(config.bargeInEnabled);
+                }
+                if (config.vadSensitivity !== undefined) {
+                    voiceController.setVadSensitivity(config.vadSensitivity);
+                }
+                if (config.wakeWordSensitivity !== undefined) {
+                    voiceController.setWakeWordSensitivity(config.wakeWordSensitivity);
+                }
             }
         } catch (_) {}
     }
@@ -1295,17 +1723,28 @@ document.addEventListener('DOMContentLoaded', () => {
             const rate = settingVoiceRate ? parseFloat(settingVoiceRate.value) : 1.02;
             const volume = settingVoiceVolume ? parseFloat(settingVoiceVolume.value) : 1.0;
 
-            previewVoiceBtn.textContent = '⏹ Stop';
+            previewVoiceBtn.textContent = '⏳ Loading...';
             try {
-                await voiceController.speak('Hello! I am Lucy, your celestial fairy companion. Ready to assist you!', {
+                const phrase = 'Hello! I am Lucy, your celestial fairy companion. Ready to assist you!';
+                await voiceController.speak(phrase, {
                     voiceName: selectedVoice,
+                    voice: selectedVoice,
                     pitch,
                     rate,
-                    volume
+                    volume,
+                    isPreview: true,
+                    force: true,
+                    onStart: () => {
+                        previewVoiceBtn.textContent = '⏹ Stop';
+                    }
                 });
-            } catch (_) {
+            } catch (err) {
+                previewVoiceBtn.textContent = '⚠️ Failed';
+                setTimeout(() => { previewVoiceBtn.textContent = '▶ Preview'; }, 2000);
             } finally {
-                previewVoiceBtn.textContent = '▶ Preview';
+                if (previewVoiceBtn.textContent !== '⚠️ Failed') {
+                    previewVoiceBtn.textContent = '▶ Preview';
+                }
             }
         });
     }
@@ -1342,72 +1781,285 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     }
 
-    async function openSettings() {
-        switchSettingsTab('tabConnections');
-        await loadConnectionsList();
-
-        // Load persisted voice configuration
-        if (window.lucyIpc && typeof window.lucyIpc.getVoiceConfig === 'function') {
-            try {
-                const voiceRes = await window.lucyIpc.getVoiceConfig();
-                if (voiceRes && voiceRes.config) {
-                    const vc = voiceRes.config;
-                    if (settingVoicePitch) {
-                        settingVoicePitch.value = vc.pitch ?? 1.05;
-                        if (voicePitchVal) voicePitchVal.textContent = Number(vc.pitch ?? 1.05).toFixed(2);
-                    }
-                    if (settingVoiceRate) {
-                        settingVoiceRate.value = vc.rate ?? 1.02;
-                        if (voiceRateVal) voiceRateVal.textContent = Number(vc.rate ?? 1.02).toFixed(2);
-                    }
-                    if (settingVoiceVolume) {
-                        settingVoiceVolume.value = vc.volume ?? 1.0;
-                        if (voiceVolumeVal) voiceVolumeVal.textContent = Math.round((vc.volume ?? 1.0) * 100) + '%';
-                    }
-                    if (settingTtsEnabled) {
-                        settingTtsEnabled.checked = vc.ttsEnabled !== false;
-                    }
-                    if (settingWakeWordEnabled) {
-                        settingWakeWordEnabled.checked = vc.wakeWordEnabled === true;
-                        if (wakeWordOptionsGroup) {
-                            wakeWordOptionsGroup.style.display = settingWakeWordEnabled.checked ? 'flex' : 'none';
-                        }
-                    }
-                    if (settingWakeWordSensitivity) {
-                        settingWakeWordSensitivity.value = vc.wakeWordSensitivity ?? 0.5;
-                        if (wakeWordSensitivityVal) {
-                            wakeWordSensitivityVal.textContent = Number(vc.wakeWordSensitivity ?? 0.5).toFixed(2);
-                        }
-                    }
-                    populateVoiceOptions(vc.voiceName || vc.preferredVoiceName || '');
-                }
-            } catch {
-                populateVoiceOptions();
-            }
+    function updateEngineUiVisibility(engine) {
+        const kokoroContainer = document.getElementById('kokoroPersonaContainer');
+        const sapi5Container = document.getElementById('sapi5VoiceContainer');
+        if (engine === 'windows-speech') {
+            if (kokoroContainer) kokoroContainer.style.display = 'none';
+            if (sapi5Container) sapi5Container.style.display = 'flex';
         } else {
-            populateVoiceOptions();
+            if (kokoroContainer) kokoroContainer.style.display = 'flex';
+            if (sapi5Container) sapi5Container.style.display = 'none';
         }
+    }
 
-        if (settingBackgroundMode && window.lucyIpc && typeof window.lucyIpc.getAppSettings === 'function') {
+    function updateAutomationModeUI(mode) {
+        const automationTierTag = document.getElementById('automationTierTag');
+        if (!automationTierTag) return;
+        if (mode === 'foreground_required') {
+            automationTierTag.textContent = 'FOREGROUND SIMULATION';
+            automationTierTag.style.color = 'var(--accent-amber)';
+            automationTierTag.style.borderColor = 'rgba(255, 184, 0, 0.3)';
+            automationTierTag.style.background = 'rgba(255, 184, 0, 0.1)';
+        } else {
+            automationTierTag.textContent = 'NON-INTRUSIVE (TIER 1-3)';
+            automationTierTag.style.color = 'var(--accent-green)';
+            automationTierTag.style.borderColor = 'rgba(0, 245, 212, 0.3)';
+            automationTierTag.style.background = 'rgba(0, 245, 212, 0.1)';
+        }
+    }
+
+    function updateCloseActionTag(val) {
+        const closeActionTag = document.getElementById('closeActionTag');
+        if (!closeActionTag) return;
+        if (val === 'background') {
+            closeActionTag.textContent = 'Background Mode';
+            closeActionTag.style.color = 'var(--accent-cyan)';
+        } else if (val === 'minimize_to_tray') {
+            closeActionTag.textContent = 'Tray Only';
+            closeActionTag.style.color = 'var(--accent-purple)';
+        } else if (val === 'exit') {
+            closeActionTag.textContent = 'Direct Exit';
+            closeActionTag.style.color = 'var(--accent-red)';
+        }
+    }
+
+    async function refreshGeneralSettings() {
+        if (window.lucyIpc && typeof window.lucyIpc.getAppSettings === 'function') {
             try {
                 const appCfg = await window.lucyIpc.getAppSettings();
                 if (appCfg && appCfg.settings) {
-                    settingBackgroundMode.checked = Boolean(appCfg.settings.backgroundMode);
+                    const action = appCfg.settings.closeAction || (appCfg.settings.backgroundMode ? 'background' : 'exit');
+                    const settingCloseAction = document.getElementById('settingCloseAction');
+                    if (settingCloseAction) settingCloseAction.value = action;
+                    if (settingCloseActionModal) settingCloseActionModal.value = action;
+                    updateCloseActionTag(action);
+
+                    const checkBg = document.getElementById('checkBackgroundListening');
+                    const isBgListening = Boolean(appCfg.settings.backgroundListening);
+                    if (checkBg) checkBg.checked = isBgListening;
+                    if (settingBackgroundListeningModal) settingBackgroundListeningModal.checked = isBgListening;
+
+                    const autoMode = appCfg.settings.automationMode || 'non_intrusive';
+                    const settingAutoMode = document.getElementById('settingAutomationMode');
+                    if (settingAutoMode) settingAutoMode.value = autoMode;
+                    updateAutomationModeUI(autoMode);
                 }
             } catch (_) {}
         }
-        settingsModal.classList.add('active');
-        renderer.setVisualState({ emotion: 'curious' });
+
+        if (lifecycleStateBadge && window.lucyIpc && typeof window.lucyIpc.getLifecycleState === 'function') {
+            try {
+                const ls = await window.lucyIpc.getLifecycleState();
+                if (ls && ls.currentState) {
+                    lifecycleStateBadge.textContent = ls.currentState.replace(/_/g, ' ').toUpperCase();
+                }
+            } catch (_) {}
+        }
+    }
+
+    async function refreshVoiceSettingsUI() {
+        if (!window.lucyIpc || typeof window.lucyIpc.getVoiceConfig !== 'function') {
+            populateVoiceOptions();
+            return;
+        }
+
+        try {
+            const voiceRes = await window.lucyIpc.getVoiceConfig();
+            if (voiceRes && voiceRes.config) {
+                const vc = voiceRes.config;
+                const engine = vc.ttsEngine || 'kokoro';
+                const selectEngine = document.getElementById('settingsTtsEngineSelect');
+                if (selectEngine) selectEngine.value = engine;
+                updateEngineUiVisibility(engine);
+
+                const selectKokoroVoice = document.getElementById('settingsKokoroVoiceSelect');
+                if (selectKokoroVoice && vc.kokoroVoice) {
+                    selectKokoroVoice.value = vc.kokoroVoice;
+                }
+
+                populateVoiceOptions(vc.voiceName || vc.preferredVoiceName || '');
+
+                const rate = vc.rate ?? 1.0;
+                const sliderRate = document.getElementById('sliderVoiceRate');
+                if (sliderRate) sliderRate.value = rate;
+                if (settingVoiceRate) settingVoiceRate.value = rate;
+                const rateLabel = document.getElementById('rateLabelVal');
+                if (rateLabel) rateLabel.textContent = `${Number(rate).toFixed(2)}x`;
+                if (voiceRateVal) voiceRateVal.textContent = Number(rate).toFixed(2);
+
+                const pitch = vc.pitch ?? 1.05;
+                const sliderPitch = document.getElementById('sliderVoicePitch');
+                if (sliderPitch) sliderPitch.value = pitch;
+                if (settingVoicePitch) settingVoicePitch.value = pitch;
+                const pitchLabel = document.getElementById('pitchLabelVal');
+                if (pitchLabel) pitchLabel.textContent = `${Number(pitch).toFixed(2)}x`;
+                if (voicePitchVal) voicePitchVal.textContent = Number(pitch).toFixed(2);
+
+                const volume = vc.volume ?? 1.0;
+                const sliderVol = document.getElementById('sliderVoiceVolume');
+                if (sliderVol) sliderVol.value = volume;
+                if (settingVoiceVolume) settingVoiceVolume.value = volume;
+                const volLabel = document.getElementById('volumeLabelVal');
+                if (volLabel) volLabel.textContent = `${Math.round(volume * 100)}%`;
+                if (voiceVolumeVal) voiceVolumeVal.textContent = `${Math.round(volume * 100)}%`;
+
+                const ttsCheck = document.getElementById('settingTtsEnabled');
+                if (ttsCheck) ttsCheck.checked = vc.ttsEnabled !== false;
+
+                const wakeActive = Boolean(vc.wakeWordEnabled);
+                const checkWakeWord = document.getElementById('checkWakeWordActive');
+                if (checkWakeWord) checkWakeWord.checked = wakeActive;
+                if (settingWakeWordEnabled) settingWakeWordEnabled.checked = wakeActive;
+                syncWakeWordUI(wakeActive);
+
+                const wakeSens = vc.wakeWordSensitivity ?? 0.5;
+                if (settingWakeWordSensitivity) settingWakeWordSensitivity.value = wakeSens;
+                if (wakeWordSensitivityVal) wakeWordSensitivityVal.textContent = Number(wakeSens).toFixed(2);
+
+                if (settingContinuousConversation && vc.continuousConversation !== undefined) {
+                    settingContinuousConversation.checked = vc.continuousConversation !== false;
+                }
+                if (settingBargeInEnabled && vc.bargeInEnabled !== undefined) {
+                    settingBargeInEnabled.checked = vc.bargeInEnabled !== false;
+                }
+                if (settingVadSensitivity && vc.vadSensitivity) {
+                    settingVadSensitivity.value = vc.vadSensitivity;
+                }
+            } else {
+                populateVoiceOptions();
+            }
+        } catch (_) {
+            populateVoiceOptions();
+        }
+    }
+
+    function switchSettingsCenterTab(targetTabId) {
+        if (!targetTabId) targetTabId = 'general';
+        const aliasMap = {
+            general: 'general',
+            system: 'general',
+            companion: 'companion',
+            pet: 'companion',
+            floating: 'companion',
+            viewCompanionSettings: 'companion',
+            voice: 'voice',
+            audio: 'voice',
+            speech: 'voice',
+            tts: 'voice',
+            ai: 'ai',
+            models: 'ai',
+            connections: 'ai',
+            routing: 'ai',
+            diagnostics: 'ai',
+            tabConnections: 'ai',
+            tabRouting: 'ai',
+            tabDiagnostics: 'ai',
+            handsfree: 'handsfree',
+            handsFree: 'handsfree',
+            'hands-free': 'handsfree',
+            wakeword: 'handsfree',
+            vad: 'handsfree',
+            memory: 'memory',
+            privacy: 'memory',
+            automation: 'automation',
+            about: 'about',
+            info: 'about'
+        };
+
+        const resolvedTab = aliasMap[targetTabId] || 'general';
+
+        const tabBtns = document.querySelectorAll('.settings-center-tab-btn');
+        tabBtns.forEach((btn) => {
+            const btnTab = btn.getAttribute('data-settings-tab');
+            const isActive = (btnTab === resolvedTab);
+            btn.classList.toggle('active', isActive);
+            btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+
+        const panes = document.querySelectorAll('.settings-center-pane');
+        panes.forEach((pane) => {
+            const paneTab = pane.getAttribute('data-settings-tab');
+            const isActive = (paneTab === resolvedTab);
+            pane.classList.toggle('active', isActive);
+        });
+
+        const viewport = document.getElementById('settingsCenterViewport');
+        if (viewport) {
+            viewport.scrollTop = 0;
+        }
+
+        if (resolvedTab === 'ai') {
+            if (targetTabId === 'routing' || targetTabId === 'tabRouting') {
+                switchSettingsTab('tabRouting');
+            } else if (targetTabId === 'diagnostics' || targetTabId === 'tabDiagnostics') {
+                switchSettingsTab('tabDiagnostics');
+            } else {
+                switchSettingsTab('tabConnections');
+            }
+        }
+
+        if (resolvedTab === 'general') {
+            refreshGeneralSettings();
+        } else if (resolvedTab === 'companion') {
+            if (typeof window.refreshCompanionSettings === 'function') {
+                window.refreshCompanionSettings();
+            }
+        } else if (resolvedTab === 'voice' || resolvedTab === 'handsfree') {
+            refreshVoiceSettingsUI();
+        } else if (resolvedTab === 'automation') {
+            syncDryRunUI();
+            refreshGeneralSettings();
+        }
+    }
+
+    async function openSettings(targetCategory = 'general') {
+        if (typeof switchJarvisView === 'function') {
+            switchJarvisView('viewSettings');
+        } else {
+            const viewSettings = document.getElementById('viewSettings');
+            if (viewSettings) {
+                document.querySelectorAll('.jarvis-view').forEach((v) => v.classList.remove('active'));
+                viewSettings.classList.add('active');
+            }
+            const tabSettings = document.getElementById('tabNavSettings');
+            if (tabSettings) {
+                document.querySelectorAll('.nav-deck-tab').forEach((t) => t.classList.remove('active'));
+                tabSettings.classList.add('active');
+            }
+        }
+
+        switchSettingsCenterTab(targetCategory || 'general');
+
+        if (renderer && typeof renderer.setVisualState === 'function') {
+            renderer.setVisualState({ emotion: 'curious' });
+        }
     }
 
     function closeSettings() {
-        settingsModal.classList.remove('active');
+        if (settingsModal) {
+            settingsModal.classList.remove('active');
+        }
+        if (typeof switchJarvisView === 'function') {
+            switchJarvisView('viewHome');
+        }
     }
+
+    window.openSettings = openSettings;
+    window.switchSettingsCenterTab = switchSettingsCenterTab;
+
+    // Settings Center Tab Navigation Buttons
+    document.querySelectorAll('.settings-center-tab-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const tab = btn.getAttribute('data-settings-tab');
+            if (tab) switchSettingsCenterTab(tab);
+        });
+    });
 
     const closeSettingsXBtn = document.getElementById('closeSettingsXBtn');
     if (closeSettingsXBtn) closeSettingsXBtn.addEventListener('click', closeSettings);
-    if (hudSettingsBtn) hudSettingsBtn.addEventListener('click', openSettings);
-    if (sidebarSettingsBtn) sidebarSettingsBtn.addEventListener('click', openSettings);
+    if (hudSettingsBtn) hudSettingsBtn.addEventListener('click', () => openSettings('general'));
+    if (sidebarSettingsBtn) sidebarSettingsBtn.addEventListener('click', () => openSettings('general'));
     if (cancelSettingsBtn) cancelSettingsBtn.addEventListener('click', closeSettings);
 
     const handleExitApp = () => {
@@ -1417,27 +2069,196 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     if (explicitExitBtn) explicitExitBtn.addEventListener('click', handleExitApp);
     if (hudExitBtn) hudExitBtn.addEventListener('click', handleExitApp);
+    const btnExplicitExitCompanion = document.getElementById('btnExplicitExitCompanion');
+    if (btnExplicitExitCompanion) btnExplicitExitCompanion.addEventListener('click', handleExitApp);
 
-    if (settingWakeWordEnabled) {
-        settingWakeWordEnabled.addEventListener('change', () => {
-            if (wakeWordOptionsGroup) {
-                wakeWordOptionsGroup.style.display = settingWakeWordEnabled.checked ? 'flex' : 'none';
-            }
-        });
-    }
-
-    if (settingBackgroundMode) {
-        settingBackgroundMode.addEventListener('change', async () => {
+    // General Settings Listeners
+    const settingCloseAction = document.getElementById('settingCloseAction');
+    if (settingCloseAction) {
+        settingCloseAction.addEventListener('change', async () => {
+            const val = settingCloseAction.value;
+            updateCloseActionTag(val);
+            if (settingCloseActionModal) settingCloseActionModal.value = val;
             if (window.lucyIpc && typeof window.lucyIpc.setAppSettings === 'function') {
                 await window.lucyIpc.setAppSettings({
-                    backgroundMode: settingBackgroundMode.checked
+                    closeAction: val,
+                    backgroundMode: val !== 'exit'
                 });
             }
         });
     }
+
+    const checkBackgroundListening = document.getElementById('checkBackgroundListening');
+    if (checkBackgroundListening) {
+        checkBackgroundListening.addEventListener('change', async () => {
+            const val = checkBackgroundListening.checked;
+            if (settingBackgroundListeningModal) settingBackgroundListeningModal.checked = val;
+            if (window.lucyIpc && typeof window.lucyIpc.setAppSettings === 'function') {
+                await window.lucyIpc.setAppSettings({
+                    backgroundListening: val
+                });
+            }
+        });
+    }
+
+    // Voice & Audio Settings Center Listeners
+    const selectEngine = document.getElementById('settingsTtsEngineSelect');
+    if (selectEngine) {
+        selectEngine.addEventListener('change', () => {
+            updateEngineUiVisibility(selectEngine.value);
+            persistVoiceSettings();
+        });
+    }
+
+    const selectKokoroVoice = document.getElementById('settingsKokoroVoiceSelect');
+    if (selectKokoroVoice) {
+        selectKokoroVoice.addEventListener('change', persistVoiceSettings);
+    }
+
+    const sliderVoiceRate = document.getElementById('sliderVoiceRate');
+    if (sliderVoiceRate) {
+        sliderVoiceRate.addEventListener('input', () => {
+            const val = parseFloat(sliderVoiceRate.value);
+            const rateLabel = document.getElementById('rateLabelVal');
+            if (rateLabel) rateLabel.textContent = `${val.toFixed(2)}x`;
+            if (voiceRateVal) voiceRateVal.textContent = val.toFixed(2);
+            if (settingVoiceRate) settingVoiceRate.value = val;
+            persistVoiceSettings();
+        });
+    }
+
+    const sliderVoicePitch = document.getElementById('sliderVoicePitch');
+    if (sliderVoicePitch) {
+        sliderVoicePitch.addEventListener('input', () => {
+            const val = parseFloat(sliderVoicePitch.value);
+            const pitchLabel = document.getElementById('pitchLabelVal');
+            if (pitchLabel) pitchLabel.textContent = `${val.toFixed(2)}x`;
+            if (voicePitchVal) voicePitchVal.textContent = val.toFixed(2);
+            if (settingVoicePitch) settingVoicePitch.value = val;
+            persistVoiceSettings();
+        });
+    }
+
+    const sliderVoiceVolume = document.getElementById('sliderVoiceVolume');
+    if (sliderVoiceVolume) {
+        sliderVoiceVolume.addEventListener('input', () => {
+            const val = parseFloat(sliderVoiceVolume.value);
+            const volLabel = document.getElementById('volumeLabelVal');
+            if (volLabel) volLabel.textContent = `${Math.round(val * 100)}%`;
+            if (voiceVolumeVal) voiceVolumeVal.textContent = `${Math.round(val * 100)}%`;
+            if (settingVoiceVolume) settingVoiceVolume.value = val;
+            if (voiceController && voiceController.synthesis) {
+                voiceController.synthesis.setVoiceConfig({ volume: val });
+            }
+            persistVoiceSettings();
+        });
+    }
+
+    // Hands-Free Settings Center Listeners
+    const checkWakeWordActive = document.getElementById('checkWakeWordActive');
+    if (checkWakeWordActive) {
+        checkWakeWordActive.addEventListener('change', () => {
+            handleWakeWordToggle(checkWakeWordActive.checked);
+        });
+    }
+
+    if (settingWakeWordEnabled) {
+        settingWakeWordEnabled.addEventListener('change', () => {
+            handleWakeWordToggle(settingWakeWordEnabled.checked);
+        });
+    }
+
     if (settingWakeWordSensitivity && wakeWordSensitivityVal) {
         settingWakeWordSensitivity.addEventListener('input', () => {
-            wakeWordSensitivityVal.textContent = Number(settingWakeWordSensitivity.value).toFixed(2);
+            const val = parseFloat(settingWakeWordSensitivity.value) || 0.5;
+            wakeWordSensitivityVal.textContent = val.toFixed(2);
+            if (voiceController) {
+                voiceController.setWakeWordSensitivity(val);
+            }
+            persistVoiceSettings();
+        });
+    }
+
+    if (settingContinuousConversation) {
+        settingContinuousConversation.addEventListener('change', persistVoiceSettings);
+    }
+    if (settingBargeInEnabled) {
+        settingBargeInEnabled.addEventListener('change', persistVoiceSettings);
+    }
+    if (settingVadSensitivity) {
+        settingVadSensitivity.addEventListener('change', persistVoiceSettings);
+    }
+
+    // Memory & Privacy Tab Listeners
+    const btnOpenMemoryVaultModal = document.getElementById('btnOpenMemoryVaultModal');
+    if (btnOpenMemoryVaultModal) {
+        btnOpenMemoryVaultModal.addEventListener('click', () => {
+            if (typeof openMemoryModal === 'function') {
+                openMemoryModal('memories');
+            }
+        });
+    }
+
+    const settingsToggleLongTerm = document.getElementById('settingsToggleLongTerm');
+    if (settingsToggleLongTerm) {
+        settingsToggleLongTerm.addEventListener('change', async () => {
+            if (toggleLongTermCheckbox) toggleLongTermCheckbox.checked = settingsToggleLongTerm.checked;
+            if (window.lucyIpc && typeof window.lucyIpc.setMemoryRetention === 'function') {
+                await window.lucyIpc.setMemoryRetention(settingsToggleLongTerm.checked);
+            }
+        });
+    }
+
+    const settingsExportMemoryBtn = document.getElementById('settingsExportMemoryBtn');
+    if (settingsExportMemoryBtn) {
+        settingsExportMemoryBtn.addEventListener('click', () => {
+            const exportBtn = document.getElementById('exportMemoryBtn');
+            if (exportBtn) exportBtn.click();
+        });
+    }
+
+    const settingsImportMemoryBtn = document.getElementById('settingsImportMemoryBtn');
+    if (settingsImportMemoryBtn) {
+        settingsImportMemoryBtn.addEventListener('click', () => {
+            const importBtn = document.getElementById('importMemoryBtn');
+            if (importBtn) importBtn.click();
+        });
+    }
+
+    const settingsClearWorkingDataBtn = document.getElementById('settingsClearWorkingDataBtn');
+    if (settingsClearWorkingDataBtn) {
+        settingsClearWorkingDataBtn.addEventListener('click', async () => {
+            if (confirm('Purge all working data memories? User-approved and project memories will be preserved.')) {
+                if (window.lucyIpc && typeof window.lucyIpc.clearWorkingMemories === 'function') {
+                    await window.lucyIpc.clearWorkingMemories();
+                    showBubble('Working data memories cleared.');
+                    if (typeof loadMemories === 'function') loadMemories();
+                } else {
+                    showBubble('Working data cache purged.');
+                }
+            }
+        });
+    }
+
+    // Automation Tab Listeners
+    const settingAutomationMode = document.getElementById('settingAutomationMode');
+    if (settingAutomationMode) {
+        settingAutomationMode.addEventListener('change', async () => {
+            const mode = settingAutomationMode.value;
+            updateAutomationModeUI(mode);
+            if (window.lucyIpc && typeof window.lucyIpc.setAppSettings === 'function') {
+                await window.lucyIpc.setAppSettings({ automationMode: mode });
+            }
+            showBubble(`Automation mode set to ${mode === 'non_intrusive' ? 'Non-Intrusive' : 'Foreground Simulation'}.`);
+        });
+    }
+
+    const toggleDryRunSettingsBtn = document.getElementById('toggleDryRunSettingsBtn');
+    if (toggleDryRunSettingsBtn) {
+        toggleDryRunSettingsBtn.addEventListener('click', () => {
+            isDryRun = !isDryRun;
+            syncDryRunUI();
+            showBubble(isDryRun ? 'Dry-run active: tool executions will be simulated.' : 'Real execution mode active.');
         });
     }
 
@@ -1455,23 +2276,87 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 7. Initial Status Refresh & Memory Metrics
     async function refreshStatus() {
+        const homeStatusText = document.getElementById('homeStatusText');
+        const homeActiveProvider = document.getElementById('homeActiveProvider');
+        const homeLatencyMetric = document.getElementById('homeLatencyMetric');
+        const homeTtsStatus = document.getElementById('homeTtsStatus');
+        const homeHeroStatusTag = document.getElementById('homeHeroStatusTag');
+        const homeHeroProvider = document.getElementById('homeHeroProvider');
+        const modelKokoroStatus = document.getElementById('modelStatusKokoro');
+        const modelWhisperStatus = document.getElementById('modelStatusWhisper');
+
+        if (homeStatusText) homeStatusText.textContent = 'ONLINE / READY';
+        if (homeHeroStatusTag) homeHeroStatusTag.textContent = 'ALL SYSTEMS NOMINAL';
+
         if (!window.lucyIpc || typeof window.lucyIpc.getSystemStatus !== 'function') {
             hudProvider.textContent = 'Gemini (Preview)';
             hudMemory.textContent = 'Desktop Ready';
+            if (homeActiveProvider) homeActiveProvider.textContent = 'Gemini (Preview)';
+            if (homeHeroProvider) homeHeroProvider.textContent = 'Gemini (Preview)';
             return;
         }
 
         try {
             const status = await window.lucyIpc.getSystemStatus();
             if (status.ok) {
-                const keyLabel = status.hasKey ? '✓ Active' : '⚠ No Key';
+                let keyLabel = '⚠ Not Configured';
+                if (status.connectionState === 'connected') {
+                    keyLabel = '✓ Validated';
+                } else if (status.connectionState === 'invalid_credential') {
+                    keyLabel = '✗ Invalid Key';
+                } else if (status.connectionState === 'rate_limited') {
+                    keyLabel = '⏳ Rate Limited';
+                } else if (status.connectionState === 'temporarily_unavailable') {
+                    keyLabel = '⚠ Unreachable';
+                } else if (status.connectionState === 'unverified' || status.connectionState === 'configured') {
+                    keyLabel = '○ Unverified Key';
+                } else if (status.hasKey) {
+                    keyLabel = '○ Unverified Key';
+                }
                 const labelPart = status.connectionLabel ? ` [${status.connectionLabel}]` : '';
                 const modePart = status.routingMode ? ` · ${status.routingMode}` : '';
-                hudProvider.textContent = `${status.provider} (${status.model})${labelPart}${modePart} [${keyLabel}]`;
+                const provStr = `${status.provider} (${status.model})${labelPart}${modePart}`;
+                hudProvider.textContent = `${provStr} [${keyLabel}]`;
                 hudPermission.textContent = `${status.permissionMode} (Gated)`;
+                if (homeActiveProvider) homeActiveProvider.textContent = `${provStr} [${keyLabel}]`;
+                if (homeHeroProvider) homeHeroProvider.textContent = `${provStr} [${keyLabel}]`;
             }
         } catch {
             // Keep default
+        }
+
+        // Check Kokoro-82M Local TTS Status
+        if (window.lucyIpc && typeof window.lucyIpc.getKokoroStatus === 'function') {
+            window.lucyIpc.getKokoroStatus().then((k) => {
+                if (k && k.isAvailable) {
+                    if (homeTtsStatus) homeTtsStatus.textContent = 'KOKORO-82M (LOCAL)';
+                    if (modelKokoroStatus) {
+                        modelKokoroStatus.textContent = k.isLoaded ? 'Loaded (In-Memory)' : 'Ready (On-Demand)';
+                        modelKokoroStatus.style.color = 'var(--accent-green)';
+                    }
+                } else {
+                    if (homeTtsStatus) homeTtsStatus.textContent = 'WINDOWS SAPI5';
+                    if (modelKokoroStatus) {
+                        modelKokoroStatus.textContent = 'Unavailable';
+                        modelKokoroStatus.style.color = 'var(--accent-amber)';
+                    }
+                }
+            }).catch(() => {});
+        }
+
+        // Check Whisper.cpp Offline STT Status
+        if (window.lucyIpc && typeof window.lucyIpc.getWhisperStatus === 'function') {
+            window.lucyIpc.getWhisperStatus().then((w) => {
+                if (modelWhisperStatus) {
+                    if (w && w.isAvailable) {
+                        modelWhisperStatus.textContent = 'Available (Offline)';
+                        modelWhisperStatus.style.color = 'var(--accent-green)';
+                    } else {
+                        modelWhisperStatus.textContent = 'Web Speech Mode';
+                        modelWhisperStatus.style.color = 'var(--text-dim)';
+                    }
+                }
+            }).catch(() => {});
         }
 
         try {
@@ -1492,13 +2377,65 @@ document.addEventListener('DOMContentLoaded', () => {
     function switchMemoryTab(tabName) {
         if (tabMemoriesBtn) tabMemoriesBtn.classList.toggle('active', tabName === 'memories');
         if (tabContinuityBtn) tabContinuityBtn.classList.toggle('active', tabName === 'continuity');
+        if (tabProjectsBtn) tabProjectsBtn.classList.toggle('active', tabName === 'projects');
         if (tabAddMemoryBtn) tabAddMemoryBtn.classList.toggle('active', tabName === 'add');
         if (paneMemories) paneMemories.classList.toggle('active', tabName === 'memories');
         if (paneContinuity) paneContinuity.classList.toggle('active', tabName === 'continuity');
+        if (paneProjects) paneProjects.classList.toggle('active', tabName === 'projects');
         if (paneAddMemory) paneAddMemory.classList.toggle('active', tabName === 'add');
 
         if (tabName === 'memories') loadMemories();
         if (tabName === 'continuity') loadInterruptedTasks();
+        if (tabName === 'projects') loadProjectSnapshots();
+    }
+
+    async function loadProjectSnapshots() {
+        if (!projectSnapshotsContainer) return;
+        if (!window.lucyIpc || typeof window.lucyIpc.listProjects !== 'function') {
+            projectSnapshotsContainer.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; padding: 12px;">Project Snapshots unavailable in preview.</div>';
+            return;
+        }
+
+        try {
+            const listRes = await window.lucyIpc.listProjects();
+            const projectIds = (listRes && listRes.ok) ? listRes.projects : [];
+
+            if (projectIds.length === 0) {
+                projectSnapshotsContainer.innerHTML = '<div style="color: var(--text-dim); font-size: 12px; text-align: center; padding: 24px;">No project snapshots recorded yet. When working on projects, architectural choices and decisions will be maintained here.</div>';
+                return;
+            }
+
+            projectSnapshotsContainer.innerHTML = '';
+            for (const pid of projectIds) {
+                const snapRes = await window.lucyIpc.getProjectSnapshot(pid);
+                const snap = snapRes && snapRes.ok ? snapRes.snapshot : null;
+                if (!snap) continue;
+
+                const card = document.createElement('div');
+                card.className = 'memory-card';
+                card.innerHTML = `
+                    <div class="memory-card-header">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span class="memory-badge project">${escapeHtml(snap.stage || 'project')}</span>
+                            <strong style="font-size: 13px; color: var(--text-main);">${escapeHtml(snap.projectId)}</strong>
+                        </div>
+                        <span style="font-size: 11px; color: var(--text-dim);">${snap.updatedAt ? new Date(snap.updatedAt).toLocaleDateString() : ''}</span>
+                    </div>
+                    <div class="memory-content">
+                        ${snap.objective ? `<div style="margin-bottom: 4px;"><strong>Objective:</strong> ${escapeHtml(snap.objective)}</div>` : ''}
+                        ${snap.techStack ? `<div style="margin-bottom: 4px;"><strong>Tech Stack:</strong> ${escapeHtml(snap.techStack)}</div>` : ''}
+                        ${snap.acceptedDecisions && snap.acceptedDecisions.length > 0 ? `<div style="margin-bottom: 4px;"><strong>Accepted Decisions:</strong> ${escapeHtml(snap.acceptedDecisions.join('; '))}</div>` : ''}
+                        ${snap.outstandingTasks && snap.outstandingTasks.length > 0 ? `<div style="margin-bottom: 4px; color: var(--accent-cyan);"><strong>Tasks:</strong> ${escapeHtml(snap.outstandingTasks.join('; '))}</div>` : ''}
+                    </div>
+                    <div class="memory-footer">
+                        <span>Status: ${escapeHtml(snap.verifiedStatus || 'active')}</span>
+                    </div>
+                `;
+                projectSnapshotsContainer.appendChild(card);
+            }
+        } catch (err) {
+            projectSnapshotsContainer.innerHTML = `<div style="color: var(--accent-red); font-size: 12px;">Failed to load project snapshots: ${escapeHtml(err.message)}</div>`;
+        }
     }
 
     async function openMemoryModal(tab = 'memories') {
@@ -1785,7 +2722,72 @@ document.addEventListener('DOMContentLoaded', () => {
     if (closeMemoryModalBtn) closeMemoryModalBtn.addEventListener('click', closeMemoryModal);
     if (tabMemoriesBtn) tabMemoriesBtn.addEventListener('click', () => switchMemoryTab('memories'));
     if (tabContinuityBtn) tabContinuityBtn.addEventListener('click', () => switchMemoryTab('continuity'));
+    if (tabProjectsBtn) tabProjectsBtn.addEventListener('click', () => switchMemoryTab('projects'));
     if (tabAddMemoryBtn) tabAddMemoryBtn.addEventListener('click', () => switchMemoryTab('add'));
+
+    // Export memories to JSON
+    if (exportMemoryBtn) {
+        exportMemoryBtn.addEventListener('click', async () => {
+            if (!window.lucyIpc || typeof window.lucyIpc.exportMemory !== 'function') {
+                alert('Export not available in preview mode.');
+                return;
+            }
+            try {
+                const res = await window.lucyIpc.exportMemory();
+                if (res && res.ok && res.data) {
+                    const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `lucy-memory-export-${new Date().toISOString().slice(0, 10)}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    showBubble('Persistent memories exported to JSON.');
+                } else {
+                    alert(`Export failed: ${res.error || 'Unknown error'}`);
+                }
+            } catch (err) {
+                alert(`Export error: ${err.message}`);
+            }
+        });
+    }
+
+    // Import memories from JSON
+    if (importMemoryBtn && memoryFileInput) {
+        importMemoryBtn.addEventListener('click', () => {
+            memoryFileInput.value = '';
+            memoryFileInput.click();
+        });
+
+        memoryFileInput.addEventListener('change', async (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async (evt) => {
+                try {
+                    const parsed = JSON.parse(evt.target.result);
+                    if (!window.lucyIpc || typeof window.lucyIpc.importMemory !== 'function') {
+                        alert('Import not available in preview mode.');
+                        return;
+                    }
+                    const merge = confirm('Merge with existing memories? Click OK to merge, or Cancel to replace current memories.');
+                    const res = await window.lucyIpc.importMemory(parsed, { merge });
+                    if (res && res.ok) {
+                        showBubble(`Successfully imported ${res.importedCount || 0} memories.`);
+                        await loadMemories();
+                        await refreshStatus();
+                    } else {
+                        alert(`Import failed: ${res.error || 'Invalid format'}`);
+                    }
+                } catch (err) {
+                    alert(`Failed to parse JSON file: ${err.message}`);
+                }
+            };
+            reader.readAsText(file);
+        });
+    }
 
     // Long-Term memory toggle
     if (toggleLongTermCheckbox) {
@@ -1886,6 +2888,573 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // 9. Futuristic JARVIS Navigation Deck Controller
+    function initJarvisNavigationDeck() {
+        const tabs = document.querySelectorAll('.nav-deck-tab');
+        const views = document.querySelectorAll('.jarvis-view');
+
+        function switchView(targetViewId) {
+            let actualViewId = targetViewId;
+            let targetSettingsCategory = null;
+
+            if (targetViewId === 'viewCompanionSettings') {
+                actualViewId = 'viewSettings';
+                targetSettingsCategory = 'companion';
+            } else if (targetViewId === 'viewSettings') {
+                // If opening viewSettings directly and no settings tab is active, default to general
+            }
+
+            tabs.forEach((tab) => {
+                const view = tab.getAttribute('data-view') || tab.getAttribute('data-target-view');
+                const isMatch = (view === targetViewId || view === actualViewId || 
+                    (targetViewId === 'viewCompanionSettings' && (view === 'viewSettings' || tab.id === 'tabNavSettings')));
+                tab.classList.toggle('active', isMatch);
+                tab.setAttribute('aria-selected', isMatch ? 'true' : 'false');
+            });
+            views.forEach((v) => {
+                v.classList.toggle('active', v.id === actualViewId);
+            });
+            const viewport = document.getElementById('jarvisViewsViewport');
+            if (viewport) {
+                viewport.scrollTop = 0;
+            }
+            if (actualViewId === 'viewSettings') {
+                if (targetSettingsCategory) {
+                    if (typeof switchSettingsCenterTab === 'function') {
+                        switchSettingsCenterTab(targetSettingsCategory);
+                    }
+                } else {
+                    const currentActive = document.querySelector('.settings-center-pane.active');
+                    if (!currentActive && typeof switchSettingsCenterTab === 'function') {
+                        switchSettingsCenterTab('general');
+                    }
+                }
+            }
+            if (targetViewId === 'viewIntelligence' && typeof loadRoutingDiagnostics === 'function') {
+                loadRoutingDiagnostics();
+            }
+            if ((targetViewId === 'viewCompanionSettings' || targetSettingsCategory === 'companion') && typeof window.refreshCompanionSettings === 'function') {
+                window.refreshCompanionSettings();
+            }
+        }
+
+        switchJarvisView = switchView;
+        window.switchJarvisView = switchView;
+
+        tabs.forEach((tab) => {
+            tab.addEventListener('click', () => {
+                const target = tab.getAttribute('data-view') || tab.getAttribute('data-target-view');
+                if (target) switchView(target);
+            });
+        });
+
+        // Quick Command Portals on View 1 (Home)
+        const portalConv = document.getElementById('portalConversationBtn');
+        if (portalConv) {
+            portalConv.addEventListener('click', () => {
+                switchView('viewConversation');
+                if (commandInput) commandInput.focus();
+            });
+        }
+
+        const portalMem = document.getElementById('portalMemoryBtn');
+        if (portalMem) {
+            portalMem.addEventListener('click', () => {
+                openMemoryModal('memories');
+            });
+        }
+
+        const portalIntel = document.getElementById('portalIntelligenceBtn');
+        if (portalIntel) {
+            portalIntel.addEventListener('click', () => {
+                switchView('viewIntelligence');
+            });
+        }
+
+        const portalFloat = document.getElementById('portalFloatPetBtn');
+        if (portalFloat) {
+            portalFloat.addEventListener('click', async () => {
+                if (typeof floatFairyToDesktop === 'function') {
+                    await floatFairyToDesktop();
+                }
+            });
+        }
+
+        const intelOpenSettings = document.getElementById('intelOpenSettingsBtn');
+        if (intelOpenSettings) {
+            intelOpenSettings.addEventListener('click', () => {
+                openSettings('ai');
+            });
+        }
+
+        const clearFeedViewBtn = document.getElementById('clearFeedViewBtn');
+        if (clearFeedViewBtn) {
+            clearFeedViewBtn.addEventListener('click', () => {
+                const feed = document.getElementById('actionsTimelineFeed');
+                if (feed) {
+                    feed.innerHTML = '<div style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 20px;">Receipt timeline cleared.</div>';
+                }
+            });
+        }
+    }
+
+    // 10. Futuristic Audio-Reactive Visualizer (Spectrum / Horizon)
+    function initAudioVisualizer() {
+        const canvas = document.getElementById('audioVisualizerCanvas');
+        const statusText = document.getElementById('vizStatusText');
+        const pulseDot = document.getElementById('vizPulseDot');
+        const engineTag = document.getElementById('vizEngineTag');
+        if (!canvas) return;
+
+        const ctx = canvas.getContext('2d');
+        let wavePhase = 0;
+
+        const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        function renderFrame() {
+            const width = canvas.width;
+            const height = canvas.height;
+            ctx.clearRect(0, 0, width, height);
+
+            const isSpeaking = voiceController && voiceController.isSpeaking;
+            const isListening = voiceController && voiceController.isListening;
+            const isProcessing = voiceController && voiceController.voiceState === 'processing';
+
+            if (engineTag && voiceController) {
+                engineTag.textContent = voiceController.ttsEngine === 'kokoro' ? 'KOKORO-82M NEURAL' : 'WINDOWS SAPI5';
+            }
+
+            if (isSpeaking) {
+                if (statusText) statusText.textContent = 'SPEAKING (KOKORO-82M)';
+                if (pulseDot) pulseDot.style.background = 'var(--accent-cyan)';
+
+                if (prefersReducedMotion) {
+                    ctx.fillStyle = '#00f2fe';
+                    ctx.fillRect(width * 0.2, height / 2 - 2, width * 0.6, 4);
+                } else {
+                    const freqData = voiceController.getAudioFrequencyData();
+                    const bars = 36;
+                    const barWidth = 6;
+                    const spacing = (width - (bars * barWidth)) / (bars - 1);
+
+                    wavePhase += 0.15;
+                    for (let i = 0; i < bars; i++) {
+                        let magnitude = 0.3;
+                        if (freqData && freqData.length > 0) {
+                            const binIndex = Math.floor((i / bars) * freqData.length);
+                            magnitude = (freqData[binIndex] || 0) / 255;
+                        } else {
+                            magnitude = (Math.sin(wavePhase + i * 0.4) * 0.35 + 0.45) * (Math.cos(wavePhase * 0.6 + i * 0.2) * 0.3 + 0.6);
+                        }
+
+                        const barHeight = Math.max(3, magnitude * (height - 6));
+                        const x = i * (barWidth + spacing);
+                        const y = (height - barHeight) / 2;
+
+                        const grad = ctx.createLinearGradient(x, y, x, y + barHeight);
+                        grad.addColorStop(0, '#00f2fe');
+                        grad.addColorStop(1, '#9d4edd');
+                        ctx.fillStyle = grad;
+                        ctx.fillRect(x, y, barWidth, barHeight);
+
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(x, y, barWidth, 1.5);
+                    }
+                }
+            } else if (isListening) {
+                if (statusText) statusText.textContent = 'LISTENING (MICROPHONE)';
+                if (pulseDot) pulseDot.style.background = 'var(--accent-pink)';
+
+                if (prefersReducedMotion) {
+                    ctx.fillStyle = '#ff007f';
+                    ctx.fillRect(width * 0.25, height / 2 - 2, width * 0.5, 4);
+                } else {
+                    wavePhase += 0.2;
+                    ctx.beginPath();
+                    ctx.strokeStyle = '#ff007f';
+                    ctx.lineWidth = 2;
+                    for (let x = 0; x < width; x += 4) {
+                        const y = height / 2 + Math.sin(x * 0.05 + wavePhase) * 8 * Math.sin(wavePhase * 0.5);
+                        if (x === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.stroke();
+                }
+            } else if (isProcessing) {
+                if (statusText) statusText.textContent = 'PROCESSING (NEURAL)';
+                if (pulseDot) pulseDot.style.background = 'var(--accent-amber)';
+
+                wavePhase += 0.08;
+                const scanX = (Math.sin(wavePhase) * 0.5 + 0.5) * (width - 40);
+                ctx.fillStyle = 'rgba(255, 183, 3, 0.2)';
+                ctx.fillRect(0, height / 2 - 1, width, 2);
+                ctx.fillStyle = '#ffb703';
+                ctx.fillRect(scanX, height / 2 - 3, 40, 6);
+            } else {
+                if (statusText) statusText.textContent = 'SUB-SYSTEM READY';
+                if (pulseDot) pulseDot.style.background = 'var(--accent-green)';
+
+                ctx.strokeStyle = 'rgba(0, 242, 254, 0.25)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(0, height / 2);
+                ctx.lineTo(width, height / 2);
+                ctx.stroke();
+
+                if (!prefersReducedMotion) {
+                    wavePhase += 0.03;
+                    const pulse = Math.sin(wavePhase);
+                    if (pulse > 0.8) {
+                        const pulseH = (pulse - 0.8) * 18;
+                        ctx.strokeStyle = '#00f2fe';
+                        ctx.lineWidth = 1.5;
+                        ctx.beginPath();
+                        ctx.moveTo(width / 2 - 20, height / 2);
+                        ctx.lineTo(width / 2 - 5, height / 2);
+                        ctx.lineTo(width / 2, height / 2 - pulseH);
+                        ctx.lineTo(width / 2 + 5, height / 2 + pulseH);
+                        ctx.lineTo(width / 2 + 10, height / 2);
+                        ctx.lineTo(width / 2 + 20, height / 2);
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            requestAnimationFrame(renderFrame);
+        }
+
+        renderFrame();
+    }
+
+    // 11. Companion Sizing & Local Fairy Voice Controls
+    function initCompanionSettingsControls() {
+        const sliderWidth = document.getElementById('sliderCompanionWidth');
+        const sliderHeight = document.getElementById('sliderCompanionHeight');
+        const sliderWidthVal = document.getElementById('sliderWidthVal');
+        const sliderHeightVal = document.getElementById('sliderHeightVal');
+        const labelDims = document.getElementById('companionDimensionsLabel');
+        const btnResetTiny = document.getElementById('btnResetTinyPet');
+        const btnMedium = document.getElementById('btnMediumPet');
+        const settingsToggleFloat = document.getElementById('settingsToggleFloatBtn');
+
+        const selectEngine = document.getElementById('settingsTtsEngineSelect');
+        const selectKokoroVoice = document.getElementById('settingsKokoroVoiceSelect');
+        const sliderRate = document.getElementById('sliderVoiceRate');
+        const sliderPitch = document.getElementById('sliderVoicePitch');
+        const sliderVolume = document.getElementById('sliderVoiceVolume');
+        const rateLabelVal = document.getElementById('rateLabelVal');
+        const pitchLabelVal = document.getElementById('pitchLabelVal');
+        const volumeLabelVal = document.getElementById('volumeLabelVal');
+        const btnTestFairy = document.getElementById('btnTestFairyVoice');
+
+        const checkWakeWord = document.getElementById('checkWakeWordActive');
+        const checkBg = document.getElementById('checkBackgroundActive');
+
+        // Authoritative dimension state
+        let confirmedWidth = 160;
+        let confirmedHeight = 190;
+        let dimensionRequestId = 0;
+        let resizeDebounceTimer = null;
+
+        function renderConfirmedDimensions(w, h) {
+            const safeW = Math.max(140, Math.min(520, Math.round(Number(w) || 160)));
+            const safeH = Math.max(170, Math.min(600, Math.round(Number(h) || 190)));
+            confirmedWidth = safeW;
+            confirmedHeight = safeH;
+
+            if (sliderWidth && Number(sliderWidth.value) !== safeW) {
+                sliderWidth.value = safeW;
+            }
+            if (sliderHeight && Number(sliderHeight.value) !== safeH) {
+                sliderHeight.value = safeH;
+            }
+            if (sliderWidthVal) {
+                sliderWidthVal.textContent = `${safeW} px`;
+            }
+            if (sliderHeightVal) {
+                sliderHeightVal.textContent = `${safeH} px`;
+            }
+            if (labelDims) {
+                labelDims.textContent = `${safeW} × ${safeH} px`;
+            }
+        }
+
+        function renderTentativeDimensions(w, h) {
+            const safeW = Math.max(140, Math.min(520, Math.round(Number(w) || 160)));
+            const safeH = Math.max(170, Math.min(600, Math.round(Number(h) || 190)));
+            if (sliderWidthVal) sliderWidthVal.textContent = `${safeW} px`;
+            if (sliderHeightVal) sliderHeightVal.textContent = `${safeH} px`;
+            if (labelDims) labelDims.textContent = `${safeW} × ${safeH} px`;
+        }
+
+        function refreshCompanionStatus() {
+            if (window.lucyIpc && typeof window.lucyIpc.getCompanionStatus === 'function') {
+                window.lucyIpc.getCompanionStatus().then((st) => {
+                    if (st && Number.isFinite(st.width) && Number.isFinite(st.height)) {
+                        renderConfirmedDimensions(st.width, st.height);
+                    }
+                }).catch(() => {});
+            }
+        }
+
+        window.refreshCompanionSettings = refreshCompanionStatus;
+        refreshCompanionStatus();
+
+        if (window.lucyIpc && typeof window.lucyIpc.onCompanionResized === 'function') {
+            window.lucyIpc.onCompanionResized((data) => {
+                if (data && Number.isFinite(data.width) && Number.isFinite(data.height)) {
+                    dimensionRequestId++; // Invalidate pending local slider requests
+                    renderConfirmedDimensions(data.width, data.height);
+                }
+            });
+        }
+
+        async function commitDimensions(targetW, targetH, immediate = false) {
+            const w = Math.max(140, Math.min(520, Math.round(Number(targetW))));
+            const h = Math.max(170, Math.min(600, Math.round(Number(targetH))));
+
+            if (resizeDebounceTimer) {
+                clearTimeout(resizeDebounceTimer);
+                resizeDebounceTimer = null;
+            }
+
+            const reqId = ++dimensionRequestId;
+
+            const sendIpcRequest = async () => {
+                if (!window.lucyIpc || typeof window.lucyIpc.setCompanionDimensions !== 'function') {
+                    renderConfirmedDimensions(w, h);
+                    return;
+                }
+                try {
+                    const res = await window.lucyIpc.setCompanionDimensions({ width: w, height: h });
+                    // Discard stale responses from out-of-order execution
+                    if (reqId !== dimensionRequestId) return;
+
+                    if (res && res.ok && Number.isFinite(res.width) && Number.isFinite(res.height)) {
+                        renderConfirmedDimensions(res.width, res.height);
+                    } else {
+                        // Failed/rejected: revert to last confirmed authoritative dimensions
+                        renderConfirmedDimensions(confirmedWidth, confirmedHeight);
+                    }
+                } catch (_) {
+                    if (reqId === dimensionRequestId) {
+                        renderConfirmedDimensions(confirmedWidth, confirmedHeight);
+                    }
+                }
+            };
+
+            if (immediate) {
+                renderTentativeDimensions(w, h);
+                if (sliderWidth) sliderWidth.value = w;
+                if (sliderHeight) sliderHeight.value = h;
+                await sendIpcRequest();
+            } else {
+                renderTentativeDimensions(w, h);
+                resizeDebounceTimer = setTimeout(sendIpcRequest, 80);
+            }
+        }
+
+        if (sliderWidth && sliderHeight) {
+            sliderWidth.addEventListener('input', () => {
+                commitDimensions(sliderWidth.value, sliderHeight.value, false);
+            });
+            sliderHeight.addEventListener('input', () => {
+                commitDimensions(sliderWidth.value, sliderHeight.value, false);
+            });
+        }
+
+        if (btnResetTiny) {
+            btnResetTiny.addEventListener('click', () => {
+                commitDimensions(160, 190, true);
+                showBubble('Companion reset to tiny default 160 × 190 px.');
+            });
+        }
+
+        if (btnMedium) {
+            btnMedium.addEventListener('click', () => {
+                commitDimensions(220, 260, true);
+                showBubble('Companion set to comfortable 220 × 260 px.');
+            });
+        }
+
+        if (settingsToggleFloat) {
+            settingsToggleFloat.addEventListener('click', async () => {
+                if (isFairyFloating) {
+                    await dockFairyToApp();
+                } else {
+                    await floatFairyToDesktop();
+                }
+            });
+            // Ensure settings button strictly matches current companion state
+            syncCompanionUI(isFairyFloating);
+        }
+
+        async function persistCompanionVoiceConfig() {
+            if (typeof persistVoiceSettings === 'function') {
+                await persistVoiceSettings();
+            }
+        }
+
+        if (btnTestFairy) {
+            let isUserStopping = false;
+            btnTestFairy.addEventListener('click', async () => {
+                if (!voiceController) return;
+                if (voiceController.isSpeaking) {
+                    isUserStopping = true;
+                    voiceController.stopSpeaking();
+                    btnTestFairy.textContent = '▶ Test Fairy Voice';
+                    renderer.setVisualState({ emotion: 'happy' });
+                    return;
+                }
+
+                isUserStopping = false;
+
+                // Read live unsaved inputs directly from UI
+                const engine = selectEngine ? selectEngine.value : 'kokoro';
+                const voiceName = selectKokoroVoice ? selectKokoroVoice.value : 'af_bella';
+                const rate = sliderRate ? parseFloat(sliderRate.value) : 1.0;
+                const pitch = sliderPitch ? parseFloat(sliderPitch.value) : 1.05;
+                const volume = sliderVolume ? parseFloat(sliderVolume.value) : 1.0;
+
+                btnTestFairy.textContent = '⏳ Loading...';
+                renderer.setVisualState({ emotion: 'curious' });
+
+                try {
+                    let testPhrase;
+                    if (engine === 'windows-speech') {
+                        testPhrase = `Sparkle! I am Lucy, speaking with the local Windows Speech system voice. All systems verified and ready.`;
+                    } else {
+                        const persona = voiceName === 'af_sky' ? 'Sky' : 'Bella';
+                        testPhrase = `Sparkle! I am Lucy, your celestial fairy companion speaking with ${persona} voice preset. All local systems are verified and ready.`;
+                    }
+                    showBubble(testPhrase);
+
+                    const success = await voiceController.speak(testPhrase, {
+                        ttsEngine: engine,
+                        voice: voiceName,
+                        kokoroVoice: voiceName,
+                        rate,
+                        pitch,
+                        volume,
+                        isPreview: true,
+                        force: true,
+                        onStart: () => {
+                            if (!isUserStopping) {
+                                btnTestFairy.textContent = '⏹ Stop Voice';
+                                renderer.setVisualState({ emotion: 'speaking' });
+                            }
+                        }
+                    });
+                    if (!success && !isUserStopping) {
+                        throw new Error('Voice playback did not start');
+                    }
+                } catch (err) {
+                    if (isUserStopping) return;
+                    showBubble('Voice test failed: ' + err.message);
+                    btnTestFairy.textContent = '⚠️ Test Failed';
+                    renderer.setVisualState({ emotion: 'worried' });
+                    setTimeout(() => {
+                        btnTestFairy.textContent = '▶ Test Fairy Voice';
+                        renderer.setVisualState({ emotion: 'happy' });
+                    }, 2500);
+                } finally {
+                    if (!isUserStopping && btnTestFairy.textContent !== '⚠️ Test Failed') {
+                        btnTestFairy.textContent = '▶ Test Fairy Voice';
+                        renderer.setVisualState({ emotion: 'happy' });
+                    }
+                }
+            });
+        }
+
+        // Playful Aerial Stunts on Companion Settings Tab
+        const stuntButtons = document.querySelectorAll('#paneCompanion .main-trick-opt');
+        stuntButtons.forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const trick = btn.getAttribute('data-trick');
+                if (trick && renderer && typeof renderer.playTrick === 'function') {
+                    renderer.playTrick(trick);
+                    const trickDef = petManager ? petManager.getTrick(trick) : null;
+                    const msg = trickDef ? trickDef.message : `Playing ${trick}! ✨`;
+                    showBubble(msg);
+                    if (voiceController && voiceController.ttsEnabled) {
+                        voiceController.stopSpeaking();
+                        voiceController.speak(msg).catch(() => {});
+                    }
+                    if (window.lucyIpc && window.lucyIpc.playCompanionTrick) {
+                        window.lucyIpc.playCompanionTrick(trick).catch(() => {});
+                    }
+                }
+            });
+        });
+
+        // Companion Pinning State Handling
+        const checkCompanionPinned = document.getElementById('checkCompanionPinned');
+        if (checkCompanionPinned && window.lucyIpc && typeof window.lucyIpc.getCompanionStatus === 'function') {
+            window.lucyIpc.getCompanionStatus().then((st) => {
+                if (st && st.isPinned !== undefined) {
+                    checkCompanionPinned.checked = Boolean(st.isPinned);
+                    if (settingCompanionPinnedModal) settingCompanionPinnedModal.checked = Boolean(st.isPinned);
+                }
+            }).catch(() => {});
+        }
+
+        if (checkCompanionPinned) {
+            checkCompanionPinned.addEventListener('change', async () => {
+                const isPinned = checkCompanionPinned.checked;
+                if (settingCompanionPinnedModal) settingCompanionPinnedModal.checked = isPinned;
+                if (window.lucyIpc && typeof window.lucyIpc.setCompanionPin === 'function') {
+                    await window.lucyIpc.setCompanionPin(isPinned);
+                }
+            });
+        }
+
+        if (window.lucyIpc && typeof window.lucyIpc.onCompanionPinChanged === 'function') {
+            window.lucyIpc.onCompanionPinChanged((data) => {
+                if (data && data.isPinned !== undefined) {
+                    const pinned = Boolean(data.isPinned);
+                    if (checkCompanionPinned) checkCompanionPinned.checked = pinned;
+                    if (settingCompanionPinnedModal) settingCompanionPinnedModal.checked = pinned;
+                }
+            });
+        }
+    }
+
+    // Lifecycle State Change Observer
+    if (window.lucyIpc && typeof window.lucyIpc.onLifecycleStateChanged === 'function') {
+        window.lucyIpc.onLifecycleStateChanged((data) => {
+            const state = data?.currentState;
+            if (lifecycleStateBadge) {
+                lifecycleStateBadge.textContent = state ? state.replace(/_/g, ' ').toUpperCase() : 'UNKNOWN';
+            }
+            if (state === 'companion_only' || state === 'background_tray') {
+                if (window.lucyIpc && typeof window.lucyIpc.getAppSettings === 'function') {
+                    window.lucyIpc.getAppSettings().then((cfg) => {
+                        const bgListen = cfg?.settings?.backgroundListening;
+                        if (!bgListen && voiceController) {
+                            if (voiceController.isListening) {
+                                voiceController.stopListening();
+                            }
+                        }
+                    }).catch(() => {});
+                }
+            } else if (state === 'shutting_down' || state === 'stopped') {
+                if (voiceController) {
+                    if (voiceController.isSpeaking) voiceController.stopSpeaking();
+                    if (voiceController.isListening) voiceController.stopListening();
+                }
+            }
+        });
+    }
+
+    if (window.lucyIpc && typeof window.lucyIpc.onOpenSettings === 'function') {
+        window.lucyIpc.onOpenSettings(() => {
+            openSettings();
+        });
+    }
+
+    initJarvisNavigationDeck();
+    initAudioVisualizer();
+    initCompanionSettingsControls();
     refreshStatus();
 
     // Standalone fallback simulator when previewed directly in browser

@@ -33,9 +33,11 @@ browser-profile/
 *.corrupt_*
 /in.txt
 /scratch/
+/.test-scratch/
 
 # Build & Release Artifacts
 dist/
+dist*/
 /dist-release/
 build/
 out/

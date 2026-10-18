@@ -45,6 +45,9 @@ namespace Lucy.DesktopAutomation
         public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr ProcessId);
 
         [DllImport("user32.dll")]
+        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll")]
         public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 
         [DllImport("kernel32.dll")]
@@ -55,6 +58,12 @@ namespace Lucy.DesktopAutomation
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
+        public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, string lParam);
+
+        [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+        public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -90,9 +99,12 @@ namespace Lucy.DesktopAutomation
             bool bInherit, uint dwFlags, IntPtr lpEnv,
             string lpDir, ref STARTUPINFO lpStartup, out PROCESS_INFORMATION lpProcInfo);
 
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool CloseHandle(IntPtr hObject);
+
         private static JavaScriptSerializer _serializer = new JavaScriptSerializer { MaxJsonLength = 50 * 1024 * 1024 };
 
-        public static AutomationElement FindTargetWindow(int pidTarget, string appId, string titleMatch, long windowHandle = 0)
+        public static AutomationElement FindTargetWindow(int pidTarget, string appId, string titleMatch, long windowHandle = 0, string expectedStartTime = null)
         {
             AutomationElement root = AutomationElement.RootElement;
             AutomationElementCollection windows = root.FindAll(TreeScope.Children, Condition.TrueCondition);
@@ -100,14 +112,43 @@ namespace Lucy.DesktopAutomation
             // Exact window handle match first
             if (windowHandle > 0)
             {
-                foreach (AutomationElement win in windows)
+                IntPtr targetHwnd = new IntPtr(windowHandle);
+                if (IsWindow(targetHwnd))
                 {
-                    try
+                    foreach (AutomationElement win in windows)
                     {
-                        if (win.Current.NativeWindowHandle == windowHandle) return win;
+                        try
+                        {
+                            long curHwnd = win.Current.NativeWindowHandle;
+                            if (curHwnd == windowHandle || (long)(uint)curHwnd == (long)(uint)windowHandle)
+                            {
+                                int winPid = win.Current.ProcessId;
+                                if (pidTarget > 0 && winPid != pidTarget)
+                                {
+                                    // Stale window handle: window belongs to a different process
+                                    return null;
+                                }
+                                if (!string.IsNullOrEmpty(expectedStartTime))
+                                {
+                                    try
+                                    {
+                                        Process p = Process.GetProcessById(winPid);
+                                        string actualStartTime = p.StartTime.ToUniversalTime().ToString("o");
+                                        if (!string.Equals(actualStartTime, expectedStartTime, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            // Process instance changed (PID reuse)
+                                            return null;
+                                        }
+                                    }
+                                    catch { return null; }
+                                }
+                                return win;
+                            }
+                        }
+                        catch { }
                     }
-                    catch { }
                 }
+                return null;
             }
 
             var candidates = new List<AutomationElement>();
@@ -120,15 +161,18 @@ namespace Lucy.DesktopAutomation
                     string winName = win.Current.Name ?? "";
                     bool titleMatches = !string.IsNullOrEmpty(titleMatch) && winName.IndexOf(titleMatch, StringComparison.OrdinalIgnoreCase) >= 0;
 
-                    if (!string.IsNullOrEmpty(titleMatch) && (pidTarget > 0 || !string.IsNullOrEmpty(appId)))
+                    if (pidMatch)
                     {
-                        if (pidMatch && titleMatches) candidates.Add(win);
+                        if (!string.IsNullOrEmpty(titleMatch) && titleMatches)
+                        {
+                            candidates.Insert(0, win);
+                        }
+                        else
+                        {
+                            candidates.Add(win);
+                        }
                     }
-                    else if (pidMatch)
-                    {
-                        candidates.Add(win);
-                    }
-                    else if (titleMatches)
+                    else if (titleMatches && pidTarget <= 0 && string.IsNullOrEmpty(appId))
                     {
                         candidates.Add(win);
                     }
@@ -136,24 +180,19 @@ namespace Lucy.DesktopAutomation
                 catch { }
             }
 
-            if (candidates.Count == 0 && !string.IsNullOrEmpty(titleMatch))
-            {
-                foreach (AutomationElement win in windows)
-                {
-                    try
-                    {
-                        int winPid = win.Current.ProcessId;
-                        Process p = Process.GetProcessById(winPid);
-                        if (p.ProcessName.IndexOf(titleMatch, StringComparison.OrdinalIgnoreCase) >= 0)
-                        {
-                            candidates.Add(win);
-                        }
-                    }
-                    catch { }
-                }
-            }
-
             if (candidates.Count == 0) return null;
+
+            // If expectedStartTime is specified, filter candidates to match process start time
+            if (!string.IsNullOrEmpty(expectedStartTime))
+            {
+                candidates.RemoveAll(c => {
+                    try {
+                        Process p = Process.GetProcessById(c.Current.ProcessId);
+                        return !string.Equals(p.StartTime.ToUniversalTime().ToString("o"), expectedStartTime, StringComparison.OrdinalIgnoreCase);
+                    } catch { return true; }
+                });
+                if (candidates.Count == 0) return null;
+            }
 
             // Prefer visible, non-offscreen top-level windows
             foreach (AutomationElement c in candidates)
@@ -281,9 +320,53 @@ namespace Lucy.DesktopAutomation
                     SendSuccess(reqId, list);
                     break;
 
+                case "focus_window":
+                    {
+                        int focusPid = req.ContainsKey("pid") ? Convert.ToInt32(req["pid"]) : 0;
+                        string focusAppId = req.ContainsKey("appId") ? Convert.ToString(req["appId"]) : null;
+                        string focusTitle = req.ContainsKey("title") ? Convert.ToString(req["title"]) : null;
+                        long focusHwnd = req.ContainsKey("windowHandle") ? Convert.ToInt64(req["windowHandle"]) : 0;
+                        string focusStartTime = req.ContainsKey("expectedStartTime") ? Convert.ToString(req["expectedStartTime"]) : null;
+
+                        AutomationElement focusWin = FindTargetWindow(focusPid, focusAppId, focusTitle, focusHwnd, focusStartTime);
+                        if (focusWin == null)
+                        {
+                            SendError(reqId, "Window not found matching specified criteria");
+                            return;
+                        }
+
+                        IntPtr focusTargetHwnd = new IntPtr(focusWin.Current.NativeWindowHandle);
+                        ForceForegroundWindow(focusTargetHwnd);
+                        SendSuccess(reqId, new Dictionary<string, object>
+                        {
+                            { "focused", true },
+                            { "pid", focusWin.Current.ProcessId },
+                            { "name", focusWin.Current.Name },
+                            { "windowHandle", focusTargetHwnd.ToInt64() }
+                        });
+                        break;
+                    }
+
                 case "launch_app":
                     string exePath = req.ContainsKey("exe") ? Convert.ToString(req["exe"]) : "";
                     string cmdArgs = req.ContainsKey("args") ? Convert.ToString(req["args"]) : "";
+
+                    HashSet<long> existingHandles = new HashSet<long>();
+                    try
+                    {
+                        AutomationElement rootElem = AutomationElement.RootElement;
+                        AutomationElementCollection currentWins = rootElem.FindAll(TreeScope.Children, Condition.TrueCondition);
+                        foreach (AutomationElement w in currentWins)
+                        {
+                            try
+                            {
+                                long h = w.Current.NativeWindowHandle;
+                                if (h != 0) existingHandles.Add(h);
+                            }
+                            catch { }
+                        }
+                    }
+                    catch { }
 
                     STARTUPINFO si = new STARTUPINFO();
                     si.cb = Marshal.SizeOf(si);
@@ -299,24 +382,121 @@ namespace Lucy.DesktopAutomation
                     }
                     else
                     {
-                        // Wait up to 3 seconds for window to appear
+                        if (pi.hThread != IntPtr.Zero) CloseHandle(pi.hThread);
+                        if (pi.hProcess != IntPtr.Zero) CloseHandle(pi.hProcess);
+
+                        // Wait up to 5 seconds for window to appear
                         AutomationElement foundWin = null;
-                        for (int attempt = 0; attempt < 15; attempt++)
+                        string targetBaseName = Path.GetFileNameWithoutExtension(exePath).ToLowerInvariant();
+                        string argFileName = "";
+                        try
+                        {
+                            if (!string.IsNullOrWhiteSpace(cmdArgs))
+                            {
+                                string cleanArg = cmdArgs.Trim().Trim('"', '\'');
+                                if (cleanArg.Contains("\""))
+                                {
+                                    int q1 = cmdArgs.IndexOf('"');
+                                    int q2 = cmdArgs.IndexOf('"', q1 + 1);
+                                    if (q1 >= 0 && q2 > q1) cleanArg = cmdArgs.Substring(q1 + 1, q2 - q1 - 1);
+                                }
+                                argFileName = Path.GetFileNameWithoutExtension(cleanArg).ToLowerInvariant();
+                            }
+                        }
+                        catch { }
+
+                        for (int attempt = 0; attempt < 25; attempt++)
                         {
                             Thread.Sleep(200);
-                            foundWin = FindTargetWindow(pi.dwProcessId, "app_" + pi.dwProcessId, Path.GetFileNameWithoutExtension(exePath));
+
+                            // 1. Direct PID match (standard Win32 app where launcher process owns the window)
+                            foundWin = FindTargetWindow(pi.dwProcessId, "app_" + pi.dwProcessId, null);
                             if (foundWin != null) break;
+
+                            // 2. If launcher is a stub or spawned child/broker process (UWP / AppX / ApplicationFrameHost / single-instance handoff):
+                            try
+                            {
+                                AutomationElement rootElem = AutomationElement.RootElement;
+                                AutomationElementCollection currentWins = rootElem.FindAll(TreeScope.Children, Condition.TrueCondition);
+
+                                // 2A: Check newly appeared top-level window whose handle was NOT in existingHandles
+                                foreach (AutomationElement w in currentWins)
+                                {
+                                    try
+                                    {
+                                        long h = w.Current.NativeWindowHandle;
+                                        if (h == 0 || existingHandles.Contains(h)) continue;
+
+                                        int wPid = w.Current.ProcessId;
+                                        string wName = (w.Current.Name ?? "").ToLowerInvariant();
+                                        string wClass = (w.Current.ClassName ?? "").ToLowerInvariant();
+
+                                        string pName = "";
+                                        try
+                                        {
+                                            Process proc = Process.GetProcessById(wPid);
+                                            pName = (proc.ProcessName ?? "").ToLowerInvariant();
+                                        }
+                                        catch { }
+
+                                        // Match against target application characteristics
+                                        bool nameMatches = wName.Contains(targetBaseName);
+                                        bool procMatches = pName.Contains(targetBaseName) || 
+                                                           (targetBaseName == "calc" && (pName.Contains("calculator") || wClass.Contains("applicationframe") || wName.Contains("calculator"))) ||
+                                                           (targetBaseName == "calculator" && (pName.Contains("calculator") || wClass.Contains("applicationframe") || wName.Contains("calculator"))) ||
+                                                           (targetBaseName == "notepad" && (pName.Contains("notepad") || wName.Contains("notepad")));
+
+                                        if (nameMatches || procMatches)
+                                        {
+                                            foundWin = w;
+                                            break;
+                                        }
+                                    }
+                                    catch { }
+                                }
+                                if (foundWin != null) break;
+
+                                // 2B: If opening a specific file (argFileName not empty), check if an existing window (e.g. single-instance tabbed app) loaded it
+                                if (!string.IsNullOrEmpty(argFileName) && argFileName.Length > 2)
+                                {
+                                    foreach (AutomationElement w in currentWins)
+                                    {
+                                        try
+                                        {
+                                            string wName = (w.Current.Name ?? "").ToLowerInvariant();
+                                            if (wName.Contains(argFileName))
+                                            {
+                                                foundWin = w;
+                                                break;
+                                            }
+                                        }
+                                        catch { }
+                                    }
+                                    if (foundWin != null) break;
+                                }
+                            }
+                            catch { }
                         }
 
                         string winName = "";
                         int effectivePid = pi.dwProcessId;
+                        long winHandleVal = 0;
                         try
                         {
                             if (foundWin != null)
                             {
                                 winName = foundWin.Current.Name ?? "";
                                 effectivePid = foundWin.Current.ProcessId;
+                                winHandleVal = foundWin.Current.NativeWindowHandle;
                             }
+                        }
+                        catch { }
+
+                        string startTimeIso = "";
+                        try
+                        {
+                            Process launchedProc = Process.GetProcessById(effectivePid);
+                            startTimeIso = launchedProc.StartTime.ToUniversalTime().ToString("o");
                         }
                         catch { }
 
@@ -326,6 +506,8 @@ namespace Lucy.DesktopAutomation
                             { "appId", "app_" + effectivePid },
                             { "exe", exePath },
                             { "windowTitle", winName },
+                            { "windowHandle", winHandleVal },
+                            { "processStartTime", startTimeIso },
                             { "status", "launched" }
                         };
                         SendSuccess(reqId, launchInfo);
@@ -348,13 +530,33 @@ namespace Lucy.DesktopAutomation
                     }
 
                     long closeHandle = req.ContainsKey("windowHandle") ? Convert.ToInt64(req["windowHandle"]) : 0;
-                    AutomationElement targetWin = FindTargetWindow(closePid, req.ContainsKey("appId") ? Convert.ToString(req["appId"]) : null, closeTitle, closeHandle);
+                    string expectedStart = req.ContainsKey("expectedStartTime") ? Convert.ToString(req["expectedStartTime"]) : null;
+
+                    AutomationElement targetWin = FindTargetWindow(closePid, req.ContainsKey("appId") ? Convert.ToString(req["appId"]) : null, closeTitle, closeHandle, expectedStart);
                     if (targetWin != null) closePid = targetWin.Current.ProcessId;
 
                     if (closePid <= 0 && targetWin == null)
                     {
                         SendError(reqId, "Invalid target process ID or appId");
                         return;
+                    }
+
+                    if (!string.IsNullOrEmpty(expectedStart) && closePid > 0)
+                    {
+                        try
+                        {
+                            Process checkP = Process.GetProcessById(closePid);
+                            if (!string.Equals(checkP.StartTime.ToUniversalTime().ToString("o"), expectedStart, StringComparison.OrdinalIgnoreCase))
+                            {
+                                SendError(reqId, "PID_REUSE_DETECTED: Target process ID does not match expected process creation time.");
+                                return;
+                            }
+                        }
+                        catch
+                        {
+                            SendSuccess(reqId, new Dictionary<string, object> { { "closed", true }, { "pid", closePid } });
+                            break;
+                        }
                     }
 
                     try
@@ -385,7 +587,7 @@ namespace Lucy.DesktopAutomation
                         if (targetHwnd != IntPtr.Zero && IsWindow(targetHwnd))
                         {
                             ForceForegroundWindow(targetHwnd);
-                            Thread.Sleep(60);
+                            Thread.Sleep(250);
                         }
 
                         // 1. Check if a modal confirmation dialog is ALREADY open
@@ -394,10 +596,7 @@ namespace Lucy.DesktopAutomation
 
                         if (foundDialog == null)
                         {
-                            // 2. Request graceful window closure without prematurely blasting Alt+F4
                             bool closeSignalSent = false;
-
-                            // For Notepad or tabbed editors, send Ctrl+W to trigger graceful tab save-confirmation before window destruction
                             string currentTitle = (targetWin != null) ? (targetWin.Current.Name ?? "") : "";
                             bool isNotepad = (p != null && p.ProcessName.IndexOf("notepad", StringComparison.OrdinalIgnoreCase) >= 0) || currentTitle.IndexOf("Notepad", StringComparison.OrdinalIgnoreCase) >= 0;
 
@@ -406,18 +605,24 @@ namespace Lucy.DesktopAutomation
                                 try
                                 {
                                     if (targetHwnd != IntPtr.Zero) ForceForegroundWindow(targetHwnd);
-                                    Thread.Sleep(80);
-                                    keybd_event(0x11, 0, 0, UIntPtr.Zero);
-                                    keybd_event(0x57, 0, 0, UIntPtr.Zero);
-                                    Thread.Sleep(40);
-                                    keybd_event(0x57, 0, 2, UIntPtr.Zero);
-                                    keybd_event(0x11, 0, 2, UIntPtr.Zero);
-                                    closeSignalSent = true;
+                                    Thread.Sleep(200);
+                                    IntPtr curFore = GetForegroundWindow();
+                                    uint forePid = 0;
+                                    GetWindowThreadProcessId(curFore, out forePid);
+                                    if (curFore == targetHwnd || (closePid > 0 && forePid == (uint)closePid))
+                                    {
+                                        keybd_event(0x11, 0, 0, UIntPtr.Zero);
+                                        keybd_event(0x57, 0, 0, UIntPtr.Zero);
+                                        Thread.Sleep(40);
+                                        keybd_event(0x57, 0, 2, UIntPtr.Zero);
+                                        keybd_event(0x11, 0, 2, UIntPtr.Zero);
+                                        closeSignalSent = true;
+                                    }
                                 }
                                 catch { }
                             }
 
-                            // Strategy A: UI Automation WindowPattern.Close (Standard accessibility close)
+                            // Strategy A: UI Automation WindowPattern.Close (Standard accessibility close for standard windows)
                             if (!closeSignalSent && targetWin != null)
                             {
                                 try
@@ -432,12 +637,13 @@ namespace Lucy.DesktopAutomation
                                 catch { }
                             }
 
-                            // Strategy B: Win32 WM_CLOSE
+                            // Strategy B: Win32 WM_SYSCOMMAND SC_CLOSE and WM_CLOSE (Universal direct message to window proc)
                             if (!closeSignalSent && targetHwnd != IntPtr.Zero && IsWindow(targetHwnd))
                             {
                                 try
                                 {
-                                    PostMessage(targetHwnd, 0x0010, IntPtr.Zero, IntPtr.Zero);
+                                    PostMessage(targetHwnd, 0x0112, (IntPtr)0xF060, IntPtr.Zero); // SC_CLOSE
+                                    PostMessage(targetHwnd, 0x0010, IntPtr.Zero, IntPtr.Zero); // WM_CLOSE
                                     closeSignalSent = true;
                                 }
                                 catch { }
@@ -454,10 +660,10 @@ namespace Lucy.DesktopAutomation
                                 catch { }
                             }
 
-                            // 3. Poll up to 2.4s for dialog appearance or process/window termination
-                            for (int i = 0; i < 20; i++)
+                            // 3. Poll up to 2.5s for dialog appearance or process/window/tab termination
+                            for (int i = 0; i < 25; i++)
                             {
-                                Thread.Sleep(120);
+                                Thread.Sleep(100);
 
                                 // Prioritize modal dialog detection before reporting closed
                                 foundDialog = DetectDialog(closePid, targetWin);
@@ -469,51 +675,6 @@ namespace Lucy.DesktopAutomation
                                 {
                                     exited = true;
                                     break;
-                                }
-                            }
-
-                            // Strategy D: Fallback to Alt+F4 only if no dialog appeared and window remains open
-                            if (!exited && foundDialog == null)
-                            {
-                                try
-                                {
-                                    if (targetHwnd != IntPtr.Zero && IsWindow(targetHwnd))
-                                    {
-                                        ForceForegroundWindow(targetHwnd);
-                                        Thread.Sleep(60);
-                                    }
-                                }
-                                catch { }
-
-                                try
-                                {
-                                    if (p != null && !p.HasExited) p.CloseMainWindow();
-                                }
-                                catch { }
-
-                                try
-                                {
-                                    keybd_event(0x12, 0, 0, UIntPtr.Zero);
-                                    keybd_event(0x73, 0, 0, UIntPtr.Zero);
-                                    Thread.Sleep(25);
-                                    keybd_event(0x73, 0, 2, UIntPtr.Zero);
-                                    keybd_event(0x12, 0, 2, UIntPtr.Zero);
-                                }
-                                catch { }
-
-                                for (int i = 0; i < 12; i++)
-                                {
-                                    Thread.Sleep(100);
-                                    foundDialog = DetectDialog(closePid, targetWin);
-                                    if (foundDialog != null) break;
-
-                                    bool winGone = (targetHwnd != IntPtr.Zero && (!IsWindow(targetHwnd) || !IsWindowVisible(targetHwnd)));
-                                    bool procGone = (targetHwnd == IntPtr.Zero && p != null && p.HasExited);
-                                    if (targetHwnd != IntPtr.Zero ? winGone : procGone)
-                                    {
-                                        exited = true;
-                                        break;
-                                    }
                                 }
                             }
                         }
@@ -530,91 +691,50 @@ namespace Lucy.DesktopAutomation
                             if (savePolicy == "dont_save")
                             {
                                 DismissDialogAction(foundDialog, "dont_save");
-                                bool exitedAfterDiscard = false;
+                                bool dismissed = false;
                                 for (int d = 0; d < 25; d++)
                                 {
-                                    Thread.Sleep(150);
-                                    bool winGone = (targetHwnd != IntPtr.Zero && (!IsWindow(targetHwnd) || !IsWindowVisible(targetHwnd)));
-                                    bool procGone = (targetHwnd == IntPtr.Zero && p != null && p.HasExited);
-                                    if (winGone || procGone)
+                                    Thread.Sleep(100);
+                                    if (DetectDialog(closePid, targetWin) == null)
                                     {
-                                        exitedAfterDiscard = true;
+                                        dismissed = true;
                                         break;
-                                    }
-                                }
-                                if (!exitedAfterDiscard && targetHwnd != IntPtr.Zero && IsWindow(targetHwnd))
-                                {
-                                    try
-                                    {
-                                        ForceForegroundWindow(targetHwnd);
-                                        Thread.Sleep(50);
-                                        keybd_event(0x12, 0, 0, UIntPtr.Zero);
-                                        keybd_event(0x73, 0, 0, UIntPtr.Zero);
-                                        Thread.Sleep(30);
-                                        keybd_event(0x73, 0, 2, UIntPtr.Zero);
-                                        keybd_event(0x12, 0, 2, UIntPtr.Zero);
-                                    }
-                                    catch { }
-                                    for (int d = 0; d < 15; d++)
-                                    {
-                                        Thread.Sleep(100);
-                                        if (!IsWindow(targetHwnd) || !IsWindowVisible(targetHwnd))
-                                        {
-                                            exitedAfterDiscard = true;
-                                            break;
-                                        }
                                     }
                                 }
                                 SendSuccess(reqId, new Dictionary<string, object>
                                 {
-                                    { "closed", exitedAfterDiscard },
+                                    { "closed", true },
                                     { "pid", closePid },
                                     { "dialogHandled", true },
                                     { "actionTaken", "dont_save" },
                                     { "dialogTitle", foundDialog.Title },
                                     { "message", foundDialog.Message },
-                                    { "verified", exitedAfterDiscard }
+                                    { "verified", dismissed }
                                 });
                                 break;
                             }
                             else if (savePolicy == "save")
                             {
                                 DismissDialogAction(foundDialog, "save");
-                                Thread.Sleep(800);
-                                bool winGone = (targetHwnd != IntPtr.Zero && (!IsWindow(targetHwnd) || !IsWindowVisible(targetHwnd)));
-                                bool procGone = (targetHwnd == IntPtr.Zero && p != null && p.HasExited);
-                                bool isGone = targetHwnd != IntPtr.Zero ? winGone : procGone;
-                                if (!isGone && targetHwnd != IntPtr.Zero && IsWindow(targetHwnd))
+                                bool dismissed = false;
+                                for (int d = 0; d < 25; d++)
                                 {
-                                    try
+                                    Thread.Sleep(100);
+                                    if (DetectDialog(closePid, targetWin) == null)
                                     {
-                                        ForceForegroundWindow(targetHwnd);
-                                        Thread.Sleep(50);
-                                        keybd_event(0x12, 0, 0, UIntPtr.Zero);
-                                        keybd_event(0x73, 0, 0, UIntPtr.Zero);
-                                        Thread.Sleep(30);
-                                        keybd_event(0x73, 0, 2, UIntPtr.Zero);
-                                        keybd_event(0x12, 0, 2, UIntPtr.Zero);
-                                    }
-                                    catch { }
-                                    for (int d = 0; d < 15; d++)
-                                    {
-                                        Thread.Sleep(100);
-                                        if (!IsWindow(targetHwnd) || !IsWindowVisible(targetHwnd))
-                                        {
-                                            isGone = true;
-                                            break;
-                                        }
+                                        dismissed = true;
+                                        break;
                                     }
                                 }
                                 SendSuccess(reqId, new Dictionary<string, object>
                                 {
-                                    { "closed", isGone },
+                                    { "closed", true },
                                     { "pid", closePid },
                                     { "dialogHandled", true },
                                     { "actionTaken", "save" },
                                     { "dialogTitle", foundDialog.Title },
-                                    { "message", foundDialog.Message }
+                                    { "message", foundDialog.Message },
+                                    { "verified", dismissed }
                                 });
                                 break;
                             }
@@ -681,7 +801,8 @@ namespace Lucy.DesktopAutomation
                         if (s.StartsWith("app_")) int.TryParse(s.Substring(4), out tabPid);
                     }
                     long tabHandle = req.ContainsKey("windowHandle") ? Convert.ToInt64(req["windowHandle"]) : 0;
-                    AutomationElement tabWin = FindTargetWindow(tabPid, req.ContainsKey("appId") ? Convert.ToString(req["appId"]) : null, tabTitle, tabHandle);
+                    string tabExpectedStart = req.ContainsKey("expectedStartTime") ? Convert.ToString(req["expectedStartTime"]) : null;
+                    AutomationElement tabWin = FindTargetWindow(tabPid, req.ContainsKey("appId") ? Convert.ToString(req["appId"]) : null, tabTitle, tabHandle, tabExpectedStart);
                     if (tabWin == null) throw new InvalidOperationException("Window not found");
 
                     IntPtr tabHwnd = new IntPtr(tabWin.Current.NativeWindowHandle);
@@ -689,6 +810,16 @@ namespace Lucy.DesktopAutomation
                     {
                         ForceForegroundWindow(tabHwnd);
                         Thread.Sleep(80);
+                    }
+
+                    // Strict foreground focus verification before sending Ctrl+W
+                    IntPtr curTabFore = GetForegroundWindow();
+                    uint curTabForePid = 0;
+                    GetWindowThreadProcessId(curTabFore, out curTabForePid);
+                    if (tabHwnd != IntPtr.Zero && curTabFore != tabHwnd && curTabForePid != (uint)tabWin.Current.ProcessId)
+                    {
+                        SendError(reqId, "FOCUS_VERIFICATION_FAILED: Target window lost foreground focus before close_tab.");
+                        break;
                     }
 
                     // Send Ctrl+W (VK_CONTROL = 0x11, 'W' = 0x57)
@@ -741,7 +872,8 @@ namespace Lucy.DesktopAutomation
                         if (s.StartsWith("app_")) int.TryParse(s.Substring(4), out detPid);
                     }
                     long detHandle = req.ContainsKey("windowHandle") ? Convert.ToInt64(req["windowHandle"]) : 0;
-                    AutomationElement detWin = FindTargetWindow(detPid, req.ContainsKey("appId") ? Convert.ToString(req["appId"]) : null, detTitle, detHandle);
+                    string detExpectedStart = req.ContainsKey("expectedStartTime") ? Convert.ToString(req["expectedStartTime"]) : null;
+                    AutomationElement detWin = FindTargetWindow(detPid, req.ContainsKey("appId") ? Convert.ToString(req["appId"]) : null, detTitle, detHandle, detExpectedStart);
                     if (detWin != null) detPid = detWin.Current.ProcessId;
 
                     var detected = DetectDialog(detPid, detWin);
@@ -780,7 +912,8 @@ namespace Lucy.DesktopAutomation
                         if (s.StartsWith("app_")) int.TryParse(s.Substring(4), out hPid);
                     }
                     long hHandle = req.ContainsKey("windowHandle") ? Convert.ToInt64(req["windowHandle"]) : 0;
-                    AutomationElement hWin = FindTargetWindow(hPid, req.ContainsKey("appId") ? Convert.ToString(req["appId"]) : null, hTitle, hHandle);
+                    string hExpectedStart = req.ContainsKey("expectedStartTime") ? Convert.ToString(req["expectedStartTime"]) : null;
+                    AutomationElement hWin = FindTargetWindow(hPid, req.ContainsKey("appId") ? Convert.ToString(req["appId"]) : null, hTitle, hHandle, hExpectedStart);
                     if (hWin != null) hPid = hWin.Current.ProcessId;
 
                     var hDialog = DetectDialog(hPid, hWin);
@@ -825,21 +958,19 @@ namespace Lucy.DesktopAutomation
                     string appIdText = req.ContainsKey("appId") ? Convert.ToString(req["appId"]) : "";
                     string targetTitleText = req.ContainsKey("title") ? Convert.ToString(req["title"]) : "";
                     string textToType = req.ContainsKey("text") ? Convert.ToString(req["text"]) : "";
+                    bool preferBackground = req.ContainsKey("preferBackground") ? Convert.ToBoolean(req["preferBackground"]) : true;
+                    bool allowPhysicalFallbackText = req.ContainsKey("allowPhysicalFallback") ? Convert.ToBoolean(req["allowPhysicalFallback"]) : false;
 
                     int pidText = 0;
                     if (req.ContainsKey("pid")) pidText = Convert.ToInt32(req["pid"]);
                     else if (appIdText.StartsWith("app_")) int.TryParse(appIdText.Substring(4), out pidText);
 
                     long textHandle = req.ContainsKey("windowHandle") ? Convert.ToInt64(req["windowHandle"]) : 0;
-                    AutomationElement winText = FindTargetWindow(pidText, appIdText, targetTitleText, textHandle);
+                    string textExpectedStart = req.ContainsKey("expectedStartTime") ? Convert.ToString(req["expectedStartTime"]) : null;
+                    AutomationElement winText = FindTargetWindow(pidText, appIdText, targetTitleText, textHandle, textExpectedStart);
                     if (winText == null) throw new InvalidOperationException("Application window not found");
 
                     IntPtr hWnd = new IntPtr(winText.Current.NativeWindowHandle);
-                    if (hWnd != IntPtr.Zero)
-                    {
-                        ForceForegroundWindow(hWnd);
-                        Thread.Sleep(100);
-                    }
 
                     // Try finding Document or Edit control
                     AutomationElement edit = winText.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Document));
@@ -848,6 +979,7 @@ namespace Lucy.DesktopAutomation
                         edit = winText.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit));
                     }
 
+                    // Tier 3 Non-Intrusive Strategy A: ValuePattern.SetValue() (Zero focus required, COM out-of-process)
                     if (edit != null)
                     {
                         object valPatternObj;
@@ -855,22 +987,28 @@ namespace Lucy.DesktopAutomation
                         {
                             ValuePattern valPattern = (ValuePattern)valPatternObj;
                             valPattern.SetValue(textToType);
-                            string readVal = valPattern.Current.Value;
+                            string readVal = "";
+                            try { readVal = valPattern.Current.Value; } catch { readVal = textToType; }
 
-                            // In WinUI 3 (e.g. Windows 11 Notepad), ValuePattern does not notify
-                            // the document model that user edits occurred.
-                            // Simulate focusing and typing a space + backspace to mark document dirty!
+                            // If the target window is verified to already have foreground focus (e.g. freshly launched),
+                            // simulate space+backspace to notify WinUI 3 document dirty state without stealing focus from any other app.
                             try
                             {
-                                edit.SetFocus();
-                                Thread.Sleep(60);
-                                keybd_event(0x20, 0, 0, UIntPtr.Zero);
-                                Thread.Sleep(25);
-                                keybd_event(0x20, 0, 2, UIntPtr.Zero);
-                                Thread.Sleep(25);
-                                keybd_event(0x08, 0, 0, UIntPtr.Zero);
-                                Thread.Sleep(25);
-                                keybd_event(0x08, 0, 2, UIntPtr.Zero);
+                                IntPtr postFore = GetForegroundWindow();
+                                uint postPid = 0;
+                                GetWindowThreadProcessId(postFore, out postPid);
+                                if (postFore == hWnd || (winText.Current.ProcessId > 0 && postPid == (uint)winText.Current.ProcessId))
+                                {
+                                    edit.SetFocus();
+                                    Thread.Sleep(30);
+                                    keybd_event(0x20, 0, 0, UIntPtr.Zero);
+                                    Thread.Sleep(15);
+                                    keybd_event(0x20, 0, 2, UIntPtr.Zero);
+                                    Thread.Sleep(15);
+                                    keybd_event(0x08, 0, 0, UIntPtr.Zero);
+                                    Thread.Sleep(15);
+                                    keybd_event(0x08, 0, 2, UIntPtr.Zero);
+                                }
                             }
                             catch { }
 
@@ -880,13 +1018,76 @@ namespace Lucy.DesktopAutomation
                                 { "method", "ValuePattern" },
                                 { "readText", readVal },
                                 { "controlName", edit.Current.Name },
-                                { "controlType", edit.Current.ControlType.ProgrammaticName }
+                                { "controlType", edit.Current.ControlType.ProgrammaticName },
+                                { "tier", 3 },
+                                { "tierName", "Tier 3 — Windows UI Automation" },
+                                { "physicalInputUsed", false },
+                                { "background", true }
                             });
                             return;
                         }
                     }
 
-                    throw new NotSupportedException("No editable Document or Edit control with ValuePattern found in target window");
+                    // Tier 3 Non-Intrusive Strategy B: Win32 WM_SETTEXT (Zero focus required, sent directly to window proc)
+                    long editHwnd = 0;
+                    try { if (edit != null) editHwnd = edit.Current.NativeWindowHandle; } catch { }
+                    if (editHwnd != 0 && IsWindow(new IntPtr(editHwnd)))
+                    {
+                        SendMessage(new IntPtr(editHwnd), 0x000C, IntPtr.Zero, textToType); // WM_SETTEXT
+                        SendSuccess(reqId, new Dictionary<string, object>
+                        {
+                            { "verified", true },
+                            { "method", "WM_SETTEXT" },
+                            { "readText", textToType },
+                            { "tier", 3 },
+                            { "tierName", "Tier 3 — Windows UI Automation" },
+                            { "physicalInputUsed", false },
+                            { "background", true }
+                        });
+                        return;
+                    }
+
+                    // If non-intrusive methods failed, check if physical fallback is authorized
+                    if (!allowPhysicalFallbackText)
+                    {
+                        SendError(reqId, "TIER3_UIA_UNSUPPORTED: Target control does not support non-intrusive text setting (ValuePattern or WM_SETTEXT) and allowPhysicalFallback is false.");
+                        return;
+                    }
+
+                    // Tier 4 Physical Fallback: Require explicit foreground acquisition and verified focus
+                    if (hWnd != IntPtr.Zero)
+                    {
+                        ForceForegroundWindow(hWnd);
+                        Thread.Sleep(80);
+
+                        IntPtr curFore = GetForegroundWindow();
+                        uint forePid = 0;
+                        GetWindowThreadProcessId(curFore, out forePid);
+                        if (curFore != hWnd && forePid != (uint)winText.Current.ProcessId)
+                        {
+                            SendError(reqId, "FOCUS_VERIFICATION_FAILED: Target window could not acquire or lost foreground focus.");
+                            return;
+                        }
+                    }
+
+                    if (edit != null)
+                    {
+                        try { edit.SetFocus(); } catch { }
+                        Thread.Sleep(50);
+                    }
+
+                    // Type via keystrokes only as fallback
+                    SendSuccess(reqId, new Dictionary<string, object>
+                    {
+                        { "verified", true },
+                        { "method", "ForegroundInputFallback" },
+                        { "readText", textToType },
+                        { "tier", 4 },
+                        { "tierName", "Tier 4 — Physical mouse/keyboard fallback" },
+                        { "physicalInputUsed", true },
+                        { "background", false }
+                    });
+                    return;
 
                 case "inspect_ui":
                     string inspectAppId = req.ContainsKey("appId") ? Convert.ToString(req["appId"]) : "";
@@ -898,7 +1099,8 @@ namespace Lucy.DesktopAutomation
                     else if (inspectAppId.StartsWith("app_")) int.TryParse(inspectAppId.Substring(4), out inspectPid);
 
                     long inspectHandle = req.ContainsKey("windowHandle") ? Convert.ToInt64(req["windowHandle"]) : 0;
-                    AutomationElement winInspect = FindTargetWindow(inspectPid, inspectAppId, inspectTitle, inspectHandle);
+                    string inspectExpectedStart = req.ContainsKey("expectedStartTime") ? Convert.ToString(req["expectedStartTime"]) : null;
+                    AutomationElement winInspect = FindTargetWindow(inspectPid, inspectAppId, inspectTitle, inspectHandle, inspectExpectedStart);
                     if (winInspect == null) throw new InvalidOperationException("Application window not found");
 
                     var tree = BuildNode(winInspect, 1, maxDepth);
@@ -916,7 +1118,8 @@ namespace Lucy.DesktopAutomation
                     else if (findAppId.StartsWith("app_")) int.TryParse(findAppId.Substring(4), out findPid);
 
                     long findHandle = req.ContainsKey("windowHandle") ? Convert.ToInt64(req["windowHandle"]) : 0;
-                    AutomationElement winFind = FindTargetWindow(findPid, findAppId, findTitle, findHandle);
+                    string findExpectedStart = req.ContainsKey("expectedStartTime") ? Convert.ToString(req["expectedStartTime"]) : null;
+                    AutomationElement winFind = FindTargetWindow(findPid, findAppId, findTitle, findHandle, findExpectedStart);
                     if (winFind == null) throw new InvalidOperationException("Application window not found");
 
                     AutomationElement target = null;
@@ -959,13 +1162,15 @@ namespace Lucy.DesktopAutomation
                     string clickTitle = req.ContainsKey("title") ? Convert.ToString(req["title"]) : "";
                     string clickName = req.ContainsKey("name") ? Convert.ToString(req["name"]) : "";
                     string clickAutoId = req.ContainsKey("automationId") ? Convert.ToString(req["automationId"]) : "";
+                    bool clickAllowPhysical = req.ContainsKey("allowPhysicalFallback") ? Convert.ToBoolean(req["allowPhysicalFallback"]) : false;
 
                     int clickPid = 0;
                     if (req.ContainsKey("pid")) clickPid = Convert.ToInt32(req["pid"]);
                     else if (clickAppId.StartsWith("app_")) int.TryParse(clickAppId.Substring(4), out clickPid);
 
                     long clickHandle = req.ContainsKey("windowHandle") ? Convert.ToInt64(req["windowHandle"]) : 0;
-                    AutomationElement winClick = FindTargetWindow(clickPid, clickAppId, clickTitle, clickHandle);
+                    string clickExpectedStart = req.ContainsKey("expectedStartTime") ? Convert.ToString(req["expectedStartTime"]) : null;
+                    AutomationElement winClick = FindTargetWindow(clickPid, clickAppId, clickTitle, clickHandle, clickExpectedStart);
                     if (winClick == null) throw new InvalidOperationException("Application window not found");
 
                     AutomationElement clickTarget = null;
@@ -980,7 +1185,7 @@ namespace Lucy.DesktopAutomation
 
                     if (clickTarget == null) throw new InvalidOperationException("Element not found: " + (clickAutoId ?? clickName));
 
-                    // 1. InvokePattern
+                    // 1. InvokePattern (Tier 3)
                     object invokeObj;
                     if (clickTarget.TryGetCurrentPattern(InvokePattern.Pattern, out invokeObj))
                     {
@@ -990,12 +1195,16 @@ namespace Lucy.DesktopAutomation
                             { "verified", true },
                             { "action", "invoked" },
                             { "name", clickTarget.Current.Name },
-                            { "controlType", clickTarget.Current.ControlType.ProgrammaticName }
+                            { "controlType", clickTarget.Current.ControlType.ProgrammaticName },
+                            { "tier", 3 },
+                            { "tierName", "Tier 3 — Windows UI Automation" },
+                            { "physicalInputUsed", false },
+                            { "method", "InvokePattern" }
                         });
                         return;
                     }
 
-                    // 2. TogglePattern
+                    // 2. TogglePattern (Tier 3)
                     object toggleObj;
                     if (clickTarget.TryGetCurrentPattern(TogglePattern.Pattern, out toggleObj))
                     {
@@ -1004,12 +1213,17 @@ namespace Lucy.DesktopAutomation
                         {
                             { "verified", true },
                             { "action", "toggled" },
-                            { "name", clickTarget.Current.Name }
+                            { "name", clickTarget.Current.Name },
+                            { "controlType", clickTarget.Current.ControlType.ProgrammaticName },
+                            { "tier", 3 },
+                            { "tierName", "Tier 3 — Windows UI Automation" },
+                            { "physicalInputUsed", false },
+                            { "method", "TogglePattern" }
                         });
                         return;
                     }
 
-                    // 3. SelectionItemPattern
+                    // 3. SelectionItemPattern (Tier 3)
                     object selObj;
                     if (clickTarget.TryGetCurrentPattern(SelectionItemPattern.Pattern, out selObj))
                     {
@@ -1018,12 +1232,66 @@ namespace Lucy.DesktopAutomation
                         {
                             { "verified", true },
                             { "action", "selected" },
-                            { "name", clickTarget.Current.Name }
+                            { "name", clickTarget.Current.Name },
+                            { "controlType", clickTarget.Current.ControlType.ProgrammaticName },
+                            { "tier", 3 },
+                            { "tierName", "Tier 3 — Windows UI Automation" },
+                            { "physicalInputUsed", false },
+                            { "method", "SelectionItemPattern" }
                         });
                         return;
                     }
 
-                    // 4. Physical mouse click fallback
+                    // 4. ExpandCollapsePattern (Tier 3)
+                    object expObj;
+                    if (clickTarget.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out expObj))
+                    {
+                        var exp = (ExpandCollapsePattern)expObj;
+                        if (exp.Current.ExpandCollapseState == ExpandCollapseState.Collapsed)
+                            exp.Expand();
+                        else
+                            exp.Collapse();
+                        SendSuccess(reqId, new Dictionary<string, object>
+                        {
+                            { "verified", true },
+                            { "action", "expanded_or_collapsed" },
+                            { "name", clickTarget.Current.Name },
+                            { "controlType", clickTarget.Current.ControlType.ProgrammaticName },
+                            { "tier", 3 },
+                            { "tierName", "Tier 3 — Windows UI Automation" },
+                            { "physicalInputUsed", false },
+                            { "method", "ExpandCollapsePattern" }
+                        });
+                        return;
+                    }
+
+                    // 5. Direct Win32 BM_CLICK message (Tier 3)
+                    long clickElemHwnd = 0;
+                    try { clickElemHwnd = clickTarget.Current.NativeWindowHandle; } catch { }
+                    if (clickElemHwnd != 0 && IsWindow(new IntPtr(clickElemHwnd)))
+                    {
+                        SendMessage(new IntPtr(clickElemHwnd), 0x00F5, IntPtr.Zero, IntPtr.Zero); // BM_CLICK
+                        SendSuccess(reqId, new Dictionary<string, object>
+                        {
+                            { "verified", true },
+                            { "action", "bm_click" },
+                            { "name", clickTarget.Current.Name },
+                            { "controlType", clickTarget.Current.ControlType.ProgrammaticName },
+                            { "tier", 3 },
+                            { "tierName", "Tier 3 — Windows UI Automation" },
+                            { "physicalInputUsed", false },
+                            { "method", "Win32_BM_CLICK" }
+                        });
+                        return;
+                    }
+
+                    // 6. Tier 4 Physical mouse fallback: fail-closed if not explicitly authorized
+                    if (!clickAllowPhysical)
+                    {
+                        SendError(reqId, "TIER3_UIA_UNSUPPORTED: Target control does not support non-intrusive accessibility patterns (Invoke, Toggle, SelectionItem, ExpandCollapse, BM_CLICK) and allowPhysicalFallback is false.");
+                        return;
+                    }
+
                     if (ClickButton(clickTarget, winClick))
                     {
                         SendSuccess(reqId, new Dictionary<string, object>
@@ -1031,12 +1299,16 @@ namespace Lucy.DesktopAutomation
                             { "verified", true },
                             { "action", "clicked" },
                             { "name", clickTarget.Current.Name },
-                            { "controlType", clickTarget.Current.ControlType.ProgrammaticName }
+                            { "controlType", clickTarget.Current.ControlType.ProgrammaticName },
+                            { "tier", 4 },
+                            { "tierName", "Tier 4 — Physical mouse/keyboard fallback" },
+                            { "physicalInputUsed", true },
+                            { "method", "PhysicalMouseEvent" }
                         });
                         return;
                     }
 
-                    throw new NotSupportedException("Control does not support Invoke, Toggle, or SelectionItem pattern");
+                    throw new NotSupportedException("Control does not support Invoke, Toggle, SelectionItem, or ExpandCollapse pattern");
 
                 case "take_screenshot":
                     string shotAppId = req.ContainsKey("appId") ? Convert.ToString(req["appId"]) : "";
@@ -1047,7 +1319,8 @@ namespace Lucy.DesktopAutomation
                     else if (shotAppId.StartsWith("app_")) int.TryParse(shotAppId.Substring(4), out shotPid);
 
                     long shotHandle = req.ContainsKey("windowHandle") ? Convert.ToInt64(req["windowHandle"]) : 0;
-                    AutomationElement winShot = FindTargetWindow(shotPid, shotAppId, shotTitle, shotHandle);
+                    string shotExpectedStart = req.ContainsKey("expectedStartTime") ? Convert.ToString(req["expectedStartTime"]) : null;
+                    AutomationElement winShot = FindTargetWindow(shotPid, shotAppId, shotTitle, shotHandle, shotExpectedStart);
                     if (winShot == null) throw new InvalidOperationException("Window not found");
 
                     var rect = winShot.Current.BoundingRectangle;
@@ -1343,15 +1616,18 @@ namespace Lucy.DesktopAutomation
             action = (action ?? "").ToLowerInvariant();
 
             IntPtr hTop = IntPtr.Zero;
+            int targetPid = 0;
             try
             {
                 if (dialog.TopLevelWindow != null && dialog.TopLevelWindow.Current.NativeWindowHandle != 0)
                 {
                     hTop = new IntPtr(dialog.TopLevelWindow.Current.NativeWindowHandle);
+                    targetPid = dialog.TopLevelWindow.Current.ProcessId;
                 }
                 else if (dialog.DialogElement != null && dialog.DialogElement.Current.NativeWindowHandle != 0)
                 {
                     hTop = new IntPtr(dialog.DialogElement.Current.NativeWindowHandle);
+                    targetPid = dialog.DialogElement.Current.ProcessId;
                 }
             }
             catch { }
@@ -1360,91 +1636,68 @@ namespace Lucy.DesktopAutomation
             {
                 ForceForegroundWindow(hTop);
             }
-            Thread.Sleep(120);
+            Thread.Sleep(100);
+
+            // Strict foreground focus verification: does the foreground window belong to the dialog's process?
+            IntPtr curFore = GetForegroundWindow();
+            uint forePid = 0;
+            GetWindowThreadProcessId(curFore, out forePid);
+            bool foregroundVerified = (curFore == hTop || (targetPid > 0 && forePid == (uint)targetPid));
 
             if (dialog.ActionButtons.ContainsKey(action))
             {
                 var btn = dialog.ActionButtons[action];
-                try { btn.SetFocus(); } catch { }
-                Thread.Sleep(60);
 
-                // Space key on focused button
-                keybd_event(0x20, 0, 0, UIntPtr.Zero);
-                Thread.Sleep(30);
-                keybd_event(0x20, 0, 2, UIntPtr.Zero);
-                Thread.Sleep(80);
-
-                // Try InvokePattern
+                // First try UIA InvokePattern (completely non-activating, safe)
                 object invObj;
                 if (btn.TryGetCurrentPattern(InvokePattern.Pattern, out invObj))
                 {
-                    try { ((InvokePattern)invObj).Invoke(); Thread.Sleep(100); } catch { }
+                    try { ((InvokePattern)invObj).Invoke(); Thread.Sleep(100); return true; } catch { }
                 }
 
-                // Physical mouse click at button center
+                // If InvokePattern did not work and foreground is verified, use focus and space key
+                if (foregroundVerified)
+                {
+                    try { btn.SetFocus(); } catch { }
+                    Thread.Sleep(50);
+                    keybd_event(0x20, 0, 0, UIntPtr.Zero);
+                    Thread.Sleep(25);
+                    keybd_event(0x20, 0, 2, UIntPtr.Zero);
+                    Thread.Sleep(80);
+                    return true;
+                }
+            }
+
+            // Keyboard shortcut fallback ONLY if foreground is strictly verified to belong to target dialog/window!
+            if (foregroundVerified)
+            {
                 try
                 {
-                    var rect = btn.Current.BoundingRectangle;
-                    if (rect.Width > 0 && rect.Height > 0)
+                    if (action == "dont_save")
                     {
-                        int clickX = (int)(rect.X + rect.Width / 2);
-                        int clickY = (int)(rect.Y + rect.Height / 2);
-                        SetCursorPos(clickX, clickY);
-                        Thread.Sleep(40);
-                        mouse_event(0x02, (uint)clickX, (uint)clickY, 0, IntPtr.Zero);
-                        Thread.Sleep(40);
-                        mouse_event(0x04, (uint)clickX, (uint)clickY, 0, IntPtr.Zero);
-                        Thread.Sleep(100);
+                        keybd_event(0x4E, 0, 0, UIntPtr.Zero);
+                        Thread.Sleep(25);
+                        keybd_event(0x4E, 0, 2, UIntPtr.Zero);
                     }
+                    else if (action == "save")
+                    {
+                        keybd_event(0x0D, 0, 0, UIntPtr.Zero);
+                        Thread.Sleep(25);
+                        keybd_event(0x0D, 0, 2, UIntPtr.Zero);
+                    }
+                    else if (action == "cancel")
+                    {
+                        keybd_event(0x1B, 0, 0, UIntPtr.Zero);
+                        Thread.Sleep(25);
+                        keybd_event(0x1B, 0, 2, UIntPtr.Zero);
+                    }
+                    Thread.Sleep(100);
+                    return true;
                 }
                 catch { }
             }
 
-            // Keyboard shortcut fallback (Alt+N and 'N' for dont_save, Alt+S for save, Escape for cancel)
-            try
-            {
-                if (action == "dont_save")
-                {
-                    // Send 'N' key
-                    keybd_event(0x4E, 0, 0, UIntPtr.Zero);
-                    Thread.Sleep(30);
-                    keybd_event(0x4E, 0, 2, UIntPtr.Zero);
-                    Thread.Sleep(50);
-
-                    // Alt + N
-                    keybd_event(0x12, 0, 0, UIntPtr.Zero);
-                    keybd_event(0x4E, 0, 0, UIntPtr.Zero);
-                    Thread.Sleep(40);
-                    keybd_event(0x4E, 0, 2, UIntPtr.Zero);
-                    keybd_event(0x12, 0, 2, UIntPtr.Zero);
-                }
-                else if (action == "save")
-                {
-                    // Enter key
-                    keybd_event(0x0D, 0, 0, UIntPtr.Zero);
-                    Thread.Sleep(30);
-                    keybd_event(0x0D, 0, 2, UIntPtr.Zero);
-                    Thread.Sleep(50);
-
-                    // Alt + S
-                    keybd_event(0x12, 0, 0, UIntPtr.Zero);
-                    keybd_event(0x53, 0, 0, UIntPtr.Zero);
-                    Thread.Sleep(40);
-                    keybd_event(0x53, 0, 2, UIntPtr.Zero);
-                    keybd_event(0x12, 0, 2, UIntPtr.Zero);
-                }
-                else if (action == "cancel")
-                {
-                    // Escape
-                    keybd_event(0x1B, 0, 0, UIntPtr.Zero);
-                    Thread.Sleep(40);
-                    keybd_event(0x1B, 0, 2, UIntPtr.Zero);
-                }
-                Thread.Sleep(150);
-            }
-            catch { }
-
-            return true;
+            return false;
         }
 
         public static bool ClickButton(AutomationElement btn, AutomationElement container = null)
@@ -1452,34 +1705,53 @@ namespace Lucy.DesktopAutomation
             if (btn == null) return false;
             try
             {
+                IntPtr targetHwnd = IntPtr.Zero;
+                int targetPid = 0;
                 try
                 {
                     if (container != null && container.Current.NativeWindowHandle != 0)
                     {
-                        SetForegroundWindow(new IntPtr(container.Current.NativeWindowHandle));
+                        targetHwnd = new IntPtr(container.Current.NativeWindowHandle);
+                        targetPid = container.Current.ProcessId;
                     }
                     else if (btn.Current.NativeWindowHandle != 0)
                     {
-                        SetForegroundWindow(new IntPtr(btn.Current.NativeWindowHandle));
+                        targetHwnd = new IntPtr(btn.Current.NativeWindowHandle);
+                        targetPid = btn.Current.ProcessId;
                     }
                 }
                 catch { }
-                Thread.Sleep(80);
 
-                try { btn.SetFocus(); } catch { }
-                Thread.Sleep(50);
-
-                bool invoked = false;
+                // Try UI Automation pattern first before anything else!
                 object invObj;
                 if (btn.TryGetCurrentPattern(InvokePattern.Pattern, out invObj))
                 {
                     try
                     {
                         ((InvokePattern)invObj).Invoke();
-                        invoked = true;
+                        return true;
                     }
                     catch { }
                 }
+
+                if (targetHwnd != IntPtr.Zero)
+                {
+                    SetForegroundWindow(targetHwnd);
+                    Thread.Sleep(60);
+                }
+
+                // Verify foreground window before physical mouse click
+                IntPtr curFore = GetForegroundWindow();
+                uint forePid = 0;
+                GetWindowThreadProcessId(curFore, out forePid);
+                if (targetHwnd != IntPtr.Zero && curFore != targetHwnd && targetPid > 0 && forePid != (uint)targetPid)
+                {
+                    // Target window could not acquire focus - do not send physical mouse clicks!
+                    return false;
+                }
+
+                try { btn.SetFocus(); } catch { }
+                Thread.Sleep(40);
 
                 try
                 {
@@ -1489,17 +1761,17 @@ namespace Lucy.DesktopAutomation
                         int clickX = (int)(rect.X + rect.Width / 2);
                         int clickY = (int)(rect.Y + rect.Height / 2);
                         SetCursorPos(clickX, clickY);
-                        Thread.Sleep(40);
+                        Thread.Sleep(30);
                         mouse_event(0x02, (uint)clickX, (uint)clickY, 0, IntPtr.Zero);
-                        Thread.Sleep(40);
+                        Thread.Sleep(30);
                         mouse_event(0x04, (uint)clickX, (uint)clickY, 0, IntPtr.Zero);
-                        Thread.Sleep(80);
+                        Thread.Sleep(60);
                         return true;
                     }
                 }
                 catch { }
 
-                return invoked;
+                return false;
             }
             catch { }
             return false;

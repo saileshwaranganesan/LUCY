@@ -444,6 +444,88 @@ function registerBrowserTools(registry, browserManager) {
             };
         }
     });
+
+    // 15. browser_search
+    registry.registerTool({
+        id: 'browser_search',
+        name: 'Browser Web Searcher',
+        description: 'Search the web or video platforms (duckduckgo, google, youtube, bing) using the browser',
+        riskTier: RISK_TIERS.NETWORK_READ,
+        schema: {
+            type: 'object',
+            properties: {
+                query: { type: 'string', description: 'Search term or query' },
+                engine: { type: 'string', enum: ['duckduckgo', 'google', 'youtube', 'bing'], default: 'duckduckgo', description: 'Search engine or platform' },
+                timeoutMs: { type: 'number', description: 'Optional timeout in ms' }
+            },
+            required: ['query']
+        },
+        handler: async (params) => {
+            return await browserManager.searchWeb(params.query, params);
+        },
+        dryRunSimulate: async (params) => {
+            return {
+                simulatedAction: 'search',
+                query: params.query,
+                engine: params.engine || 'duckduckgo',
+                effect: `Would execute search for "${params.query}" on ${params.engine || 'duckduckgo'} via browser`
+            };
+        }
+    });
+
+    // 16. browser_scroll
+    registry.registerTool({
+        id: 'browser_scroll',
+        name: 'Browser Page Scroller',
+        description: 'Scroll the active page (up, down, top, bottom) or scroll an element into view',
+        riskTier: RISK_TIERS.SAFE_READ,
+        schema: {
+            type: 'object',
+            properties: {
+                direction: { type: 'string', enum: ['down', 'up', 'top', 'bottom'], default: 'down' },
+                amount: { type: 'number', description: 'Pixels to scroll', default: 500 },
+                selector: { type: 'string', description: 'Optional CSS or text selector to scroll into view' }
+            }
+        },
+        handler: async (params) => {
+            return await browserManager.scroll(params);
+        },
+        dryRunSimulate: async (params) => {
+            return {
+                simulatedAction: 'scroll',
+                direction: params.direction || 'down',
+                selector: params.selector || null
+            };
+        }
+    });
+
+    // 17. browser_select_option
+    registry.registerTool({
+        id: 'browser_select_option',
+        name: 'Browser Form Select Option',
+        description: 'Select an option from a dropdown (<select>) element on the current page',
+        riskTier: RISK_TIERS.WORKSPACE_WRITE,
+        schema: {
+            type: 'object',
+            properties: {
+                selector: { type: 'string', description: 'Selector of the <select> element' },
+                value: { type: 'string', description: 'Value or label of the option to select' },
+                timeoutMs: { type: 'number', description: 'Timeout in ms' }
+            },
+            required: ['selector', 'value']
+        },
+        handler: async (params) => {
+            return await browserManager.selectOption(params.selector, params.value, params);
+        },
+        dryRunSimulate: async (params) => {
+            return {
+                simulatedAction: 'select_option',
+                selector: params.selector,
+                value: params.value,
+                effect: `Would select option "${params.value}" in dropdown "${params.selector}"`
+            };
+        }
+    });
 }
 
 module.exports = {

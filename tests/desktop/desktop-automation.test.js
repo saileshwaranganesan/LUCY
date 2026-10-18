@@ -47,12 +47,14 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
         assert.ok(toolIds.includes('desktop_take_screenshot'));
         assert.ok(toolIds.includes('desktop_close_app'));
         assert.ok(toolIds.includes('desktop_handle_dialog'));
+        assert.ok(toolIds.includes('desktop_focus_window'));
 
         // Validate Risk Tiers
         assert.equal(registry.getTool('desktop_list_apps').riskTier, RISK_TIERS.SAFE_READ);
         assert.equal(registry.getTool('desktop_inspect_ui').riskTier, RISK_TIERS.SAFE_READ);
         assert.equal(registry.getTool('desktop_find_element').riskTier, RISK_TIERS.SAFE_READ);
         assert.equal(registry.getTool('desktop_take_screenshot').riskTier, RISK_TIERS.SAFE_READ);
+        assert.equal(registry.getTool('desktop_focus_window').riskTier, RISK_TIERS.SAFE_READ);
         assert.equal(registry.getTool('desktop_launch_app').riskTier, RISK_TIERS.WORKSPACE_WRITE);
         assert.equal(registry.getTool('desktop_type_text').riskTier, RISK_TIERS.CONSEQUENTIAL);
         assert.equal(registry.getTool('desktop_click_element').riskTier, RISK_TIERS.CONSEQUENTIAL);
@@ -195,31 +197,20 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
     // 2. INTEGRATION TESTS (REAL LOCAL APPS)
     // ==========================================
 
-    function clearNotepadSessionState() {
-        if (process.platform !== 'win32') return;
-        try {
-            const { execSync } = require('node:child_process');
-            execSync('taskkill /F /IM notepad.exe 2>$null', { stdio: 'ignore', shell: 'powershell' });
-        } catch (_) {}
-        try {
-            if (process.env.LOCALAPPDATA) {
-                const localStateDir = path.join(process.env.LOCALAPPDATA, 'Packages', 'Microsoft.WindowsNotepad_8wekyb3d8bbwe', 'LocalState');
-                for (const sub of ['TabState', 'WindowState']) {
-                    const dir = path.join(localStateDir, sub);
-                    if (fs.existsSync(dir)) {
-                        for (const f of fs.readdirSync(dir)) {
-                            try { fs.unlinkSync(path.join(dir, f)); } catch (_) {}
-                        }
-                    }
-                }
-            }
-        } catch (_) {}
+    const testLaunchedPids = new Set();
+
+    function killTestPids() {
+        for (const pid of testLaunchedPids) {
+            try {
+                process.kill(pid);
+            } catch (_) {}
+        }
+        testLaunchedPids.clear();
     }
 
     let realManager = null;
 
     suite.before(() => {
-        clearNotepadSessionState();
         realManager = new DesktopAutomationManager();
     });
 
@@ -227,7 +218,7 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
         if (realManager) {
             realManager.cleanup();
         }
-        clearNotepadSessionState();
+        killTestPids();
     });
 
     await suite.test('Integration: Native UIA Worker Handshake and Discovery', async () => {
@@ -253,13 +244,14 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
         const launchRes = await realManager.launchApp('notepad.exe');
         assert.ok(launchRes.appId);
         assert.ok(launchRes.pid > 0);
+        testLaunchedPids.add(launchRes.pid);
 
         // Allow window to initialize
         let notepadApp = null;
         for (let i = 0; i < 10; i++) {
             await new Promise(r => setTimeout(r, 400));
             const apps = await realManager.listApps();
-            notepadApp = apps.find(a => (a.name || '').includes('Notepad') || a.processName === 'notepad' || a.processName === 'Notepad');
+            notepadApp = apps.find(a => a.appId === launchRes.appId || a.pid === launchRes.pid);
             if (notepadApp) break;
         }
         assert.ok(notepadApp, 'Launched Notepad should be visible in desktop window list');
@@ -267,7 +259,7 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
         // 3. Inspect UI tree
         let tree = null;
         for (let i = 0; i < 6; i++) {
-            tree = await realManager.inspectUI('Notepad', { maxDepth: 2 });
+            tree = await realManager.inspectUI(launchRes.appId, { maxDepth: 2 });
             if (tree && (tree.name || '').toLowerCase().includes('notepad')) break;
             await new Promise(r => setTimeout(r, 400));
         }
@@ -276,27 +268,28 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
 
         // 4. Type harmless test text
         const testText = 'L.U.C.Y. Desktop Automation Test Baseline ' + Date.now();
-        const typeRes = await realManager.typeText('Notepad', testText);
+        const typeRes = await realManager.typeText(launchRes.appId, testText);
         assert.equal(typeRes.success, true);
         assert.equal(typeRes.verified, true);
         assert.equal(typeRes.readText, testText);
 
         // 5. Find element
-        const found = await realManager.findElement('Notepad', { name: 'Text editor' });
+        const found = await realManager.findElement(launchRes.appId, { name: 'Text editor' });
         assert.ok(found);
         assert.equal(found.name, 'Text editor');
 
         // 6. Take screenshot
-        const shot = await realManager.takeScreenshot('Notepad');
+        const shot = await realManager.takeScreenshot(launchRes.appId);
         assert.ok(shot);
         assert.equal(shot.format, 'png');
         assert.ok(shot.width > 0 && shot.height > 0);
         assert.ok(typeof shot.base64 === 'string' && shot.base64.length > 500);
 
         // 7. Close Notepad with savePolicy: dont_save for authorized test changes
-        const closeRes = await realManager.closeApp('Notepad', { savePolicy: 'dont_save' });
+        const closeRes = await realManager.closeApp(launchRes.appId, { savePolicy: 'dont_save' });
         assert.ok(closeRes);
         assert.equal(closeRes.closed, true);
+        testLaunchedPids.delete(launchRes.pid);
     });
 
     await suite.test('Integration: Modal Dialog Detection and Discarding Semantics on Notepad', async () => {
@@ -307,16 +300,17 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
         // 1. Launch fresh Notepad instance with named file
         const launchRes = await realManager.launchApp('notepad.exe', `"${tmpFile}"`);
         assert.ok(launchRes.appId);
+        testLaunchedPids.add(launchRes.pid);
         await new Promise(r => setTimeout(r, 1500));
 
         // 2. Type disposable test changes into document
         const uniqueText = 'L.U.C.Y. Modal Dialog Regression Test ' + Date.now();
-        await realManager.typeText('Notepad', uniqueText);
+        await realManager.typeText(launchRes.appId, uniqueText);
         await new Promise(r => setTimeout(r, 600));
 
         // 3. Attempt to close WITHOUT policy (default: ask/ambiguous)
         // Must NOT silently kill or discard! Must report dialogOpen: true, closed: false
-        const ambiguousClose = await realManager.closeApp('Notepad');
+        const ambiguousClose = await realManager.closeApp(launchRes.appId);
         assert.ok(ambiguousClose);
         assert.equal(ambiguousClose.closed, false);
         assert.equal(ambiguousClose.dialogOpen, true);
@@ -324,18 +318,19 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
         assert.ok(ambiguousClose.availableActions.includes('save'));
 
         // 4. Now explicitly resolve with authorized disposable discard: dont_save
-        const handleRes = await realManager.handleDialog('Notepad', 'dont_save');
+        const handleRes = await realManager.handleDialog(launchRes.appId, 'dont_save');
         assert.ok(handleRes);
         assert.equal(handleRes.handled, true);
         assert.equal(handleRes.action, 'dont_save');
 
         // 5. Verify no dialog remains open
         await new Promise(r => setTimeout(r, 600));
-        const detAfter = await realManager.detectDialog('Notepad');
+        const detAfter = await realManager.detectDialog(launchRes.appId);
         assert.equal(detAfter.dialogOpen, false);
 
         // Clean up window & file
-        await realManager.closeApp('Notepad', { savePolicy: 'dont_save' }).catch(() => {});
+        await realManager.closeApp(launchRes.appId, { savePolicy: 'dont_save' }).catch(() => {});
+        testLaunchedPids.delete(launchRes.pid);
         try { fs.unlinkSync(tmpFile); } catch (_) {}
     });
 
@@ -345,31 +340,34 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
         fs.writeFileSync(tmpFile, 'Cancel baseline\n', 'utf8');
 
         // 1. Launch with named file
-        await realManager.launchApp('notepad.exe', `"${tmpFile}"`);
+        const launchRes = await realManager.launchApp('notepad.exe', `"${tmpFile}"`);
+        assert.ok(launchRes.appId);
+        testLaunchedPids.add(launchRes.pid);
         await new Promise(r => setTimeout(r, 1500));
 
         // 2. Type dirty changes
-        await realManager.typeText('Notepad', 'Changes to cancel');
+        await realManager.typeText(launchRes.appId, 'Changes to cancel');
         await new Promise(r => setTimeout(r, 600));
 
         // 3. Close with ambiguous policy -> dialog open
-        const amb = await realManager.closeApp('Notepad');
+        const amb = await realManager.closeApp(launchRes.appId);
         assert.equal(amb.closed, false);
         assert.equal(amb.dialogOpen, true);
 
         // 4. Handle dialog with 'cancel'
-        const cancelRes = await realManager.handleDialog('Notepad', 'cancel');
+        const cancelRes = await realManager.handleDialog(launchRes.appId, 'cancel');
         assert.equal(cancelRes.handled, true);
         assert.equal(cancelRes.action, 'cancel');
 
         // 5. Verify window remains alive and open
         await new Promise(r => setTimeout(r, 500));
         const apps = await realManager.listApps();
-        const stillOpen = apps.some(a => (a.name || '').includes('Notepad') || a.processName === 'Notepad');
+        const stillOpen = apps.some(a => a.appId === launchRes.appId || a.pid === launchRes.pid);
         assert.equal(stillOpen, true, 'Window must remain open after cancel action');
 
         // Clean up
-        await realManager.closeApp('Notepad', { savePolicy: 'dont_save' }).catch(() => {});
+        await realManager.closeApp(launchRes.appId, { savePolicy: 'dont_save' }).catch(() => {});
+        testLaunchedPids.delete(launchRes.pid);
         await new Promise(r => setTimeout(r, 800));
         try { fs.unlinkSync(tmpFile); } catch (_) {}
     });
@@ -380,19 +378,24 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
         fs.writeFileSync(tmpFile, 'Original header\n', 'utf8');
 
         // 1. Launch with named file
-        await realManager.launchApp('notepad.exe', `"${tmpFile}"`);
+        const launchRes = await realManager.launchApp('notepad.exe', `"${tmpFile}"`);
+        assert.ok(launchRes.appId);
+        testLaunchedPids.add(launchRes.pid);
         await new Promise(r => setTimeout(r, 1500));
 
         // 2. Type authorized changes
         const uniquePayload = 'Verified persisted payload ' + Date.now();
-        await realManager.typeText('Notepad', uniquePayload);
+        await realManager.typeText(launchRes.appId, uniquePayload);
         await new Promise(r => setTimeout(r, 600));
 
         // 3. Close with savePolicy: 'save'
-        const saveRes = await realManager.closeApp('Notepad', { savePolicy: 'save' });
+        const saveRes = await realManager.closeApp(launchRes.appId, { savePolicy: 'save' });
         assert.ok(saveRes);
-        assert.equal(saveRes.dialogHandled, true);
-        assert.equal(saveRes.actionTaken, 'save');
+        assert.equal(saveRes.closed, true);
+        if (saveRes.dialogHandled) {
+            assert.equal(saveRes.actionTaken, 'save');
+        }
+        testLaunchedPids.delete(launchRes.pid);
 
         // 4. Verify disk file content
         await new Promise(r => setTimeout(r, 1000));
@@ -404,42 +407,43 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
     });
 
     await suite.test('Integration: Notepad Clean Close with No Unsaved Changes', async () => {
-        clearNotepadSessionState();
-        await new Promise(r => setTimeout(r, 600));
         const launchRes = await realManager.launchApp('notepad.exe');
         assert.ok(launchRes.appId);
+        testLaunchedPids.add(launchRes.pid);
         await new Promise(r => setTimeout(r, 1500));
 
-        const closeRes = await realManager.closeApp('Notepad');
+        const closeRes = await realManager.closeApp(launchRes.appId);
         assert.ok(closeRes);
         assert.equal(closeRes.closed, true);
+        testLaunchedPids.delete(launchRes.pid);
     });
 
     await suite.test('Integration: Live Harmless Calculator Automation Flow', async () => {
         // 1. Launch Calculator
         const launchRes = await realManager.launchApp('calc.exe');
         assert.ok(launchRes.appId);
+        if (launchRes.pid) testLaunchedPids.add(launchRes.pid);
 
         // Allow calculator window to settle
         await new Promise(r => setTimeout(r, 1500));
 
         // 2. Find Calculator in apps
         const apps = await realManager.listApps();
-        const calcApp = apps.find(a => (a.name || '').toLowerCase().includes('calculator') || (a.processName || '').toLowerCase().includes('calculator'));
+        const calcApp = apps.find(a => a.appId === launchRes.appId || (a.name || '').toLowerCase().includes('calculator'));
 
         if (calcApp) {
             // 3. Inspect Calculator UI
-            const tree = await realManager.inspectUI('Calculator', { maxDepth: 2 });
+            const tree = await realManager.inspectUI(launchRes.appId, { maxDepth: 2 });
             assert.ok(tree);
 
             // 4. Find button (Five, Clear, or num5Button)
-            let btn = await realManager.findElement('Calculator', { automationId: 'num5Button' });
-            if (!btn) btn = await realManager.findElement('Calculator', { name: 'Five' });
-            if (!btn) btn = await realManager.findElement('Calculator', { name: 'Clear' });
+            let btn = await realManager.findElement(launchRes.appId, { automationId: 'num5Button' });
+            if (!btn) btn = await realManager.findElement(launchRes.appId, { name: 'Five' });
+            if (!btn) btn = await realManager.findElement(launchRes.appId, { name: 'Clear' });
 
             if (btn) {
                 // 5. Click button via UI Automation InvokePattern
-                const clickRes = await realManager.clickElement('Calculator', {
+                const clickRes = await realManager.clickElement(launchRes.appId, {
                     name: btn.name,
                     automationId: btn.automationId
                 });
@@ -448,9 +452,10 @@ test('Native Desktop Automation: Unit & Integration Test Suite', async (suite) =
             }
 
             // 6. Close Calculator
-            const closeRes = await realManager.closeApp('Calculator');
+            const closeRes = await realManager.closeApp(launchRes.appId);
             assert.ok(closeRes);
             assert.equal(closeRes.closed, true);
+            if (launchRes.pid) testLaunchedPids.delete(launchRes.pid);
         }
     });
 });

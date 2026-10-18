@@ -9,17 +9,21 @@
 
 const RISK_TIERS = Object.freeze({
     SAFE_READ: 'SAFE_READ',                   // Internal facts, system time, memory view
+    LOW_IMPACT: 'LOW_IMPACT',                 // Low-risk diagnostic inspection
     WORKSPACE_READ: 'WORKSPACE_READ',         // Reading files, listing workspace dirs
     WORKSPACE_WRITE: 'WORKSPACE_WRITE',       // Creating/modifying files within workspace boundary
     NETWORK_READ: 'NETWORK_READ',             // Fetching web content (untrusted input)
     CONSEQUENTIAL: 'CONSEQUENTIAL',           // Modifying external files, executing commands, deleting files
+    HIGH_RISK: 'HIGH_RISK',                   // High-impact sensitive operation
     CRITICAL: 'CRITICAL'                      // System reconfiguration, credential changes, sending external data
 });
 
 const PERMISSION_MODES = Object.freeze({
     STRICT: 'strict',         // Every write and network access requires confirmation
     STANDARD: 'standard',     // Safe/Workspace reads auto-permitted; writes and consequential ops require confirmation
-    AUTONOMOUS_SANDBOX: 'autonomous_sandbox' // Workspace writes permitted inside sandbox; external/consequential still gated
+    AUTONOMOUS_SANDBOX: 'autonomous_sandbox', // Workspace writes permitted inside sandbox; external/consequential still gated
+    ASK_EVERY_TIME: 'strict',
+    NORMAL: 'standard'
 });
 
 class PermissionAuthority {
@@ -61,6 +65,14 @@ class PermissionAuthority {
         this.confirmationHandler = handler;
     }
 
+    setPromptHandler(handler) {
+        return this.setConfirmationHandler(handler);
+    }
+
+    setPromptCallback(handler) {
+        return this.setConfirmationHandler(handler);
+    }
+
     setMode(newMode) {
         if (!Object.values(PERMISSION_MODES).includes(newMode)) {
             throw new Error(`Invalid permission mode: ${newMode}`);
@@ -99,9 +111,9 @@ class PermissionAuthority {
         // 2. Classify by risk tier
         const tier = riskTier || RISK_TIERS.CONSEQUENTIAL;
 
-        // Tier 0: SAFE_READ is always permitted
-        if (tier === RISK_TIERS.SAFE_READ) {
-            const result = { permitted: true, reason: 'Safe read-only operation', requiresConfirmation: false, auditId };
+        // Tier 0: SAFE_READ and LOW_IMPACT are always permitted
+        if (tier === RISK_TIERS.SAFE_READ || tier === RISK_TIERS.LOW_IMPACT) {
+            const result = { permitted: true, reason: 'Safe read-only or low-impact operation', requiresConfirmation: false, auditId };
             this._logAudit({ auditId, timestamp, request, decision: result });
             return result;
         }

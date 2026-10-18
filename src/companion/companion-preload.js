@@ -25,16 +25,22 @@ contextBridge.exposeInMainWorld('companionIpc', {
     onVisibilityChanged: (callback) => {
         ipcRenderer.on('companion:visibilityChanged', (_event, data) => callback(data));
     },
+    onResetState: (callback) => {
+        ipcRenderer.on('companion:resetState', (_event, data) => callback(data));
+    },
     onPlayTrick: (callback) => {
         ipcRenderer.on('companion:playTrick', (_event, data) => callback(data));
+    },
+    onLifecycleStateChanged: (callback) => {
+        ipcRenderer.on('companion:lifecycleStateChanged', (_event, data) => callback(data));
     },
 
     // Window controls
     moveWindow: (deltaX, deltaY) => {
         ipcRenderer.send('companion:moveWindow', { deltaX, deltaY });
     },
-    setWindowSize: (width, height) => {
-        return ipcRenderer.invoke('companion:setWindowSize', { width, height });
+    setWindowSize: (width, height, temporary = false) => {
+        return ipcRenderer.invoke('companion:setWindowSize', { width, height, temporary });
     },
     resizeDelta: (deltaWidth, deltaHeight) => {
         return ipcRenderer.invoke('companion:resizeDelta', { deltaWidth, deltaHeight });

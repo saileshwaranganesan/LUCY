@@ -109,6 +109,8 @@ class AudioRecorder {
         this.sampleRate = sampleRate;
         this.onAudioLevel = onAudioLevel;
         this.onAudioFrame = onAudioFrame;
+        this.wakeWordCallback = null;
+        this.recordingCallback = null;
         this.onStreamEnd = onStreamEnd;
         this.isRecording = false;
         this.isStreaming = false;
@@ -188,9 +190,19 @@ class AudioRecorder {
                         this.totalSamples += chunk.length;
                     }
 
-                    // Continuous stream callback (e.g. for wake-word engine)
+                    // Recording frame callback (e.g. for VAD / ConversationStateMachine)
+                    if (typeof this.recordingCallback === 'function') {
+                        try { this.recordingCallback(chunk); } catch (_) {}
+                    }
+
+                    // Continuous wake-word stream callback
+                    if (typeof this.wakeWordCallback === 'function') {
+                        try { this.wakeWordCallback(chunk); } catch (_) {}
+                    }
+
+                    // General stream callback (backward-compatible)
                     if (typeof this.onAudioFrame === 'function') {
-                        this.onAudioFrame(chunk);
+                        try { this.onAudioFrame(chunk); } catch (_) {}
                     }
 
                     if (typeof this.onAudioLevel === 'function') {
@@ -222,16 +234,27 @@ class AudioRecorder {
      */
     async startContinuousCapture({ onAudioFrame = null } = {}) {
         if (onAudioFrame) {
-            this.onAudioFrame = onAudioFrame;
+            this.wakeWordCallback = onAudioFrame;
         }
         this.isStreaming = true;
         try {
             await this._ensureCapturePipeline();
+            if (this.audioContext && this.audioContext.state === 'suspended') {
+                await this.audioContext.resume().catch(() => {});
+            }
             return true;
         } catch (err) {
-            this.cleanup();
+            this.isStreaming = false;
+            this.wakeWordCallback = null;
+            if (!this.isRecording) {
+                this.cleanup();
+            }
             throw err;
         }
+    }
+
+    setWakeWordCallback(fn) {
+        this.wakeWordCallback = typeof fn === 'function' ? fn : null;
     }
 
     /**
@@ -239,7 +262,7 @@ class AudioRecorder {
      */
     stopContinuousCapture() {
         this.isStreaming = false;
-        this.onAudioFrame = null;
+        this.wakeWordCallback = null;
         if (!this.isRecording) {
             this.cleanup();
         }
@@ -248,7 +271,10 @@ class AudioRecorder {
     /**
      * Start recording an utterance (Push-to-talk / speech intake).
      */
-    async start() {
+    async start(options = {}) {
+        if (options && typeof options.onAudioFrame === 'function') {
+            this.recordingCallback = options.onAudioFrame;
+        }
         if (this.isRecording) return true;
 
         this.audioChunks = [];
@@ -256,10 +282,17 @@ class AudioRecorder {
 
         try {
             await this._ensureCapturePipeline();
+            if (this.audioContext && this.audioContext.state === 'suspended') {
+                await this.audioContext.resume().catch(() => {});
+            }
             this.isRecording = true;
             return true;
         } catch (err) {
-            this.cleanup();
+            this.isRecording = false;
+            this.recordingCallback = null;
+            if (!this.isStreaming) {
+                this.cleanup();
+            }
             throw err;
         }
     }
@@ -272,6 +305,7 @@ class AudioRecorder {
             return null;
         }
         this.isRecording = false;
+        this.recordingCallback = null;
 
         // Flatten collected Float32 chunks
         const flattened = new Float32Array(this.totalSamples);
@@ -284,7 +318,7 @@ class AudioRecorder {
         this.audioChunks = [];
         this.totalSamples = 0;
 
-        // Clean up pipeline if not continuously streaming
+        // Clean up pipeline only if not continuously streaming
         if (!this.isStreaming) {
             this.cleanup();
         }
@@ -296,6 +330,7 @@ class AudioRecorder {
 
     cancel() {
         this.isRecording = false;
+        this.recordingCallback = null;
         this.audioChunks = [];
         this.totalSamples = 0;
         if (!this.isStreaming) {
@@ -306,6 +341,8 @@ class AudioRecorder {
     cleanup() {
         this.isRecording = false;
         this.isStreaming = false;
+        this.recordingCallback = null;
+        this.wakeWordCallback = null;
         this.audioChunks = [];
         this.totalSamples = 0;
 

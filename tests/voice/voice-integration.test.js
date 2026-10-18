@@ -125,6 +125,18 @@ Check the file at C:\\Users\\admin\\Desktop\\LUCY\\data.json or https://github.c
     assert.match(cleaned, /Complete!/);
 });
 
+test('Voice Sanitizer: Strips action words (boing, sparkle, twirl, wheee, purr, giggle) and stage directions', () => {
+    assert.equal(cleanTextForSpeech('Boing! 🦘 High fairy leap into the air!'), 'High fairy leap into the air!');
+    assert.equal(cleanTextForSpeech('Sparkle! ✨ Bouncing with celestial happiness!'), 'Bouncing with celestial happiness!');
+    assert.equal(cleanTextForSpeech('Twirl! 💫 Watch me spin through the stardust!'), 'Watch me spin through the stardust!');
+    assert.equal(cleanTextForSpeech('Swoosh! 🦋 Gliding on celestial wings!'), 'Gliding on celestial wings!');
+    assert.equal(cleanTextForSpeech('Wheee! 🤸 Full aerial loop-de-loop!'), 'Full aerial loop-de-loop!');
+    assert.equal(cleanTextForSpeech('Sparkle sparkle! You always brighten my day! 💫'), 'You always brighten my day!');
+    assert.equal(cleanTextForSpeech('*boing* *sparkle* Hello user!'), 'Hello user!');
+    assert.equal(cleanTextForSpeech('Look at this (sparkle) (giggles) complete.'), 'Look at this complete.');
+    assert.equal(cleanTextForSpeech('Sparkle! ✨'), 'Ready!');
+});
+
 test('SpeechRecognition: Push-to-talk start/stop and transcription forwarding', async () => {
     MockSpeechRecognition.instances = [];
     const states = [];

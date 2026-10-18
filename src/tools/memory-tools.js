@@ -41,6 +41,10 @@ function registerMemoryTools(registry, memoryStore) {
                 limit: {
                     type: 'number',
                     description: 'Maximum number of results to return (default: 10, max: 50)'
+                },
+                projectId: {
+                    type: 'string',
+                    description: 'Optional project ID to scope search to a specific project context'
                 }
             },
             required: ['query']
@@ -55,13 +59,16 @@ function registerMemoryTools(registry, memoryStore) {
                 : (params.category ? null : null); // null means all categories
 
             const limit = Math.max(1, Math.min(50, Number(params.limit) || 10));
+            const projectId = (typeof params.projectId === 'string' && params.projectId.trim())
+                ? params.projectId.trim().toLowerCase()
+                : null;
 
             try {
                 let results = [];
                 if (typeof memoryStore.searchMemories === 'function') {
-                    results = memoryStore.searchMemories(trimmedQuery, { category, limit });
+                    results = memoryStore.searchMemories(trimmedQuery, { category, limit, projectId });
                 } else if (typeof memoryStore.getMemories === 'function') {
-                    results = memoryStore.getMemories({ query: trimmedQuery, category, limit });
+                    results = memoryStore.getMemories({ query: trimmedQuery, category, limit, projectId });
                 }
 
                 // Sanitize records to guarantee zero secret leakage and consistent schema
@@ -203,15 +210,22 @@ function registerMemoryTools(registry, memoryStore) {
                 limit: {
                     type: 'number',
                     description: 'Maximum number of records to return (default: 20, max: 100)'
+                },
+                projectId: {
+                    type: 'string',
+                    description: 'Optional project ID to scope listed memories'
                 }
             }
         },
         handler: async (params = {}) => {
             const category = params.category || null;
             const limit = Math.max(1, Math.min(100, Number(params.limit) || 20));
+            const projectId = (typeof params.projectId === 'string' && params.projectId.trim())
+                ? params.projectId.trim().toLowerCase()
+                : null;
 
             try {
-                const list = memoryStore.getMemories({ category, limit });
+                const list = memoryStore.getMemories({ category, limit, projectId });
                 const sanitized = list.map((m) => ({
                     id: m.id,
                     category: m.category,

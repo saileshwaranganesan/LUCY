@@ -96,6 +96,7 @@ class SqliteMemoryAdapter {
         }
 
         this._createSchema();
+        this._cleanupOrphanedTempFiles();
         this.initialized = true;
         return this;
     }
@@ -141,6 +142,19 @@ class SqliteMemoryAdapter {
             );
 
             CREATE INDEX IF NOT EXISTS idx_task_checkpoints_status ON task_checkpoints(status);
+
+            CREATE TABLE IF NOT EXISTS project_snapshots (
+                project_id TEXT PRIMARY KEY,
+                objective TEXT NOT NULL,
+                architecture TEXT NOT NULL DEFAULT '',
+                tech_stack TEXT NOT NULL DEFAULT '',
+                stage TEXT NOT NULL DEFAULT 'proposed',
+                snapshot_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_project_snapshots_stage ON project_snapshots(stage);
         `);
     }
 
@@ -170,6 +184,32 @@ class SqliteMemoryAdapter {
                 try { fs.unlinkSync(tempPath); } catch {}
             }
         }
+    }
+
+    /**
+     * Safely sweep orphaned .tmp_* files left behind by prior crashes or aborted test writes
+     */
+    _cleanupOrphanedTempFiles() {
+        try {
+            const dir = path.dirname(this.dbPath);
+            if (!fs.existsSync(dir)) return;
+            const base = path.basename(this.dbPath);
+            const prefix = `${base}.tmp_`;
+            const files = fs.readdirSync(dir);
+            const now = Date.now();
+            for (const file of files) {
+                if (file.startsWith(prefix)) {
+                    const fullPath = path.join(dir, file);
+                    try {
+                        const stat = fs.statSync(fullPath);
+                        // Clean files older than 60 seconds to avoid race conditions with active writes
+                        if (now - stat.mtimeMs > 60000) {
+                            fs.unlinkSync(fullPath);
+                        }
+                    } catch (_) {}
+                }
+            }
+        } catch (_) {}
     }
 
     /**
@@ -263,15 +303,26 @@ class SqliteMemoryAdapter {
             category = null,
             status = 'active',
             limit = 50,
-            offset = 0
+            offset = 0,
+            includeSuperseded = false,
+            projectId = null,
+            includePreferences = false
         } = options;
 
         let query = 'SELECT * FROM memories WHERE 1=1';
         const params = [];
 
         if (status) {
-            query += ' AND (status = ? OR status = "conflict")';
+            if (includeSuperseded) {
+                query += ' AND (status = ? OR status = "conflict" OR status = "superseded")';
+            } else {
+                query += ' AND (status = ? OR status = "conflict")';
+            }
             params.push(status);
+        }
+
+        if (!includeSuperseded) {
+            query += ' AND status != "superseded" AND type != "superseded"';
         }
 
         if (category) {
@@ -285,12 +336,23 @@ class SqliteMemoryAdapter {
         const stmt = this.db.prepare(query);
         stmt.bind(params);
 
-        const results = [];
+        let results = [];
         while (stmt.step()) {
             const row = stmt.getAsObject();
             results.push(this._mapRowToRecord(row));
         }
         stmt.free();
+
+        if (projectId) {
+            const norm = String(projectId).trim().toLowerCase();
+            results = results.filter((m) => {
+                if (m.metadata && m.metadata.projectId && String(m.metadata.projectId).toLowerCase() === norm) return true;
+                if (m.key && m.key.toLowerCase().includes(norm)) return true;
+                if (m.tags && Array.isArray(m.tags) && m.tags.some((t) => String(t).toLowerCase() === norm)) return true;
+                if (includePreferences && (m.category === MEMORY_CATEGORIES.USER_APPROVED || m.type === 'confirmed_fact')) return true;
+                return false;
+            });
+        }
 
         return results;
     }
@@ -316,11 +378,31 @@ class SqliteMemoryAdapter {
      */
     searchMemories(query, options = {}) {
         if (!this.initialized) throw new Error('Database not initialized');
-        const { category = null, status = 'active', limit = 20 } = options;
+        const {
+            category = null,
+            status = 'active',
+            limit = 20,
+            includeSuperseded = false,
+            projectId = null,
+            includePreferences = false
+        } = options;
         const all = this.getAllMemories();
         const pool = all.filter((m) => {
-            if (status && m.status !== status && m.status !== 'conflict') return false;
+            if (!includeSuperseded && (m.status === 'superseded' || m.type === 'superseded')) return false;
+            if (status && m.status !== status && m.status !== 'conflict' && (!includeSuperseded || m.status !== 'superseded')) return false;
             if (category && m.category !== category) return false;
+            if (projectId) {
+                const norm = String(projectId).trim().toLowerCase();
+                const matchesProject = (m.metadata && m.metadata.projectId && String(m.metadata.projectId).toLowerCase() === norm) ||
+                    (m.key && m.key.toLowerCase().includes(norm)) ||
+                    (m.tags && Array.isArray(m.tags) && m.tags.some((t) => String(t).toLowerCase() === norm));
+                if (!matchesProject) {
+                    if (includePreferences && (m.category === MEMORY_CATEGORIES.USER_APPROVED || m.type === 'confirmed_fact')) {
+                        return true;
+                    }
+                    return false;
+                }
+            }
             return true;
         });
         if (!query || !query.trim()) {
@@ -375,14 +457,20 @@ class SqliteMemoryAdapter {
         const newKey = updateObj.key ? updateObj.key.trim().toLowerCase() : existing.key;
         const newStatus = updateObj.status || existing.status;
         const newTags = updateObj.tags ? JSON.stringify(updateObj.tags) : existing.tags;
+        let mergedMetadata = {};
+        try { mergedMetadata = JSON.parse(existing.metadata || '{}'); } catch {}
+        if (updateObj.metadata && typeof updateObj.metadata === 'object') {
+            mergedMetadata = { ...mergedMetadata, ...updateObj.metadata };
+        }
+        const newMetadataJson = JSON.stringify(mergedMetadata);
         const now = new Date().toISOString();
 
         const updateStmt = this.db.prepare(`
             UPDATE memories
-            SET content = ?, type = ?, key = ?, status = ?, tags = ?, updated_at = ?
+            SET content = ?, type = ?, key = ?, status = ?, tags = ?, metadata = ?, updated_at = ?
             WHERE id = ?
         `);
-        updateStmt.run([cleanContent, newType, newKey, newStatus, newTags, now, existing.id]);
+        updateStmt.run([cleanContent, newType, newKey, newStatus, newTags, newMetadataJson, now, existing.id]);
         updateStmt.free();
 
         this.saveToDisk();
@@ -578,6 +666,80 @@ class SqliteMemoryAdapter {
         if (!this.initialized) return false;
         const stmt = this.db.prepare('DELETE FROM task_checkpoints WHERE task_id = ?');
         stmt.run([taskId]);
+        const deleted = this.db.getRowsModified() > 0;
+        stmt.free();
+        if (deleted) this.saveToDisk();
+        return deleted;
+    }
+
+    // Project Snapshots Persistence
+    saveProjectSnapshot(snapshot) {
+        if (!this.initialized) throw new Error('Database not initialized');
+        if (!snapshot || typeof snapshot !== 'object' || !snapshot.projectId) {
+            throw new Error('Project snapshot must have a valid projectId');
+        }
+        const projectId = String(snapshot.projectId).trim().toLowerCase();
+        const objective = snapshot.objective || '';
+        const architecture = snapshot.architecture || '';
+        const techStack = snapshot.techStack || '';
+        const stage = snapshot.stage || 'proposed';
+        const now = new Date().toISOString();
+        const snapshotJson = JSON.stringify(snapshot);
+
+        const stmt = this.db.prepare(`
+            INSERT OR REPLACE INTO project_snapshots (
+                project_id, objective, architecture, tech_stack, stage,
+                snapshot_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        stmt.run([
+            projectId,
+            objective,
+            architecture,
+            techStack,
+            stage,
+            snapshotJson,
+            snapshot.createdAt || now,
+            now
+        ]);
+        stmt.free();
+        this.saveToDisk();
+        return { ...snapshot, projectId, updatedAt: now };
+    }
+
+    getProjectSnapshot(projectId) {
+        if (!this.initialized) return null;
+        if (!projectId) return null;
+        const stmt = this.db.prepare('SELECT snapshot_json FROM project_snapshots WHERE project_id = ? LIMIT 1');
+        stmt.bind([String(projectId).trim().toLowerCase()]);
+        let result = null;
+        if (stmt.step()) {
+            try {
+                result = JSON.parse(stmt.getAsObject().snapshot_json);
+            } catch {}
+        }
+        stmt.free();
+        return result;
+    }
+
+    listProjectSnapshots() {
+        if (!this.initialized) return [];
+        const stmt = this.db.prepare('SELECT snapshot_json FROM project_snapshots ORDER BY updated_at DESC');
+        const results = [];
+        while (stmt.step()) {
+            try {
+                results.push(JSON.parse(stmt.getAsObject().snapshot_json));
+            } catch {}
+        }
+        stmt.free();
+        return results;
+    }
+
+    deleteProjectSnapshot(projectId) {
+        if (!this.initialized) return false;
+        if (!projectId) return false;
+        const stmt = this.db.prepare('DELETE FROM project_snapshots WHERE project_id = ?');
+        stmt.run([String(projectId).trim().toLowerCase()]);
         const deleted = this.db.getRowsModified() > 0;
         stmt.free();
         if (deleted) this.saveToDisk();

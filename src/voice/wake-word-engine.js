@@ -18,9 +18,32 @@
  * 7. Optional dual-stage local Whisper verification when available.
  */
 
-const { EventEmitter } = require('events');
-const { normalizeAudioBuffer, extractAudioFeatures, SAMPLE_RATE } = require('./acoustic-feature-extractor.js');
-const { AcousticWakeModel } = require('./acoustic-wake-model.js');
+const _EventEmitter = (typeof require !== 'undefined')
+    ? require('events').EventEmitter
+    : class SimpleEventEmitter {
+        constructor() { this._listeners = {}; }
+        on(event, fn) { (this._listeners[event] = this._listeners[event] || []).push(fn); return this; }
+        off(event, fn) { if (this._listeners[event]) this._listeners[event] = this._listeners[event].filter(f => f !== fn); return this; }
+        removeListener(event, fn) { return this.off(event, fn); }
+        removeAllListeners(event) { if (event) { delete this._listeners[event]; } else { this._listeners = {}; } return this; }
+        emit(event, ...args) {
+            const list = (this._listeners[event] || []).slice();
+            list.forEach(fn => { try { fn(...args); } catch (e) { console.error('[EventEmitter]', e); } });
+            return list.length > 0;
+        }
+    };
+
+const _normalizeAudioBuffer = (typeof require !== 'undefined')
+    ? require('./acoustic-feature-extractor.js').normalizeAudioBuffer
+    : (typeof window !== 'undefined' ? window.normalizeAudioBuffer : globalThis.normalizeAudioBuffer);
+
+const _AcousticWakeModel = (typeof require !== 'undefined')
+    ? require('./acoustic-wake-model.js').AcousticWakeModel
+    : (typeof window !== 'undefined' ? window.AcousticWakeModel : globalThis.AcousticWakeModel);
+
+const _WW_SAMPLE_RATE = (typeof require !== 'undefined')
+    ? require('./acoustic-feature-extractor.js').SAMPLE_RATE
+    : (typeof window !== 'undefined' && window.SAMPLE_RATE ? window.SAMPLE_RATE : 16000);
 
 const WAKE_WORD_LICENCE = 'Apache-2.0';
 const DEFAULT_KEYWORDS = ['hey lucy', 'lucy'];
@@ -38,13 +61,13 @@ const PRIVACY_STATES = Object.freeze({
     TRIGGERED: 'triggered'
 });
 
-class WakeWordEngine extends EventEmitter {
+class WakeWordEngine extends _EventEmitter {
     constructor({
         enabled = false,
         keywords = DEFAULT_KEYWORDS,
         confidenceThreshold = DEFAULT_CONFIDENCE_THRESHOLD,
         cooldownMs = DEFAULT_COOLDOWN_MS,
-        sampleRate = SAMPLE_RATE,
+        sampleRate = _WW_SAMPLE_RATE,
         sensitivity = 0.5,
         whisperEngine = null,
         dualStageVerification = false,
@@ -56,14 +79,14 @@ class WakeWordEngine extends EventEmitter {
             ? keywords.map(k => String(k).trim().toLowerCase())
             : [...DEFAULT_KEYWORDS];
         this.cooldownMs = Math.max(500, Number(cooldownMs) || DEFAULT_COOLDOWN_MS);
-        this.sampleRate = sampleRate || SAMPLE_RATE;
+        this.sampleRate = sampleRate || _WW_SAMPLE_RATE;
         this.sensitivity = Math.max(0.0, Math.min(1.0, Number(sensitivity) || 0.5));
         this.whisperEngine = whisperEngine;
         this.dualStageVerification = Boolean(dualStageVerification);
         this.allowLegacyEnergyFallback = Boolean(allowLegacyEnergyFallback);
 
         // Acoustic Model
-        this.acousticModel = new AcousticWakeModel({
+        this.acousticModel = new _AcousticWakeModel({
             keywords: this.keywords,
             confidenceThreshold,
             sensitivity: this.sensitivity
@@ -255,7 +278,7 @@ class WakeWordEngine extends EventEmitter {
             }
         } else if (audioFrame) {
             // 2. Genuine Acoustic Ingestion & Inference
-            const normalizedFrame = normalizeAudioBuffer(audioFrame);
+            const normalizedFrame = _normalizeAudioBuffer(audioFrame);
             if (normalizedFrame.length === 0) {
                 return null;
             }
@@ -365,11 +388,22 @@ class WakeWordEngine extends EventEmitter {
     }
 }
 
-module.exports = {
-    WakeWordEngine,
-    PRIVACY_STATES,
-    WAKE_WORD_LICENCE,
-    DEFAULT_KEYWORDS,
-    DEFAULT_CONFIDENCE_THRESHOLD,
-    DEFAULT_COOLDOWN_MS
-};
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        WakeWordEngine,
+        PRIVACY_STATES,
+        WAKE_WORD_LICENCE,
+        DEFAULT_KEYWORDS,
+        DEFAULT_CONFIDENCE_THRESHOLD,
+        DEFAULT_COOLDOWN_MS
+    };
+}
+
+if (typeof window !== 'undefined') {
+    window.WakeWordEngine = WakeWordEngine;
+    window.PRIVACY_STATES = PRIVACY_STATES;
+    window.WAKE_WORD_LICENCE = WAKE_WORD_LICENCE;
+    window.DEFAULT_KEYWORDS = DEFAULT_KEYWORDS;
+    window.DEFAULT_CONFIDENCE_THRESHOLD = DEFAULT_CONFIDENCE_THRESHOLD;
+    window.DEFAULT_COOLDOWN_MS = DEFAULT_COOLDOWN_MS;
+}

@@ -457,6 +457,8 @@ class ModelCatalogue {
 
     /**
      * Retrieve a model entry by ID and optional provider.
+     * Supports canonical tag normalization (e.g. :latest stripping), common aliases,
+     * and safe architecture-family capability inference.
      * @param {string} modelId
      * @param {string} [provider]
      * @returns {Object|null}
@@ -464,17 +466,103 @@ class ModelCatalogue {
     getModel(modelId, provider = null) {
         if (!modelId) return null;
         const cleanId = String(modelId).trim().toLowerCase();
+        const baseId = cleanId.replace(/:latest$/, '');
+        const prov = provider ? String(provider).trim().toLowerCase() : null;
 
-        if (provider) {
-            const key = this._makeKey(provider, cleanId);
-            if (this._models.has(key)) return { ...this._models.get(key) };
+        // 1. Direct exact key lookup
+        if (prov) {
+            const exactKey = this._makeKey(prov, cleanId);
+            if (this._models.has(exactKey)) return { ...this._models.get(exactKey) };
+
+            const baseKey = this._makeKey(prov, baseId);
+            if (this._models.has(baseKey)) return { ...this._models.get(baseKey) };
         }
 
-        // Search across all registered providers
+        // 2. Search across all registered models by exact ID or base ID
         for (const entry of this._models.values()) {
-            if (entry.id.toLowerCase() === cleanId) {
+            if (prov && entry.provider !== prov) continue;
+            const entryId = entry.id.toLowerCase();
+            if (entryId === cleanId || entryId === baseId || entryId.replace(/:latest$/, '') === baseId) {
                 return { ...entry };
             }
+        }
+
+        // 3. Known canonical alias resolution
+        const ALIASES = {
+            'llama3.2': 'llama3.2:3b',
+            'llama3.1': 'llama3.1:8b',
+            'llama3': 'llama3.1:8b',
+            'llama-3': 'llama3.1:8b',
+            'qwen2.5': 'qwen2.5:1.5b',
+            'gemini-flash': 'gemini-2.0-flash',
+            'gemini-2.0': 'gemini-2.0-flash',
+            'gemini-1.5': 'gemini-1.5-flash',
+            'llama-3.3': 'llama-3.3-70b-versatile',
+            'mixtral': 'mixtral-8x7b-32768'
+        };
+
+        const aliasedId = ALIASES[cleanId] || ALIASES[baseId];
+        if (aliasedId) {
+            if (prov) {
+                const aliasKey = this._makeKey(prov, aliasedId);
+                if (this._models.has(aliasKey)) return { ...this._models.get(aliasKey) };
+            }
+            for (const entry of this._models.values()) {
+                if (prov && entry.provider !== prov) continue;
+                if (entry.id.toLowerCase() === aliasedId) {
+                    return { ...entry };
+                }
+            }
+        }
+
+        // 4. Safe dynamic capability inference for known provider families
+        if (prov === PROVIDER_TYPES.OLLAMA) {
+            const isVision = baseId.includes('vision') || baseId.includes('llava') || baseId.includes('vl');
+            // Sub-3B or reasoning models don't support native tool calling
+            const isSmallTextOnly = baseId.includes('1b') || baseId.includes('1.5b') || baseId.includes('0.5b');
+            const isReasoningOnly = baseId.includes('r1') || baseId.includes('reasoner');
+            const supportsTools = !isVision && !isSmallTextOnly && !isReasoningOnly &&
+                (baseId.includes('llama3') || baseId.includes('qwen2') || baseId.includes('mistral') || baseId.includes('mixtral'));
+
+            return {
+                id: cleanId,
+                provider: PROVIDER_TYPES.OLLAMA,
+                name: `${cleanId} (Local)`,
+                description: 'Locally configured Ollama runtime model',
+                capabilities: {
+                    text: true,
+                    vision: isVision,
+                    tool_calling: supportsTools,
+                    reasoning: supportsTools || isReasoningOnly,
+                    fast: isSmallTextOnly,
+                    local: true
+                },
+                contextLimit: 131072,
+                outputLimit: 4096,
+                pricing: { type: 'free', tier: 'local_hardware' },
+                isFreeEligible: true
+            };
+        }
+
+        if (prov === PROVIDER_TYPES.GEMINI && cleanId.startsWith('gemini-')) {
+            return {
+                id: cleanId,
+                provider: PROVIDER_TYPES.GEMINI,
+                name: `Google ${cleanId}`,
+                description: 'Google AI Studio Gemini model',
+                capabilities: {
+                    text: true,
+                    vision: true,
+                    tool_calling: true,
+                    reasoning: cleanId.includes('pro') || cleanId.includes('2.0'),
+                    fast: cleanId.includes('flash'),
+                    local: false
+                },
+                contextLimit: 1048576,
+                outputLimit: 8192,
+                pricing: { type: 'free', tier: 'free_tier_eligible' },
+                isFreeEligible: true
+            };
         }
 
         return null;
@@ -517,13 +605,100 @@ class ModelCatalogue {
             results = results.filter((m) => m.capabilities.fast === true);
         }
 
+        if (filter.requiresCoding) {
+            results = results.filter((m) => m.capabilities.coding === true || m.capabilities.reasoning === true);
+        }
+
+        if (filter.requiresLongContext) {
+            results = results.filter((m) => (m.contextLimit || 0) >= 65536);
+        }
+
         return results.map((m) => ({ ...m }));
+    }
+
+    /**
+     * List all supported AI providers and their characteristics.
+     * @returns {Array<Object>}
+     */
+    listProviders() {
+        return [
+            {
+                id: PROVIDER_TYPES.GEMINI,
+                name: 'Google Gemini API / AI Studio',
+                type: 'hosted',
+                isLocal: false,
+                defaultModel: 'gemini-2.0-flash',
+                supportsTools: true,
+                supportsVision: true,
+                freeTierEligible: true
+            },
+            {
+                id: PROVIDER_TYPES.OPENROUTER,
+                name: 'OpenRouter Universal Gateway',
+                type: 'hosted',
+                isLocal: false,
+                defaultModel: 'google/gemini-2.0-flash-001',
+                supportsTools: true,
+                supportsVision: true,
+                freeTierEligible: true
+            },
+            {
+                id: PROVIDER_TYPES.GROQ,
+                name: 'GroqCloud LPU Inference',
+                type: 'hosted',
+                isLocal: false,
+                defaultModel: 'llama-3.3-70b-versatile',
+                supportsTools: true,
+                supportsVision: false,
+                freeTierEligible: true
+            },
+            {
+                id: PROVIDER_TYPES.CEREBRAS,
+                name: 'Cerebras Wafer-Scale Inference',
+                type: 'hosted',
+                isLocal: false,
+                defaultModel: 'llama3.1-8b',
+                supportsTools: true,
+                supportsVision: false,
+                freeTierEligible: true
+            },
+            {
+                id: PROVIDER_TYPES.HUGGINGFACE,
+                name: 'Hugging Face Inference API',
+                type: 'hosted',
+                isLocal: false,
+                defaultModel: 'meta-llama/Llama-3.2-3B-Instruct',
+                supportsTools: true,
+                supportsVision: false,
+                freeTierEligible: true
+            },
+            {
+                id: PROVIDER_TYPES.OLLAMA,
+                name: 'Ollama Local Runtime',
+                type: 'local',
+                isLocal: true,
+                defaultModel: 'qwen2.5:1.5b',
+                supportsTools: true,
+                supportsVision: true,
+                freeTierEligible: true
+            },
+            {
+                id: PROVIDER_TYPES.CUSTOM_OPENAI,
+                name: 'Custom OpenAI-Compatible Endpoint',
+                type: 'custom',
+                isLocal: false,
+                defaultModel: 'gpt-4o-mini',
+                supportsTools: true,
+                supportsVision: true,
+                freeTierEligible: false
+            }
+        ];
     }
 
     /**
      * Check if a given model satisfies required capabilities.
      * @param {string} modelId
-     * @param {Object} requirements - e.g. { vision: true, tool_calling: true }
+     * @param {Object} requirements - e.g. { vision: true, tool_calling: true, coding: true, long_context: true }
      * @param {string} [provider]
      * @returns {{ capable: boolean, missing: string[] }}
      */
@@ -535,8 +710,18 @@ class ModelCatalogue {
 
         const missing = [];
         for (const [cap, required] of Object.entries(requirements)) {
-            if (required && !model.capabilities[cap]) {
-                missing.push(cap);
+            if (required) {
+                if (cap === 'long_context') {
+                    if ((model.contextLimit || 0) < 65536) {
+                        missing.push(cap);
+                    }
+                } else if (cap === 'coding') {
+                    if (!model.capabilities.coding && !model.capabilities.reasoning) {
+                        missing.push(cap);
+                    }
+                } else if (!model.capabilities[cap]) {
+                    missing.push(cap);
+                }
             }
         }
 

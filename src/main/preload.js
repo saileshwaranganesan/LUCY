@@ -43,6 +43,9 @@ contextBridge.exposeInMainWorld('lucyIpc', {
     getRoutingDiagnostics: () => ipcRenderer.invoke('lucy:getRoutingDiagnostics'),
     // Multi-Provider & Ollama Discovery APIs (REQ-030 & REQ-031)
     discoverOllamaModels: (endpointUrl) => ipcRenderer.invoke('lucy:discoverOllamaModels', endpointUrl),
+    getLocalResourceStatus: () => ipcRenderer.invoke('lucy:getLocalResourceStatus'),
+    unloadLocalModel: (modelName) => ipcRenderer.invoke('lucy:unloadLocalModel', modelName),
+    getUsageAccounting: () => ipcRenderer.invoke('lucy:getUsageAccounting'),
     // Memory & Continuity APIs
     getMemories: (options) => ipcRenderer.invoke('lucy:getMemories', options),
     addMemory: (entry) => ipcRenderer.invoke('lucy:addMemory', entry),
@@ -64,6 +67,15 @@ contextBridge.exposeInMainWorld('lucyIpc', {
     clearMemoryCategory: (category) => ipcRenderer.invoke('lucy:clearMemoryCategory', category),
     toggleLongTermMemory: (enabled) => ipcRenderer.invoke('lucy:toggleLongTermMemory', enabled),
     getMemorySummary: () => ipcRenderer.invoke('lucy:getMemorySummary'),
+    exportMemory: () => ipcRenderer.invoke('lucy:exportMemory'),
+    importMemory: (payload, options) => ipcRenderer.invoke('lucy:importMemory', payload, options),
+    createMemoryBackup: () => ipcRenderer.invoke('lucy:createMemoryBackup'),
+    restoreMemoryBackup: (backupPath) => ipcRenderer.invoke('lucy:restoreMemoryBackup', backupPath),
+    saveProjectSnapshot: (snapshot) => ipcRenderer.invoke('lucy:saveProjectSnapshot', snapshot),
+    getProjectSnapshot: (projectId) => ipcRenderer.invoke('lucy:getProjectSnapshot', projectId),
+    listProjects: () => ipcRenderer.invoke('lucy:listProjects'),
+    deleteProjectSnapshot: (projectId) => ipcRenderer.invoke('lucy:deleteProjectSnapshot', projectId),
+    supersedeMemory: (payload) => ipcRenderer.invoke('lucy:supersedeMemory', payload),
     getInterruptedTasks: () => ipcRenderer.invoke('lucy:getInterruptedTasks'),
     inspectTask: (taskId) => ipcRenderer.invoke('lucy:inspectTask', taskId),
     resumeTask: (taskId, options) => ipcRenderer.invoke('lucy:resumeTask', taskId, options),
@@ -78,14 +90,42 @@ contextBridge.exposeInMainWorld('lucyIpc', {
     onCompanionWindowToggled: (callback) => {
         ipcRenderer.on('lucy:companionWindowToggled', (_event, data) => callback(data));
     },
+    onCompanionResized: (callback) => {
+        ipcRenderer.on('lucy:companionResized', (_event, data) => callback(data));
+    },
+    onCompanionPinChanged: (callback) => {
+        ipcRenderer.on('lucy:companionPinChanged', (_event, data) => callback(data));
+    },
+    onPetInteraction: (callback) => {
+        ipcRenderer.on('companion:onPetInteraction', (_event, data) => callback(data));
+    },
     // Voice Customization & Lifecycle APIs
     getVoiceConfig: () => ipcRenderer.invoke('lucy:getVoiceConfig'),
     setVoiceConfig: (config) => ipcRenderer.invoke('lucy:setVoiceConfig', config),
+    // Local Kokoro-82M Neural Speech Synthesis
+    getKokoroStatus: () => ipcRenderer.invoke('lucy:getKokoroStatus'),
+    synthesizeSpeech: (text, options) => ipcRenderer.invoke('lucy:synthesizeSpeech', text, options),
+    stopKokoroSpeech: () => ipcRenderer.invoke('lucy:stopKokoroSpeech'),
+    setCompanionDimensions: (dims) => ipcRenderer.invoke('lucy:setCompanionDimensions', dims),
     // Offline Speech Recognition (REQ-027)
     getWhisperStatus: () => ipcRenderer.invoke('lucy:getWhisperStatus'),
     transcribeAudio: (audioData, options) => ipcRenderer.invoke('lucy:transcribeAudio', audioData, options),
     // Background Mode & Application Lifecycle APIs
     getAppSettings: () => ipcRenderer.invoke('lucy:getAppSettings'),
     setAppSettings: (settings) => ipcRenderer.invoke('lucy:setAppSettings', settings),
-    exitApp: () => ipcRenderer.invoke('lucy:exitApp')
+    getLifecycleState: () => ipcRenderer.invoke('lucy:getLifecycleState'),
+    onLifecycleStateChanged: (callback) => {
+        ipcRenderer.on('lucy:lifecycleStateChanged', (_event, data) => callback(data));
+    },
+    onOpenSettings: (callback) => {
+        ipcRenderer.on('lucy:openSettings', (_event) => callback());
+    },
+    exitApp: () => ipcRenderer.invoke('lucy:exitApp'),
+    // Capability, Skills & Extension APIs (REQ-CAPABILITY-PRELOAD)
+    listTools: () => ipcRenderer.invoke('lucy:listTools'),
+    listSkills: () => ipcRenderer.invoke('lucy:listSkills'),
+    executeSkill: (skillId, params, options) => ipcRenderer.invoke('lucy:executeSkill', skillId, params, options),
+    listPlugins: () => ipcRenderer.invoke('lucy:listPlugins'),
+    enablePlugin: (pluginId) => ipcRenderer.invoke('lucy:enablePlugin', pluginId),
+    disablePlugin: (pluginId) => ipcRenderer.invoke('lucy:disablePlugin', pluginId)
 });

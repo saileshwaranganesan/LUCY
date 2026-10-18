@@ -108,29 +108,67 @@ class ProviderAdapter {
     }
 
     /**
-     * Resolve the active API key from CredentialStore or environment
+     * Resolve the active API key from environment, CredentialStore, or ConnectionManager.
+     * Consistent Precedence:
+     * 1. Environment variables (LUCY_<PROVIDER>_API_KEY, <PROVIDER>_API_KEY)
+     * 2. CredentialStore provider key (<provider>_api_key)
+     * 3. ConnectionManager connection key (if connectionManager is attached)
      */
     resolveApiKey(provider = this.provider) {
         if (provider === PROVIDER_TYPES.OLLAMA) {
             return 'not_required'; // Local models don't require keys
         }
 
+        // 1. Environment variables have highest precedence
+        const provUpper = String(provider).replace(/-/g, '_').toUpperCase();
+        const envKey = process.env[`LUCY_${provUpper}_API_KEY`] ||
+            process.env[`${provUpper}_API_KEY`];
+        if (envKey && envKey.trim()) return envKey.trim();
+
+        // 2. CredentialStore provider key
         const keyName = `${provider}_api_key`;
         if (this.credentialStore) {
             if (typeof this.credentialStore.getSecret === 'function') {
                 const key = this.credentialStore.getSecret(keyName);
-                if (key) return key;
+                if (key && key.trim()) return key.trim();
             } else if (typeof this.credentialStore.resolveApiKey === 'function') {
                 const key = this.credentialStore.resolveApiKey(provider);
-                if (key) return key;
+                if (key && key.trim()) return key.trim();
             }
         }
 
-        const envKey = process.env[`LUCY_${provider.replace(/-/g, '_').toUpperCase()}_API_KEY`] ||
-            process.env[`LUCY_${provider.toUpperCase()}_API_KEY`];
-        if (envKey) return envKey.trim();
+        // 3. Fallback to active connection in ConnectionManager
+        if (this.connectionManager) {
+            try {
+                const conns = this.connectionManager.listConnections({ provider });
+                for (const c of conns) {
+                    const k = this.connectionManager.getApiKey(c.id);
+                    if (k && k.trim()) return k.trim();
+                }
+            } catch (_) {}
+        }
 
         return '';
+    }
+
+    /**
+     * Check if a usable AI route exists based on current configuration and policy.
+     * @param {Object} [options={}]
+     * @returns {boolean}
+     */
+    hasUsableRoute(options = {}) {
+        if (this.modelRouter) {
+            try {
+                const candidates = this.modelRouter.resolveCandidateRoutes(options);
+                return Array.isArray(candidates) && candidates.length > 0;
+            } catch {
+                return false;
+            }
+        }
+        if (this.provider === PROVIDER_TYPES.OLLAMA) {
+            return true;
+        }
+        return Boolean(this.resolveApiKey(this.provider));
     }
 
     /**
@@ -321,6 +359,18 @@ class ProviderAdapter {
             const norm = this._normalizeMultimodalMessage(msg);
             if (msg.role === 'system') {
                 systemInstruction = { parts: [{ text: norm.text }] };
+            } else if (msg.role === 'tool' || msg.functionResponse) {
+                const toolName = msg.name || msg.toolId || 'tool_response';
+                const resObj = typeof msg.content === 'object' && msg.content !== null ? msg.content : { result: msg.content };
+                contents.push({
+                    role: 'function',
+                    parts: [{
+                        functionResponse: {
+                            name: toolName,
+                            response: resObj
+                        }
+                    }]
+                });
             } else {
                 const parts = [];
                 if (norm.text) {
@@ -424,6 +474,8 @@ class ProviderAdapter {
             ok: true,
             provider: activeProvider,
             model: activeModel,
+            isLocal: false,
+            leavesLocalMachine: true,
             content,
             toolCalls,
             hasToolCalls: toolCalls.length > 0,
@@ -470,6 +522,27 @@ class ProviderAdapter {
         const isStreaming = typeof options.onChunk === 'function';
 
         const formattedMessages = messages.map((msg) => {
+            if (msg.role === 'tool') {
+                return {
+                    role: 'tool',
+                    tool_call_id: msg.tool_call_id || msg.id || 'call_0',
+                    content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content ?? '')
+                };
+            }
+            if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+                return {
+                    role: 'assistant',
+                    content: msg.content || null,
+                    tool_calls: msg.toolCalls.map((tc, idx) => ({
+                        id: tc.id || `call_${idx}`,
+                        type: 'function',
+                        function: {
+                            name: tc.name,
+                            arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments || {})
+                        }
+                    }))
+                };
+            }
             const norm = this._normalizeMultimodalMessage(msg);
             if (!norm.hasImages) {
                 return { role: msg.role, content: typeof msg.content === 'string' ? msg.content : norm.text };
@@ -566,6 +639,8 @@ class ProviderAdapter {
             ok: true,
             provider: activeProvider,
             model: activeModel,
+            isLocal: false,
+            leavesLocalMachine: true,
             content: msg.content || '',
             toolCalls,
             hasToolCalls: toolCalls.length > 0,
@@ -600,6 +675,24 @@ class ProviderAdapter {
         const isStreaming = typeof options.onChunk === 'function';
 
         const formattedMessages = messages.map((msg) => {
+            if (msg.role === 'tool') {
+                return {
+                    role: 'tool',
+                    content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content ?? '')
+                };
+            }
+            if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+                return {
+                    role: 'assistant',
+                    content: msg.content || '',
+                    tool_calls: msg.toolCalls.map((tc) => ({
+                        function: {
+                            name: tc.name,
+                            arguments: tc.arguments || {}
+                        }
+                    }))
+                };
+            }
             const norm = this._normalizeMultimodalMessage(msg);
             const ollamaMsg = {
                 role: msg.role,
@@ -617,6 +710,7 @@ class ProviderAdapter {
             options: {
                 temperature: options.temperature
             },
+            keep_alive: options.keepAlive !== undefined ? options.keepAlive : '5m',
             stream: isStreaming
         };
 
@@ -642,12 +736,26 @@ class ProviderAdapter {
 
         if (!res.ok) {
             const errText = await res.text().catch(() => '');
+            let errCode = `http_${res.status}`;
+            let errMsg = `Ollama returned HTTP ${res.status}: ${errText.slice(0, 300)}`;
+
+            const lower = errText.toLowerCase();
+            if (res.status === 404 || lower.includes('not found') || lower.includes('try pulling it')) {
+                errCode = 'model_not_installed';
+                errMsg = `Requested local model '${activeModel}' is not installed in Ollama. Pull it using 'ollama pull ${activeModel}'.`;
+            } else if (res.status === 500 && (lower.includes('load') || lower.includes('memory') || lower.includes('resource') || lower.includes('allocate'))) {
+                errCode = 'model_loading_failure';
+                errMsg = `Ollama failed to load model '${activeModel}' into memory: ${errText.slice(0, 300)}`;
+            }
+
             return {
                 ok: false,
-                code: `http_${res.status}`,
-                error: `Ollama returned HTTP ${res.status}: ${errText.slice(0, 300)}`,
+                code: errCode,
+                error: errMsg,
                 provider: activeProvider,
                 model: activeModel,
+                isLocal: true,
+                leavesLocalMachine: false,
                 usage: { status: 'unknown' },
                 cost: { status: 'unknown' }
             };
@@ -698,6 +806,8 @@ class ProviderAdapter {
             ok: true,
             provider: activeProvider,
             model: activeModel,
+            isLocal: true,
+            leavesLocalMachine: false,
             content: msg.content || '',
             toolCalls,
             hasToolCalls: toolCalls.length > 0,
@@ -886,6 +996,8 @@ class ProviderAdapter {
             ok: true,
             provider: activeProvider,
             model: activeModel,
+            isLocal: false,
+            leavesLocalMachine: true,
             content: msg.content || '',
             toolCalls,
             hasToolCalls: toolCalls.length > 0,
@@ -965,6 +1077,151 @@ class ProviderAdapter {
                     ? `Ollama server is unavailable at '${cleanUrl}'. Verify that Ollama is installed and running.`
                     : `Failed to query Ollama models: ${err.message}`
             };
+        }
+    }
+
+    /**
+     * Check if the local Ollama inference service is available and responding.
+     * @param {string} [endpointUrl=this.localBaseUrl]
+     * @returns {Promise<{ ok: boolean, version?: string, code?: string, error?: string }>}
+     */
+    async checkLocalServiceAvailability(endpointUrl = this.localBaseUrl) {
+        const urlValidation = validateEndpointUrl(endpointUrl, {
+            context: 'Local Ollama health check',
+            allowHttpLoopback: true
+        });
+
+        if (!urlValidation.ok) {
+            return {
+                ok: false,
+                code: urlValidation.code || 'invalid_endpoint_url',
+                error: `Invalid local endpoint: ${urlValidation.error}`
+            };
+        }
+
+        const cleanUrl = urlValidation.url.replace(/\/+$/, '');
+        try {
+            const res = await fetch(`${cleanUrl}/api/version`, {
+                method: 'GET',
+                signal: AbortSignal.timeout(3000)
+            });
+
+            if (!res.ok) {
+                const tagsRes = await fetch(`${cleanUrl}/api/tags`, {
+                    method: 'GET',
+                    signal: AbortSignal.timeout(3000)
+                });
+                if (tagsRes.ok) {
+                    return { ok: true, version: 'available', endpoint: cleanUrl };
+                }
+                return {
+                    ok: false,
+                    code: 'OLLAMA_UNAVAILABLE',
+                    error: `Ollama returned HTTP ${res.status}`
+                };
+            }
+
+            const data = await res.json().catch(() => ({}));
+            return {
+                ok: true,
+                version: data.version || 'available',
+                endpoint: cleanUrl
+            };
+        } catch (err) {
+            const isConnRefused = err.cause?.code === 'ECONNREFUSED' ||
+                (err.message && (err.message.includes('ECONNREFUSED') || err.message.includes('fetch failed')));
+
+            return {
+                ok: false,
+                code: 'OLLAMA_UNAVAILABLE',
+                error: isConnRefused
+                    ? `Ollama local inference runtime is not running at ${cleanUrl}.`
+                    : `Cannot reach local inference runtime: ${err.message}`
+            };
+        }
+    }
+
+    /**
+     * Query currently loaded models in Ollama memory (via /api/ps).
+     * @param {string} [endpointUrl=this.localBaseUrl]
+     * @returns {Promise<{ ok: boolean, models: Array<Object>, count: number }>}
+     */
+    async getLoadedModels(endpointUrl = this.localBaseUrl) {
+        const urlValidation = validateEndpointUrl(endpointUrl, {
+            context: 'Ollama loaded models',
+            allowHttpLoopback: true
+        });
+
+        if (!urlValidation.ok) {
+            return { ok: false, models: [], count: 0, error: urlValidation.error };
+        }
+
+        const cleanUrl = urlValidation.url.replace(/\/+$/, '');
+        try {
+            const res = await fetch(`${cleanUrl}/api/ps`, {
+                method: 'GET',
+                signal: AbortSignal.timeout(3000)
+            });
+
+            if (!res.ok) {
+                return { ok: true, models: [], count: 0 };
+            }
+
+            const data = await res.json().catch(() => ({}));
+            const models = Array.isArray(data.models) ? data.models : [];
+            return {
+                ok: true,
+                models: models.map((m) => ({
+                    name: m.name || m.model || 'unknown',
+                    size: m.size || 0,
+                    sizeVram: m.size_vram || 0,
+                    expiresAt: m.expires_at || null
+                })),
+                count: models.length
+            };
+        } catch (err) {
+            return { ok: false, models: [], count: 0, error: err.message };
+        }
+    }
+
+    /**
+     * Unload a model from Ollama memory to free system RAM (via keep_alive: 0).
+     * @param {string} modelName
+     * @param {string} [endpointUrl=this.localBaseUrl]
+     * @returns {Promise<{ ok: boolean, message: string }>}
+     */
+    async unloadModel(modelName, endpointUrl = this.localBaseUrl) {
+        if (!modelName) {
+            return { ok: false, error: 'Model name required to unload' };
+        }
+
+        const urlValidation = validateEndpointUrl(endpointUrl, {
+            context: 'Ollama unload model',
+            allowHttpLoopback: true
+        });
+
+        if (!urlValidation.ok) {
+            return { ok: false, error: urlValidation.error };
+        }
+
+        const cleanUrl = urlValidation.url.replace(/\/+$/, '');
+        try {
+            const res = await fetch(`${cleanUrl}/api/generate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: modelName,
+                    keep_alive: 0
+                }),
+                signal: AbortSignal.timeout(5000)
+            });
+
+            if (res.ok) {
+                return { ok: true, message: `Model '${modelName}' unloaded from memory.` };
+            }
+            return { ok: false, error: `Failed to unload model '${modelName}': HTTP ${res.status}` };
+        } catch (err) {
+            return { ok: false, error: `Failed to unload model '${modelName}': ${err.message}` };
         }
     }
 

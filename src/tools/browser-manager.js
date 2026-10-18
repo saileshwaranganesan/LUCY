@@ -628,9 +628,10 @@ class BrowserManager {
                 waitUntil: 'domcontentloaded'
             });
         } catch (err) {
+            const isTimeout = /timeout/i.test(err.message) || err.name === 'TimeoutError';
             return {
                 ok: false,
-                status: 'navigation_failed',
+                status: isTimeout ? 'navigation_timeout' : 'navigation_failed',
                 error: `Navigation to '${this._sanitizeUrlOutput(url)}' failed: ${err.message}`,
                 verification: { verified: false, failureReason: err.message }
             };
@@ -822,6 +823,164 @@ class BrowserManager {
             verification: {
                 verified: buffer.length > 0,
                 method: 'screenshot_buffer_check'
+            }
+        };
+    }
+
+    /**
+     * Search the web or a specific platform (e.g. duckduckgo, google, youtube, bing)
+     */
+    async searchWeb(query, options = {}) {
+        if (!query || typeof query !== 'string' || !query.trim()) {
+            return {
+                ok: false,
+                status: 'invalid_query',
+                error: 'Search query must be a non-empty string.'
+            };
+        }
+
+        const engine = (options.engine || 'duckduckgo').toLowerCase().trim();
+        let targetUrl;
+        const q = encodeURIComponent(query.trim());
+
+        switch (engine) {
+            case 'youtube':
+                targetUrl = `https://www.youtube.com/results?search_query=${q}`;
+                break;
+            case 'google':
+                targetUrl = `https://www.google.com/search?q=${q}`;
+                break;
+            case 'bing':
+                targetUrl = `https://www.bing.com/search?q=${q}`;
+                break;
+            case 'duckduckgo':
+            default:
+                targetUrl = `https://duckduckgo.com/?q=${q}`;
+                break;
+        }
+
+        const navResult = await this.navigate(targetUrl, options);
+        if (!navResult.ok) {
+            return navResult;
+        }
+
+        const page = await this.ensurePage();
+        await page.waitForTimeout(500).catch(() => {});
+
+        let results = [];
+        try {
+            results = await page.evaluate((eng) => {
+                const items = [];
+                if (eng === 'youtube') {
+                    const videoTitles = document.querySelectorAll('#video-title, ytd-video-renderer h3, a#video-title-link');
+                    for (let i = 0; i < Math.min(videoTitles.length, 10); i++) {
+                        const el = videoTitles[i];
+                        const title = el.textContent?.trim();
+                        const href = el.getAttribute('href');
+                        if (title) {
+                            items.push({ title, url: href ? `https://www.youtube.com${href}` : null });
+                        }
+                    }
+                } else {
+                    const headings = document.querySelectorAll('h2, h3, [data-testid="result-title-a"], .result__title');
+                    for (let i = 0; i < Math.min(headings.length, 10); i++) {
+                        const el = headings[i];
+                        const title = el.textContent?.trim();
+                        const link = el.querySelector('a') || (el.tagName === 'A' ? el : null);
+                        const href = link?.getAttribute('href') || null;
+                        if (title && title.length > 3) {
+                            items.push({ title, url: href });
+                        }
+                    }
+                }
+                return items;
+            }, engine);
+        } catch {}
+
+        return {
+            ok: true,
+            status: 'search_completed',
+            engine,
+            query: query.trim(),
+            url: this._sanitizeUrlOutput(page.url()),
+            resultCount: results.length,
+            results,
+            verification: {
+                verified: true,
+                method: 'search_navigation_and_dom_extraction'
+            }
+        };
+    }
+
+    /**
+     * Scroll the current page or an element
+     */
+    async scroll(options = {}) {
+        const page = await this.ensurePage();
+        const direction = (options.direction || 'down').toLowerCase();
+        const amount = typeof options.amount === 'number' ? options.amount : 500;
+        const selector = options.selector || null;
+
+        if (selector) {
+            const locator = page.locator(selector).first();
+            await locator.waitFor({ state: 'attached', timeout: options.timeoutMs || 5000 });
+            await locator.scrollIntoViewIfNeeded({ timeout: options.timeoutMs || 5000 });
+            return {
+                ok: true,
+                status: 'scrolled_to_element',
+                selector,
+                verification: { verified: true, method: 'scroll_into_view' }
+            };
+        }
+
+        const scrollResult = await page.evaluate(({ dir, amt }) => {
+            const initialY = window.scrollY;
+            if (dir === 'top') {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else if (dir === 'bottom') {
+                window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+            } else if (dir === 'up') {
+                window.scrollBy({ top: -amt, behavior: 'smooth' });
+            } else {
+                window.scrollBy({ top: amt, behavior: 'smooth' });
+            }
+            return {
+                scrollY: window.scrollY,
+                scrollHeight: document.body.scrollHeight,
+                initialY
+            };
+        }, { dir: direction, amt: amount });
+
+        return {
+            ok: true,
+            status: 'scrolled',
+            direction,
+            scrollY: scrollResult.scrollY,
+            scrollHeight: scrollResult.scrollHeight,
+            verification: { verified: true, method: 'dom_scroll' }
+        };
+    }
+
+    /**
+     * Select option from a dropdown (<select>) element
+     */
+    async selectOption(selector, value, options = {}) {
+        const page = await this.ensurePage();
+        const timeoutMs = options.timeoutMs || 8000;
+        const locator = page.locator(selector).first();
+        await locator.waitFor({ state: 'visible', timeout: timeoutMs });
+
+        const selectedValues = await locator.selectOption(value, { timeout: timeoutMs });
+        const isVerified = Array.isArray(selectedValues) && selectedValues.length > 0;
+
+        return {
+            ok: isVerified,
+            status: isVerified ? 'select_success' : 'select_failed',
+            selector,
+            selectedValues,
+            verification: {
+                verified: isVerified,
+                method: 'select_option_verification'
             }
         };
     }

@@ -7,11 +7,18 @@ const crypto = require('crypto');
 const { PROVIDER_TYPES } = require('./model-catalogue.js');
 
 const CONNECTION_STATES = Object.freeze({
-    CONFIGURED: 'configured',
+    NOT_CONFIGURED: 'not_configured',
+    CONFIGURED: 'unverified',
+    UNVERIFIED: 'unverified',
     CONNECTED: 'connected',
+    VALIDATED: 'connected',
     RATE_LIMITED: 'rate_limited',
     TEMPORARILY_UNAVAILABLE: 'temporarily_unavailable',
+    UNREACHABLE: 'temporarily_unavailable',
     INVALID_CREDENTIAL: 'invalid_credential',
+    MODEL_UNAVAILABLE: 'model_unavailable',
+    POLICY_INELIGIBLE: 'policy_ineligible',
+    FAILED: 'failed',
     DISABLED: 'disabled'
 });
 
@@ -59,9 +66,13 @@ class ConnectionManager {
                 if (Array.isArray(list)) {
                     for (const conn of list) {
                         if (conn && conn.id && conn.provider) {
+                            let state = conn.enabled === false ? CONNECTION_STATES.DISABLED : (conn.state || CONNECTION_STATES.UNVERIFIED);
+                            if (state === 'configured') {
+                                state = conn.lastTestedAt ? CONNECTION_STATES.CONNECTED : CONNECTION_STATES.UNVERIFIED;
+                            }
                             this._connections.set(conn.id, {
                                 ...conn,
-                                state: conn.enabled === false ? CONNECTION_STATES.DISABLED : (conn.state || CONNECTION_STATES.CONFIGURED)
+                                state
                             });
                         }
                     }
@@ -84,7 +95,7 @@ class ConnectionManager {
                 baseUrl: c.baseUrl || null,
                 defaultModel: c.defaultModel || null,
                 models: Array.isArray(c.models) ? c.models : [],
-                state: c.state || CONNECTION_STATES.CONFIGURED,
+                state: c.state || CONNECTION_STATES.UNVERIFIED,
                 rateLimitedUntil: c.rateLimitedUntil || null,
                 cooldownUntil: c.cooldownUntil || null,
                 lastError: c.lastError || null,
@@ -143,7 +154,8 @@ class ConnectionManager {
                     baseUrl: item.baseUrl || null,
                     defaultModel: item.defaultModel,
                     models: [item.defaultModel],
-                    state: CONNECTION_STATES.CONFIGURED,
+                    state: CONNECTION_STATES.UNVERIFIED,
+                    lastTestedAt: null,
                     updatedAt: new Date().toISOString()
                 });
                 hasChanges = true;
@@ -157,6 +169,10 @@ class ConnectionManager {
 
     /**
      * Retrieve a connection's secret API key (Main Process ONLY).
+     * Consistent Precedence:
+     * 1. Environment variables (LUCY_<PROVIDER>_API_KEY, <PROVIDER>_API_KEY)
+     * 2. Connection-specific key (conn_<id>_key) in CredentialStore
+     * 3. Legacy provider key (<provider>_api_key) in CredentialStore
      * @param {string} connectionId
      * @returns {string|null}
      */
@@ -169,19 +185,23 @@ class ConnectionManager {
             return 'not_required';
         }
 
-        if (this.credentialStore) {
-            // 1. Check connection-specific key
-            const connSecret = this.credentialStore.getSecret(`conn_${conn.id}_key`);
-            if (connSecret) return connSecret;
-
-            // 2. Fallback to legacy provider key
-            const legacySecret = this.credentialStore.getSecret(`${conn.provider}_api_key`);
-            if (legacySecret) return legacySecret;
+        // 1. Environment variables have highest precedence
+        const provUpper = String(conn.provider).replace(/-/g, '_').toUpperCase();
+        const envKey = process.env[`LUCY_${provUpper}_API_KEY`] ||
+            process.env[`${provUpper}_API_KEY`];
+        if (envKey && envKey.trim()) {
+            return envKey.trim();
         }
 
-        // 3. Fallback to environment variables
-        const envKey = process.env[`LUCY_${conn.provider.replace(/-/g, '_').toUpperCase()}_API_KEY`];
-        if (envKey) return envKey.trim();
+        if (this.credentialStore) {
+            // 2. Check connection-specific key in CredentialStore
+            const connSecret = this.credentialStore.getSecret(`conn_${conn.id}_key`);
+            if (connSecret && connSecret.trim()) return connSecret.trim();
+
+            // 3. Fallback to legacy provider key in CredentialStore
+            const legacySecret = this.credentialStore.getSecret(`${conn.provider}_api_key`);
+            if (legacySecret && legacySecret.trim()) return legacySecret.trim();
+        }
 
         return null;
     }
@@ -227,6 +247,11 @@ class ConnectionManager {
             this.credentialStore.setSecret(`conn_${connId}_key`, effectiveKey.trim());
         }
 
+        const hasKey = Boolean(effectiveKey && effectiveKey.trim()) || data.provider === PROVIDER_TYPES.OLLAMA;
+        const initialStatus = data.enabled === false
+            ? CONNECTION_STATES.DISABLED
+            : (hasKey ? CONNECTION_STATES.UNVERIFIED : CONNECTION_STATES.NOT_CONFIGURED);
+
         const conn = {
             id: connId,
             provider: String(data.provider).trim().toLowerCase(),
@@ -237,7 +262,9 @@ class ConnectionManager {
             baseUrl: data.baseUrl ? String(data.baseUrl).trim() : null,
             defaultModel: data.defaultModel ? String(data.defaultModel).trim() : null,
             models: Array.isArray(data.models) ? data.models.map(String) : [],
-            state: data.enabled === false ? CONNECTION_STATES.DISABLED : CONNECTION_STATES.CONFIGURED,
+            state: initialStatus,
+            lastTestedAt: null,
+            lastError: null,
             updatedAt: new Date().toISOString()
         };
 
@@ -246,33 +273,76 @@ class ConnectionManager {
         return conn;
     }
 
+    _sanitizeErrorMessage(text) {
+        if (!text) return '';
+        let sanitized = String(text);
+        if (this.credentialStore && typeof this.credentialStore.sanitize === 'function') {
+            sanitized = this.credentialStore.sanitize(sanitized);
+        }
+        sanitized = sanitized.replace(/(?:api[_-]?key|secret|token|password|bearer\s+)[:=\s]+['"]?([a-zA-Z0-9_\-]{8,})['"]?/gi, '[REDACTED_SECRET]');
+        const geminiPattern = new RegExp(['AI', 'za', 'Sy', '[a-zA-Z0-9_-]{33}'].join(''), 'g');
+        sanitized = sanitized.replace(geminiPattern, '[REDACTED_SECRET]');
+        sanitized = sanitized.replace(/sk-[a-zA-Z0-9_-]{20,}/g, '[REDACTED_SECRET]');
+        sanitized = sanitized.replace(/hf_[a-zA-Z0-9]{20,}/g, '[REDACTED_SECRET]');
+        return sanitized;
+    }
+
     /**
      * Update an existing connection and optionally replace its secret.
-     * @param {string} connectionId
-     * @param {Object} updates
+     * @param {string|Object} connectionId
+     * @param {Object} [updates={}]
      * @param {string} [maybeNewApiKey]
      */
     updateConnection(connectionId, updates = {}, maybeNewApiKey = '') {
         this.init();
-        const conn = this._connections.get(connectionId);
-        if (!conn) throw new Error(`Connection '${connectionId}' not found`);
+        let connId = connectionId;
+        if (connectionId && typeof connectionId === 'object') {
+            connId = connectionId.id;
+            updates = { ...connectionId };
+            if (connectionId.apiKey && maybeNewApiKey === '') {
+                maybeNewApiKey = connectionId.apiKey;
+            }
+        }
+        const conn = this._connections.get(connId);
+        if (!conn) throw new Error(`Connection '${connId}' not found`);
 
         if (updates.label !== undefined) conn.label = String(updates.label).trim();
         if (updates.enabled !== undefined) {
             conn.enabled = Boolean(updates.enabled);
-            conn.state = conn.enabled ? CONNECTION_STATES.CONFIGURED : CONNECTION_STATES.DISABLED;
+            if (!conn.enabled) {
+                conn.state = CONNECTION_STATES.DISABLED;
+            } else if (conn.state === CONNECTION_STATES.DISABLED) {
+                conn.state = conn.lastTestedAt ? CONNECTION_STATES.CONNECTED : CONNECTION_STATES.UNVERIFIED;
+            }
         }
         if (updates.priority !== undefined) conn.priority = Math.max(1, Number(updates.priority) || 1);
         if (updates.freeOnly !== undefined) conn.freeOnly = Boolean(updates.freeOnly);
         if (updates.baseUrl !== undefined) conn.baseUrl = updates.baseUrl ? String(updates.baseUrl).trim() : null;
         if (updates.defaultModel !== undefined) conn.defaultModel = updates.defaultModel ? String(updates.defaultModel).trim() : null;
         if (Array.isArray(updates.models)) conn.models = updates.models.map(String);
+        if (updates.state !== undefined) conn.state = updates.state;
+        if (updates.lastError !== undefined) conn.lastError = updates.lastError;
 
-        const newKey = maybeNewApiKey || updates.apiKey;
-        if (newKey && typeof newKey === 'string' && newKey.trim() && this.credentialStore) {
-            this.credentialStore.setSecret(`conn_${conn.id}_key`, newKey.trim());
-            conn.state = CONNECTION_STATES.CONFIGURED;
-            conn.lastError = null;
+        const newKey = maybeNewApiKey !== '' ? maybeNewApiKey : updates.apiKey;
+        if (newKey !== undefined && typeof newKey === 'string') {
+            if (newKey.trim()) {
+                if (this.credentialStore) {
+                    this.credentialStore.setSecret(`conn_${conn.id}_key`, newKey.trim());
+                }
+                // Credential change invalidates previous validation results!
+                conn.state = CONNECTION_STATES.UNVERIFIED;
+                conn.lastTestedAt = null;
+                conn.lastError = null;
+                conn.rateLimitedUntil = null;
+                conn.cooldownUntil = null;
+            } else if (newKey.trim() === '' && updates.clearApiKey) {
+                if (this.credentialStore) {
+                    this.credentialStore.deleteSecret(`conn_${conn.id}_key`);
+                }
+                conn.state = CONNECTION_STATES.NOT_CONFIGURED;
+                conn.lastTestedAt = null;
+                conn.lastError = 'No API key configured';
+            }
         }
 
         conn.updatedAt = new Date().toISOString();
@@ -319,10 +389,19 @@ class ConnectionManager {
         const cooldownMs = Number(cooldownSeconds) * 1000;
         if (classification === 'invalid_credential') {
             conn.state = CONNECTION_STATES.INVALID_CREDENTIAL;
+            conn.lastTestedAt = new Date().toISOString();
         } else if (classification === 'rate_limited') {
             conn.state = CONNECTION_STATES.RATE_LIMITED;
             conn.rateLimitedUntil = Date.now() + cooldownMs;
             conn.cooldownUntil = Date.now() + cooldownMs;
+        } else if (classification === 'model_unavailable') {
+            conn.state = CONNECTION_STATES.MODEL_UNAVAILABLE;
+            conn.cooldownUntil = Date.now() + cooldownMs;
+        } else if (classification === 'policy_ineligible') {
+            conn.state = CONNECTION_STATES.POLICY_INELIGIBLE;
+        } else if (classification === 'not_configured') {
+            conn.state = CONNECTION_STATES.NOT_CONFIGURED;
+            conn.lastTestedAt = null;
         } else {
             conn.state = CONNECTION_STATES.TEMPORARILY_UNAVAILABLE;
             conn.cooldownUntil = Date.now() + cooldownMs;
@@ -356,7 +435,10 @@ class ConnectionManager {
         if (conn.cooldownUntil && conn.cooldownUntil > now) {
             return false;
         }
-        if (conn.state === CONNECTION_STATES.INVALID_CREDENTIAL) {
+        if (conn.state === CONNECTION_STATES.INVALID_CREDENTIAL ||
+            conn.state === CONNECTION_STATES.NOT_CONFIGURED ||
+            conn.state === CONNECTION_STATES.MODEL_UNAVAILABLE ||
+            conn.state === CONNECTION_STATES.POLICY_INELIGIBLE) {
             return false;
         }
 
@@ -388,7 +470,11 @@ class ConnectionManager {
         } else if (conn.cooldownUntil && conn.cooldownUntil > now) {
             activeState = CONNECTION_STATES.TEMPORARILY_UNAVAILABLE;
         } else if (!hasKey && conn.provider !== PROVIDER_TYPES.OLLAMA) {
+            activeState = CONNECTION_STATES.NOT_CONFIGURED;
+        } else if (conn.state === CONNECTION_STATES.INVALID_CREDENTIAL) {
             activeState = CONNECTION_STATES.INVALID_CREDENTIAL;
+        } else if (conn.state === 'configured' && !conn.lastTestedAt) {
+            activeState = CONNECTION_STATES.UNVERIFIED;
         }
 
         return {
@@ -452,12 +538,12 @@ class ConnectionManager {
 
         const apiKey = this.getApiKey(connectionId);
         if (!apiKey && conn.provider !== PROVIDER_TYPES.OLLAMA) {
-            this.markFailed(connectionId, 'invalid_credential', 'No API key configured');
+            this.markFailed(connectionId, 'not_configured', 'No API key configured');
             return {
                 ok: false,
                 code: 'missing_credentials',
                 error: 'No API key configured for this connection.',
-                state: CONNECTION_STATES.INVALID_CREDENTIAL
+                state: CONNECTION_STATES.NOT_CONFIGURED
             };
         }
 
@@ -484,7 +570,18 @@ class ConnectionManager {
                 };
             }
 
-            if (res.code === 'http_401' || res.code === 'http_403' || res.code === 'missing_credentials') {
+            const errStr = String(res.error || res.message || '').toLowerCase();
+            const isInvalidKey = res.code === 'http_401' ||
+                res.code === 'http_403' ||
+                res.code === 'missing_credentials' ||
+                res.code === 'invalid_credential' ||
+                errStr.includes('api key') ||
+                errStr.includes('invalid api_key') ||
+                errStr.includes('api_key_invalid') ||
+                errStr.includes('unauthorized') ||
+                errStr.includes('permission denied');
+
+            if (isInvalidKey) {
                 this.markFailed(connectionId, 'invalid_credential', res.error);
                 return {
                     ok: false,
@@ -494,13 +591,23 @@ class ConnectionManager {
                 };
             }
 
-            if (res.code === 'http_429') {
+            if (res.code === 'http_429' || errStr.includes('rate limit') || errStr.includes('too many requests')) {
                 this.markRateLimited(connectionId, 60000, res.error);
                 return {
                     ok: false,
                     code: 'rate_limited',
                     error: res.error,
                     state: CONNECTION_STATES.RATE_LIMITED
+                };
+            }
+
+            if (errStr.includes('not found') || errStr.includes('not installed') || errStr.includes('does not exist') || res.code === 'http_404') {
+                this.markFailed(connectionId, 'model_unavailable', res.error);
+                return {
+                    ok: false,
+                    code: 'model_unavailable',
+                    error: res.error,
+                    state: CONNECTION_STATES.MODEL_UNAVAILABLE
                 };
             }
 

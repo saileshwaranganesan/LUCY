@@ -164,9 +164,18 @@ const ALLOWED_PROVIDERS = Object.freeze(new Set([
 const ALLOWED_ROUTING_MODES = Object.freeze(new Set([
     'auto',
     'prefer_local',
+    'local_first',
+    'local-first',
     'local_only',
+    'local-only',
+    'hosted_first',
+    'hosted-first',
+    'cloud_first',
     'free_only',
-    'manual'
+    'free-only',
+    'manual',
+    'task_aware',
+    'task-aware'
 ]));
 
 const ALLOWED_MEMORY_CATEGORIES = Object.freeze(new Set([
@@ -387,6 +396,76 @@ function validateClearMemoryCategory(category) {
 }
 
 /**
+ * Validate lucy:saveProjectSnapshot
+ * @param {unknown} snapshot
+ */
+function validateProjectSnapshot(snapshot) {
+    if (!isPlainObject(snapshot)) {
+        return { ok: false, code: 'INVALID_TYPE', error: 'Project snapshot must be a plain object.' };
+    }
+    const projectId = snapshot.projectId || snapshot.id;
+    if (typeof projectId !== 'string' || !projectId.trim() || projectId.length > 100) {
+        return { ok: false, code: 'INVALID_PROJECT_ID', error: 'Project snapshot requires a non-empty projectId string up to 100 characters.' };
+    }
+
+    const sanitized = {
+        projectId: projectId.trim().toLowerCase().replace(/[^a-z0-9_\-]/g, '_'),
+        objective: typeof snapshot.objective === 'string' ? snapshot.objective.slice(0, 1000) : '',
+        architecture: typeof snapshot.architecture === 'string' ? snapshot.architecture.slice(0, 2000) : '',
+        techStack: typeof snapshot.techStack === 'string' ? snapshot.techStack.slice(0, 1000) : '',
+        stage: typeof snapshot.stage === 'string' ? snapshot.stage.slice(0, 50) : 'proposed',
+        acceptedDecisions: Array.isArray(snapshot.acceptedDecisions) ? snapshot.acceptedDecisions.slice(0, 50).map(d => String(d).slice(0, 500)) : [],
+        rejectedDecisions: Array.isArray(snapshot.rejectedDecisions) ? snapshot.rejectedDecisions.slice(0, 50).map(d => String(d).slice(0, 500)) : [],
+        lastProgress: typeof snapshot.lastProgress === 'string' ? snapshot.lastProgress.slice(0, 1000) : '',
+        outstandingTasks: Array.isArray(snapshot.outstandingTasks) ? snapshot.outstandingTasks.slice(0, 50).map(t => String(t).slice(0, 500)) : [],
+        blockers: Array.isArray(snapshot.blockers) ? snapshot.blockers.slice(0, 20).map(b => String(b).slice(0, 500)) : [],
+        docReferences: Array.isArray(snapshot.docReferences) ? snapshot.docReferences.slice(0, 20).map(r => String(r).slice(0, 500)) : [],
+        verifiedStatus: typeof snapshot.verifiedStatus === 'string' ? snapshot.verifiedStatus.slice(0, 50) : 'unverified'
+    };
+
+    return { ok: true, sanitized };
+}
+
+/**
+ * Validate lucy:supersedeMemory
+ * @param {unknown} payload
+ */
+function validateSupersedeMemory(payload) {
+    if (!isPlainObject(payload)) {
+        return { ok: false, code: 'INVALID_TYPE', error: 'Supersede memory payload must be a plain object.' };
+    }
+    const { oldIdOrKey, newEntry } = payload;
+    if (typeof oldIdOrKey !== 'string' || !oldIdOrKey.trim() || oldIdOrKey.length > 200) {
+        return { ok: false, code: 'INVALID_ID', error: 'oldIdOrKey must be a non-empty string up to 200 characters.' };
+    }
+    if (!isPlainObject(newEntry)) {
+        return { ok: false, code: 'INVALID_ENTRY', error: 'newEntry must be a plain object.' };
+    }
+    const content = newEntry.content || newEntry.text;
+    if (typeof content !== 'string' || !content.trim()) {
+        return { ok: false, code: 'EMPTY_CONTENT', error: 'newEntry must contain non-empty content.' };
+    }
+    return { ok: true, sanitized: { oldIdOrKey: oldIdOrKey.trim(), newEntry } };
+}
+
+/**
+ * Validate lucy:importMemory
+ * @param {unknown} payload
+ */
+function validateImportMemory(payload) {
+    if (!isPlainObject(payload)) {
+        return { ok: false, code: 'INVALID_TYPE', error: 'Import payload must be a plain object.' };
+    }
+    if (!Array.isArray(payload.memories)) {
+        return { ok: false, code: 'INVALID_PAYLOAD', error: 'Import payload must contain a memories array.' };
+    }
+    if (payload.memories.length > 10000) {
+        return { ok: false, code: 'PAYLOAD_TOO_LARGE', error: 'Import memories array exceeds maximum limit of 10,000 entries.' };
+    }
+    return { ok: true, sanitized: payload };
+}
+
+/**
  * Validate lucy:sendVoiceState
  * @param {unknown} voiceData
  */
@@ -519,7 +598,7 @@ function validateVoiceConfig(config) {
         sanitized.ttsEnabled = ttsEnabled;
     }
 
-    const { wakeWordEnabled, wakeWordSensitivity } = config;
+    const { wakeWordEnabled, wakeWordSensitivity, ttsEngine, kokoroVoice } = config;
     if (wakeWordEnabled !== undefined && wakeWordEnabled !== null) {
         if (typeof wakeWordEnabled !== 'boolean') {
             return { ok: false, code: 'INVALID_WAKE_WORD_FLAG', error: 'wakeWordEnabled must be a boolean.' };
@@ -535,7 +614,71 @@ function validateVoiceConfig(config) {
         sanitized.wakeWordSensitivity = s;
     }
 
+    if (ttsEngine !== undefined && ttsEngine !== null) {
+        const eng = String(ttsEngine).trim().toLowerCase();
+        if (eng === 'kokoro' || eng === 'windows-speech' || eng === 'auto') {
+            sanitized.ttsEngine = eng;
+        } else {
+            return { ok: false, code: 'INVALID_TTS_ENGINE', error: 'ttsEngine must be "kokoro", "windows-speech", or "auto".' };
+        }
+    }
+
+    if (kokoroVoice !== undefined && kokoroVoice !== null) {
+        const kv = String(kokoroVoice).trim();
+        if (kv === 'af_bella' || kv === 'af_sky') {
+            sanitized.kokoroVoice = kv;
+        } else {
+            return { ok: false, code: 'INVALID_KOKORO_VOICE', error: 'kokoroVoice must be "af_bella" or "af_sky".' };
+        }
+    }
+
+    const { continuousConversation, bargeInEnabled, vadSensitivity } = config;
+    if (continuousConversation !== undefined && continuousConversation !== null) {
+        if (typeof continuousConversation !== 'boolean') {
+            return { ok: false, code: 'INVALID_CONTINUOUS_CONVERSATION', error: 'continuousConversation must be a boolean.' };
+        }
+        sanitized.continuousConversation = continuousConversation;
+    }
+
+    if (bargeInEnabled !== undefined && bargeInEnabled !== null) {
+        if (typeof bargeInEnabled !== 'boolean') {
+            return { ok: false, code: 'INVALID_BARGE_IN', error: 'bargeInEnabled must be a boolean.' };
+        }
+        sanitized.bargeInEnabled = bargeInEnabled;
+    }
+
+    if (vadSensitivity !== undefined && vadSensitivity !== null) {
+        const vs = String(vadSensitivity).trim().toLowerCase();
+        if (vs === 'low' || vs === 'normal' || vs === 'high') {
+            sanitized.vadSensitivity = vs;
+        } else {
+            return { ok: false, code: 'INVALID_VAD_SENSITIVITY', error: 'vadSensitivity must be "low", "normal", or "high".' };
+        }
+    }
+
     return { ok: true, sanitized };
+}
+
+/**
+ * Validate floating companion dimensions (width, height)
+ * Clamps within safe bounds [140..520] x [170..600].
+ */
+function validateCompanionDimensions(dims) {
+    if (!isPlainObject(dims)) {
+        return { ok: false, code: 'INVALID_TYPE', error: 'Dimensions must be a plain object.' };
+    }
+    const width = Number(dims.width);
+    const height = Number(dims.height);
+    if (!Number.isFinite(width) || !Number.isFinite(height)) {
+        return { ok: false, code: 'INVALID_DIMENSIONS', error: 'Width and height must be finite numbers.' };
+    }
+    return {
+        ok: true,
+        sanitized: {
+            width: Math.round(Math.max(140, Math.min(520, width))),
+            height: Math.round(Math.max(170, Math.min(600, height)))
+        }
+    };
 }
 
 /**
@@ -754,6 +897,61 @@ function validateSetRoutingConfig(config) {
     return { ok: true, sanitized: config };
 }
 
+const ALLOWED_CLOSE_ACTIONS = new Set(['background', 'minimize_to_tray', 'exit']);
+
+/**
+ * Validate lucy:setAppSettings
+ * @param {unknown} settings
+ */
+function validateSetAppSettings(settings) {
+    if (!isPlainObject(settings)) {
+        return { ok: false, code: 'INVALID_TYPE', error: 'Settings payload must be a plain object.' };
+    }
+
+    const sanitized = {};
+
+    if (settings.backgroundMode !== undefined) {
+        if (typeof settings.backgroundMode !== 'boolean') {
+            return { ok: false, code: 'INVALID_VALUE', error: 'Setting backgroundMode must be a boolean.' };
+        }
+        sanitized.backgroundMode = settings.backgroundMode;
+    }
+
+    if (settings.closeAction !== undefined) {
+        if (typeof settings.closeAction !== 'string' || !ALLOWED_CLOSE_ACTIONS.has(settings.closeAction)) {
+            return {
+                ok: false,
+                code: 'INVALID_CLOSE_ACTION',
+                error: `Setting closeAction must be one of: ${Array.from(ALLOWED_CLOSE_ACTIONS).join(', ')}.`
+            };
+        }
+        sanitized.closeAction = settings.closeAction;
+    }
+
+    if (settings.closeToTray !== undefined) {
+        if (typeof settings.closeToTray !== 'boolean') {
+            return { ok: false, code: 'INVALID_VALUE', error: 'Setting closeToTray must be a boolean.' };
+        }
+        sanitized.closeToTray = settings.closeToTray;
+    }
+
+    if (settings.backgroundListening !== undefined) {
+        if (typeof settings.backgroundListening !== 'boolean') {
+            return { ok: false, code: 'INVALID_VALUE', error: 'Setting backgroundListening must be a boolean.' };
+        }
+        sanitized.backgroundListening = settings.backgroundListening;
+    }
+
+    if (settings.startMinimized !== undefined) {
+        if (typeof settings.startMinimized !== 'boolean') {
+            return { ok: false, code: 'INVALID_VALUE', error: 'Setting startMinimized must be a boolean.' };
+        }
+        sanitized.startMinimized = settings.startMinimized;
+    }
+
+    return { ok: true, sanitized };
+}
+
 module.exports = {
     // Loopback & URL validation
     isLoopbackHost,
@@ -770,12 +968,17 @@ module.exports = {
     validateAddMemory,
     validateIdentifier,
     validateClearMemoryCategory,
+    validateProjectSnapshot,
+    validateSupersedeMemory,
+    validateImportMemory,
     validateSendVoiceState,
     validateMoveWindow,
     validateDiscoverOllamaModels,
     validateCancelRequest,
     validateVoiceConfig,
+    validateCompanionDimensions,
     validateTranscribeAudioRequest,
+    validateSetAppSettings,
 
     // Multi-provider & Connection validators
     validateSaveConnection,
@@ -788,5 +991,6 @@ module.exports = {
     ALLOWED_PROVIDERS,
     ALLOWED_ROUTING_MODES,
     ALLOWED_MEMORY_CATEGORIES,
-    ALLOWED_VOICE_STATES
+    ALLOWED_VOICE_STATES,
+    ALLOWED_CLOSE_ACTIONS
 };

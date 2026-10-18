@@ -20,6 +20,12 @@ const EMOJI_PATTERN = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu;
 const CONTROL_TAG_PATTERN = /\[\s*(?:action|expression|emotion|gesture|taskState|status)\s*[:=][^\]]*\]/gi;
 const REPEATED_PUNCTUATION_PATTERN = /([!?.~]){2,}/g;
 
+// Action words, sound effects, onomatopoeia, and stage directions
+const STAGE_ACTION_PATTERN = /(?:^|\s)(?:\*|_)\s*(?:boing+|sparkle(?:\s+sparkle)?|twirl|swoosh|whoosh|wheee+|purr+|giggle|giggles|flutter|sigh|sighs|smile|smiles|wave|waves|whisper|whispers|wink|chuckle|chuckles|laughs?|gasps?|nods?|stretches|yawns?|happy flutter)\s*(?:\*|_)(?=\s|[.,!?]|$)/gi;
+const PARENTHETICAL_ACTION_PATTERN = /\(\s*(?:action|sound|sfx|effect|sound effect|boing+|sparkle(?:\s+sparkle)?|twirl|swoosh|whoosh|wheee+|purr+|giggle|giggles|flutter|sigh|sighs|chuckle|chuckles|whisper|whispers|laugh|laughs|gasp|gasps|clears throat|pause|beat)[^)]*\)/gi;
+const BRACKET_ACTION_PATTERN = /\[\s*(?:action|sound|sfx|effect|sound effect|boing+|sparkle(?:\s+sparkle)?|twirl|swoosh|whoosh|wheee+|purr+|giggle|giggles|flutter)[^\]]*\]/gi;
+const ACTION_EXCLAMATION_PATTERN = /(?:^|[.!?]\s+)(?:(?:\*|_)?(?:boing+|sparkle(?:\s+sparkle)?|twirl|swoosh|whoosh|wheee+|purr+|giggle(?:[\s-]+giggle)?|giggles|flutter|poof|ta-da|tada|la\s+la(?:\s+la)?)(?:\*|_)?(?:[!:,.~]|\s+)+)+/gi;
+
 /**
  * Clean text for natural spoken audio.
  * @param {string} rawText 
@@ -55,7 +61,13 @@ function cleanTextForSpeech(rawText, { maxChars = 600 } = {}) {
     // 6. Simplify inline code backticks to plain text
     text = text.replace(INLINE_CODE_PATTERN, '$1');
 
-    // 7. Strip Markdown formatting characters: bold, italic, strikethrough, headers, blockquotes, bullets
+    // 7. Strip action words, sound effects & stage directions (e.g. *boing*, Sparkle!, (giggles))
+    text = text.replace(BRACKET_ACTION_PATTERN, ' ');
+    text = text.replace(PARENTHETICAL_ACTION_PATTERN, ' ');
+    text = text.replace(STAGE_ACTION_PATTERN, ' ');
+    text = text.replace(ACTION_EXCLAMATION_PATTERN, (m) => (m.startsWith('.') || m.startsWith('!') || m.startsWith('?')) ? m[0] + ' ' : ' ');
+
+    // 8. Strip Markdown formatting characters: bold, italic, strikethrough, headers, blockquotes, bullets
     text = text
         .replace(/^#{1,6}\s+/gm, '')           // headers
         .replace(/^\s*[-*+]\s+/gm, '')         // unordered lists
@@ -65,13 +77,18 @@ function cleanTextForSpeech(rawText, { maxChars = 600 } = {}) {
         .replace(/\|/g, ' ')                   // tables
         .replace(EMOJI_PATTERN, '');           // emojis
 
-    // 8. Normalize punctuation and whitespace
+    // 9. Normalize punctuation and whitespace
     text = text
         .replace(REPEATED_PUNCTUATION_PATTERN, '$1')
         .replace(/\s+/g, ' ')
         .trim();
 
-    // 9. Gracefully truncate if excessively long
+    // 10. Fallback if entire utterance was only action words or emojis
+    if (!text || !text.replace(/[.,!?;:~-]/g, '').trim()) {
+        return 'Ready!';
+    }
+
+    // 11. Gracefully truncate if excessively long
     if (text.length > maxChars) {
         // Find last sentence boundary or word boundary
         const boundary = text.lastIndexOf('.', maxChars);

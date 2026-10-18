@@ -177,6 +177,12 @@ test('Unified Fairy Companion Redesign Verification', async (t) => {
         assert.equal(sentEvent.channel, 'lucy:companionWindowToggled');
         assert.equal(sentEvent.data.returning, true);
         assert.equal(sentEvent.data.isOpen, false);
+
+        // Test repeated returnToApp clicks do not crash or create duplicate windows
+        assert.doesNotThrow(() => {
+            floating.returnToApp();
+            floating.returnToApp();
+        }, 'Repeated returnToApp calls must be safe and idempotent');
     });
 
     await t.test('4. Floating Companion Desktop Shell HTML & Dock Structure', () => {
@@ -239,17 +245,19 @@ test('Unified Fairy Companion Redesign Verification', async (t) => {
     });
 
     await t.test('6. Compact Desktop Bounds & Clamping Mechanics', () => {
-        assert.equal(FloatingCompanionWindow.DEFAULT_WIDTH, 220, 'Default floating companion width must be 220px');
-        assert.equal(FloatingCompanionWindow.DEFAULT_HEIGHT, 260, 'Default floating companion height must be 260px');
+        assert.equal(FloatingCompanionWindow.DEFAULT_WIDTH, 160, 'Default floating companion width must be 160px');
+        assert.equal(FloatingCompanionWindow.DEFAULT_HEIGHT, 190, 'Default floating companion height must be 190px');
+        assert.equal(FloatingCompanionWindow.MIN_WIDTH, 140, 'Minimum floating companion width must be 140px');
+        assert.equal(FloatingCompanionWindow.MIN_HEIGHT, 170, 'Minimum floating companion height must be 170px');
 
         const floating = new FloatingCompanionWindow();
         const status = floating.getStatus();
-        assert.equal(status.width, 220);
-        assert.equal(status.height, 260);
+        assert.equal(status.width, 160);
+        assert.equal(status.height, 190);
         assert.equal(status.isPinned, true);
 
         // Test boundary clamping with fallback mock
-        const clamped = floating._clampToBounds(99999, 99999, 220, 260);
+        const clamped = floating._clampToBounds(99999, 99999, 160, 190);
         assert.ok(typeof clamped.x === 'number' && typeof clamped.y === 'number');
     });
 
@@ -460,15 +468,29 @@ test('Unified Fairy Companion Redesign Verification', async (t) => {
         // Window configuration must have resizable: true
         const win = floating.createWindow();
         assert.equal(win.options.resizable, true, 'Window configuration MUST have resizable: true');
-        assert.equal(win.options.minWidth, 180, 'Must enforce minimum width 180');
-        assert.equal(win.options.minHeight, 220, 'Must enforce minimum height 220');
+        assert.equal(win.options.minWidth, 140, 'Must enforce minimum width 140');
+        assert.equal(win.options.minHeight, 170, 'Must enforce minimum height 170');
         assert.equal(win.options.maxWidth, 520, 'Must enforce maximum width 520');
         assert.equal(win.options.maxHeight, 600, 'Must enforce maximum height 600');
 
         // Test status reflects current size
         const status = floating.getStatus();
-        assert.equal(status.width, 220);
-        assert.equal(status.height, 260);
+        assert.equal(status.width, 160);
+        assert.equal(status.height, 190);
+
+        // Test size persistence across recreate
+        floating.currentWidth = 240;
+        floating.currentHeight = 280;
+        floating._saveBounds(150, 150, 240, 280);
+        assert.equal(floating.currentWidth, 240);
+        assert.equal(floating.currentHeight, 280);
+
+        // Test invalid/corrupted size fallback
+        floating.currentWidth = NaN;
+        floating.currentHeight = -50;
+        floating._loadSavedBounds();
+        assert.equal(floating.currentWidth, 160, 'Corrupted dimensions must safely fall back to 160');
+        assert.equal(floating.currentHeight, 190, 'Corrupted dimensions must safely fall back to 190');
 
         floating.destroy();
     });
@@ -482,13 +504,23 @@ test('Unified Fairy Companion Redesign Verification', async (t) => {
 
         // Verify structure: companion-body is a row containing fairy-stage AND side-panel
         assert.ok(html.includes('class="companion-body"'), 'companion.html must have companion-body wrapper');
-        assert.ok(html.includes('class="side-panel"'), 'companion.html must have side-panel');
+        assert.ok(html.includes('class="side-panel collapsed"') || html.includes('id="sideConversationPanel"'), 'companion.html must have side-panel');
         assert.ok(html.includes('id="typewriterText"'), 'companion.html must have typewriterText');
 
         // In CSS, side panel is adjacent flex item, NOT positioned absolutely over fairy face
         assert.ok(css.includes('.companion-body'), 'companion.css must define companion-body');
         assert.ok(css.includes('flex-direction: row'), 'companion-body must use flex-direction: row for side-by-side layout');
         assert.ok(!css.includes('.speech-bubble {'), 'Old overlapping speech-bubble style must be replaced');
+    });
+
+    await t.test('13. Regression: Return to App Lifecycle, State Reset & Stale Message Prevention', () => {
+        const appCode = fs.readFileSync(path.resolve(__dirname, '../../src/companion/companion-app.js'), 'utf8');
+        assert.ok(appCode.includes('resetCompanionState'), 'companion-app.js must define resetCompanionState()');
+        assert.ok(appCode.includes('isReturning'), 'companion-app.js must guard against repeated return clicks');
+        assert.ok(appCode.includes("sidePanel.classList.add('collapsed')"), 'resetCompanionState must collapse sidePanel');
+        assert.ok(appCode.includes("typewriterText.textContent = ''"), 'resetCompanionState must clear typewriter text');
+        assert.ok(appCode.includes("renderer.setVisualState({ emotion: 'idle' })"), 'resetCompanionState must reset emotion to idle');
+        assert.ok(appCode.includes('onResetState'), 'companion-app.js must listen for onResetState');
     });
 });
 

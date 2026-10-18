@@ -12,7 +12,19 @@ const MEMORY_TYPES = Object.freeze({
     CONFIRMED_FACT: 'confirmed_fact',
     USER_INSTRUCTION: 'user_instruction',
     INFERRED_PREFERENCE: 'inferred_preference',
-    OUTDATED: 'outdated'
+    OUTDATED: 'outdated',
+    PROJECT_DECISION: 'project_decision',
+    PROJECT_SNAPSHOT: 'project_snapshot',
+    REJECTED_DECISION: 'rejected_decision',
+    SUPERSEDED: 'superseded',
+    UNCERTAIN_INFERENCE: 'uncertain_inference'
+});
+
+const PROJECT_STAGES = Object.freeze({
+    PROPOSED: 'proposed',
+    IN_PROGRESS: 'in_progress',
+    IMPLEMENTED: 'implemented',
+    VERIFIED: 'verified'
 });
 
 const MEMORY_SOURCES = Object.freeze({
@@ -21,6 +33,11 @@ const MEMORY_SOURCES = Object.freeze({
     TASK_RECEIPT: 'task_receipt',
     UNTRUSTED_EXTERNAL: 'untrusted_external'
 });
+
+function normalizeProjectKey(projectId) {
+    if (!projectId || typeof projectId !== 'string') return '';
+    return projectId.trim().toLowerCase().replace(/[^a-z0-9_\-]/g, '_');
+}
 
 // Secret detection pattern (API keys, tokens, credentials)
 const SECRET_PATTERN = /(?:sk-[a-zA-Z0-9_\-]{16,})|(?:ghp_[a-zA-Z0-9]{36})|(?:(?:api[_-]?key|secret|password|bearer|token)[-_=:\s]+[A-Za-z0-9_\-]{12,})|(?:[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,})/gi;
@@ -87,7 +104,9 @@ function assertStorageIsolation(componentName, options = {}, paramNames = ['memo
 module.exports = {
     MEMORY_CATEGORIES,
     MEMORY_TYPES,
+    PROJECT_STAGES,
     MEMORY_SOURCES,
+    normalizeProjectKey,
     redactSecrets,
     hasSecretLikeContent,
     isTestEnvironment,

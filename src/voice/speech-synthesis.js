@@ -277,6 +277,9 @@ class SpeechSynthesisService {
                 started = true;
                 if (startTimeout) clearTimeout(startTimeout);
                 this.setState('speaking', { text: cleanText });
+                if (typeof options.onStart === 'function') {
+                    try { options.onStart(); } catch (_) {}
+                }
             };
 
             utterance.onboundary = (event) => {

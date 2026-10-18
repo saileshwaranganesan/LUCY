@@ -22,15 +22,113 @@ document.addEventListener('DOMContentLoaded', () => {
     const trickDropdown = document.getElementById('trickDropdown');
     const resizeGrip = document.getElementById('resizeGrip');
 
-    // Clean 3-Button Dock
+    // Clean 3-Button Dock & Container
     const talkBtn = document.getElementById('talkBtn');
     const pinBtn = document.getElementById('pinBtn');
     const returnBtn = document.getElementById('returnBtn');
     const closeBtn = document.getElementById('closeBtn');
+    const companionContainer = document.getElementById('companionContainer');
 
     let isPinned = true;
     let collapseTimer = null;
     let typewriterTimer = null;
+    let isResizing = false;
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let hasMoved = false;
+    let isPointerDown = false;
+    let hideControlsTimer = null;
+    let isUserHovering = false;
+
+    // Hover & Focus Visibility Manager for Controls and Status Indicators
+    function showControls() {
+        if (hideControlsTimer) {
+            clearTimeout(hideControlsTimer);
+            hideControlsTimer = null;
+        }
+        if (companionContainer) {
+            companionContainer.classList.add('controls-visible');
+        }
+    }
+
+    function scheduleHideControls(delayMs = 220) {
+        if (hideControlsTimer) {
+            clearTimeout(hideControlsTimer);
+            hideControlsTimer = null;
+        }
+        // Never hide controls during active mouse drag or window resize, or while keyboard focus is within
+        if (isPointerDown || isDragging || isResizing) return;
+        if (companionContainer && companionContainer.matches(':focus-within')) return;
+
+        hideControlsTimer = setTimeout(() => {
+            if (isPointerDown || isDragging || isResizing) return;
+            if (companionContainer && companionContainer.matches(':focus-within')) return;
+            if (companionContainer && companionContainer.matches(':hover')) return;
+
+            // When pointer is away, collapse side panel and trick menu so companion footprint is clean
+            if (trickDropdown && trickDropdown.classList.contains('open')) {
+                trickDropdown.classList.remove('open');
+            }
+            if (sidePanel && !sidePanel.classList.contains('collapsed')) {
+                collapseSidePanel();
+            }
+
+            if (companionContainer) {
+                companionContainer.classList.remove('controls-visible');
+            }
+            hideControlsTimer = null;
+        }, delayMs);
+    }
+
+    if (companionContainer) {
+        companionContainer.addEventListener('pointerenter', () => {
+            isUserHovering = true;
+            showControls();
+        });
+        companionContainer.addEventListener('pointerleave', () => {
+            isUserHovering = false;
+            scheduleHideControls(220);
+        });
+        companionContainer.addEventListener('mouseenter', () => {
+            isUserHovering = true;
+            showControls();
+        });
+        companionContainer.addEventListener('mouseleave', () => {
+            isUserHovering = false;
+            scheduleHideControls(220);
+        });
+
+        // Keyboard navigation accessibility
+        companionContainer.addEventListener('focusin', () => {
+            showControls();
+        });
+        companionContainer.addEventListener('focusout', () => {
+            setTimeout(() => {
+                if (!companionContainer.contains(document.activeElement)) {
+                    scheduleHideControls(150);
+                }
+            }, 50);
+        });
+    }
+
+    // Window-level pointer listeners to guarantee controls remain visible during active interactions
+    window.addEventListener('pointerdown', () => {
+        isPointerDown = true;
+        showControls();
+    }, true);
+
+    window.addEventListener('pointerup', () => {
+        isPointerDown = false;
+        if (companionContainer && !companionContainer.matches(':hover') && !companionContainer.matches(':focus-within')) {
+            scheduleHideControls(250);
+        }
+    }, true);
+
+    window.addEventListener('pointercancel', () => {
+        isPointerDown = false;
+        scheduleHideControls(200);
+    }, true);
 
     // Check user preference for reduced motion
     const prefersReducedMotion = window.matchMedia
@@ -44,17 +142,22 @@ document.addEventListener('DOMContentLoaded', () => {
     window.companionRenderer = renderer;
 
     // 2. Dynamic Canvas Sizing & Proportion Preservation
+    let configuredBaseWidth = 160;
+    let configuredBaseHeight = 190;
+
     function resizeCanvasToStage() {
         if (!fairyStage || !fairyCanvas) return;
         const rect = fairyStage.getBoundingClientRect();
         const stageW = Math.max(100, Math.floor(rect.width));
         const stageH = Math.max(100, Math.floor(rect.height));
 
-        fairyCanvas.width = stageW;
-        fairyCanvas.height = stageH;
+        const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? Math.min(2.5, window.devicePixelRatio) : 1;
+
+        fairyCanvas.style.width = stageW + 'px';
+        fairyCanvas.style.height = stageH + 'px';
 
         if (typeof renderer.onResize === 'function') {
-            renderer.onResize(stageW, stageH);
+            renderer.onResize(stageW, stageH, dpr);
         }
     }
 
@@ -68,20 +171,26 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     if (window.companionIpc && window.companionIpc.onResized) {
-        window.companionIpc.onResized(() => {
+        window.companionIpc.onResized((data) => {
+            if (data && typeof data.width === 'number' && typeof data.height === 'number') {
+                if (sidePanel && sidePanel.classList.contains('collapsed')) {
+                    configuredBaseWidth = data.width;
+                    configuredBaseHeight = data.height;
+                }
+            }
             resizeCanvasToStage();
         });
     }
 
     // 3. Tactile Corner Resize Grip
     if (resizeGrip) {
-        let isResizing = false;
         let resizeStartX = 0;
         let resizeStartY = 0;
 
         resizeGrip.addEventListener('mousedown', (e) => {
             e.stopPropagation();
             e.preventDefault();
+            autoExpandedWidth = null;
             isResizing = true;
             resizeStartX = e.screenX;
             resizeStartY = e.screenY;
@@ -107,6 +216,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 4. Adjacent Side Conversation Panel with Typewriter Effect
+    let autoExpandedWidth = null;
+
     function displayMessage(text, isTransient = false) {
         if (!sidePanel || !typewriterText || !text) return;
 
@@ -118,6 +229,22 @@ document.addEventListener('DOMContentLoaded', () => {
         if (collapseTimer) {
             clearTimeout(collapseTimer);
             collapseTimer = null;
+        }
+
+        // Always update typewriter text content so it is ready
+        typewriterText.textContent = text;
+
+        // If pointer is away (user is not hovering and not focused), do not expand window or open side panel
+        if (!isUserHovering && (!companionContainer || !companionContainer.matches(':focus-within'))) {
+            return;
+        }
+
+        // If the window is compact (< 300px), expand to 320px so the side panel does not crowd the fairy
+        if (window.innerWidth < 300 && window.companionIpc && window.companionIpc.setWindowSize) {
+            if (autoExpandedWidth === null) {
+                autoExpandedWidth = configuredBaseWidth || window.innerWidth;
+            }
+            window.companionIpc.setWindowSize(320, window.innerHeight, true);
         }
 
         // Open side panel
@@ -158,6 +285,16 @@ document.addEventListener('DOMContentLoaded', () => {
         sidePanel.classList.add('collapsed');
         if (trickDropdown) trickDropdown.classList.remove('open');
         resizeCanvasToStage();
+
+        if (autoExpandedWidth !== null && window.companionIpc && window.companionIpc.setWindowSize) {
+            const restoreW = autoExpandedWidth;
+            autoExpandedWidth = null;
+            window.companionIpc.setWindowSize(restoreW, window.innerHeight, false);
+        }
+
+        if (companionContainer && !companionContainer.matches(':hover') && !companionContainer.matches(':focus-within')) {
+            scheduleHideControls(220);
+        }
     }
 
     if (sideDismissBtn) {
@@ -176,8 +313,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Show initial welcoming greeting beside character
-    displayMessage('Sparkle! ✨ Beside you on your desktop.', true);
+    // Set friendly initial state without opening side panel
+    renderer.setVisualState({ emotion: 'happy' });
 
     // 5. Pin State Visual Sync
     function updatePinUI(pinned) {
@@ -185,6 +322,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (pinBtn) {
             pinBtn.classList.toggle('active', isPinned);
             pinBtn.classList.toggle('unpinned', !isPinned);
+            pinBtn.setAttribute('aria-pressed', isPinned ? 'true' : 'false');
             pinBtn.textContent = isPinned ? '📌' : '📍';
             pinBtn.title = isPinned
                 ? 'Pinned: Always on top 📌 (Click to unpin)'
@@ -194,8 +332,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (window.companionIpc && window.companionIpc.getStatus) {
         window.companionIpc.getStatus().then((status) => {
-            if (status && status.isPinned !== undefined) {
-                updatePinUI(status.isPinned);
+            if (status) {
+                if (status.isPinned !== undefined) {
+                    updatePinUI(status.isPinned);
+                }
+                if (typeof status.width === 'number' && status.width > 0) {
+                    configuredBaseWidth = status.width;
+                }
+                if (typeof status.height === 'number' && status.height > 0) {
+                    configuredBaseHeight = status.height;
+                }
             }
         }).catch(() => {});
     }
@@ -209,11 +355,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 6. Window Dragging Physics
-    let isDragging = false;
-    let dragStartX = 0;
-    let dragStartY = 0;
-    let hasMoved = false;
-
     function handleDragStart(e) {
         // Prevent drag when clicking buttons, dropdowns, or resize grip
         if (e.target.closest('.control-dock') ||
@@ -226,6 +367,7 @@ document.addEventListener('DOMContentLoaded', () => {
         hasMoved = false;
         dragStartX = e.screenX;
         dragStartY = e.screenY;
+        document.body.classList.add('is-dragging');
     }
 
     function handleDragMove(e) {
@@ -246,7 +388,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function handleDragEnd() {
-        isDragging = false;
+        if (isDragging) {
+            isDragging = false;
+            document.body.classList.remove('is-dragging');
+        }
     }
 
     if (fairyStage) fairyStage.addEventListener('mousedown', handleDragStart);
@@ -260,6 +405,7 @@ document.addEventListener('DOMContentLoaded', () => {
         talkBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             if (sidePanel && sidePanel.classList.contains('collapsed')) {
+                isUserHovering = true;
                 displayMessage('How can I help you today? ✨', false);
             } else {
                 if (window.companionIpc && window.companionIpc.focusMainWindow) {
@@ -269,34 +415,97 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 📌 2. Pin / Unpin Toggle
+    // 📌 2. Pin / Unpin Toggle (Guarded against race conditions)
+    let isPinToggling = false;
     if (pinBtn) {
         pinBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
+            if (isPinToggling) return;
             if (window.companionIpc && window.companionIpc.togglePin) {
+                isPinToggling = true;
+                pinBtn.style.pointerEvents = 'none';
                 try {
                     const res = await window.companionIpc.togglePin();
-                    updatePinUI(res.isPinned);
-                    displayMessage(res.isPinned ? 'Pinned: Always on top 📌' : 'Unpinned: Free mode 📍', true);
-                } catch (_) {}
+                    if (res && res.ok !== false) {
+                        updatePinUI(res.isPinned);
+                        isUserHovering = true;
+                        displayMessage(res.isPinned ? 'Pinned: Always on top 📌' : 'Unpinned: Free mode 📍', true);
+                    } else if (res && res.error) {
+                        displayMessage('Pin failed: ' + res.error, true);
+                    }
+                } catch (err) {
+                    displayMessage('Pin error: ' + (err.message || 'Failed to toggle pin'), true);
+                } finally {
+                    isPinToggling = false;
+                    pinBtn.style.pointerEvents = '';
+                }
             }
         });
     }
 
     // ↩️ 3. Return to Main Application
+    let isReturning = false;
+
+    function resetCompanionState() {
+        if (typewriterTimer) {
+            clearInterval(typewriterTimer);
+            typewriterTimer = null;
+        }
+        if (collapseTimer) {
+            clearTimeout(collapseTimer);
+            collapseTimer = null;
+        }
+        if (sidePanel) {
+            sidePanel.classList.add('collapsed');
+        }
+        if (typewriterText) {
+            typewriterText.textContent = '';
+        }
+        if (trickDropdown) {
+            trickDropdown.classList.remove('open');
+        }
+        if (autoExpandedWidth !== null && window.companionIpc && window.companionIpc.setWindowSize) {
+            const restoreW = autoExpandedWidth;
+            autoExpandedWidth = null;
+            window.companionIpc.setWindowSize(restoreW, window.innerHeight, false);
+        }
+        if (renderer) {
+            renderer.setVisualState({ emotion: 'idle' });
+            renderer.state.actionTimer = 0;
+            renderer.state.transitionOffset = 0;
+            renderer.state.opacity = 1;
+        }
+        if (companionContainer) {
+            companionContainer.classList.remove('controls-visible');
+        }
+        if (hideControlsTimer) {
+            clearTimeout(hideControlsTimer);
+            hideControlsTimer = null;
+        }
+        isPointerDown = false;
+        document.body.style.opacity = '1';
+        isReturning = false;
+        resizeCanvasToStage();
+    }
+
     async function executeReturn() {
+        if (isReturning) return;
+        isReturning = true;
+
         displayMessage('Flying back home! ✨', true);
         renderer.setVisualState({ emotion: 'takeoff' });
 
-        document.body.style.transition = 'opacity 0.28s ease';
+        document.body.style.transition = 'opacity 0.22s ease';
         document.body.style.opacity = '0';
 
-        setTimeout(() => {
-            if (window.companionIpc && window.companionIpc.returnToApp) {
-                window.companionIpc.returnToApp();
-            }
-            document.body.style.opacity = '1';
-        }, 300);
+        setTimeout(async () => {
+            try {
+                if (window.companionIpc && window.companionIpc.returnToApp) {
+                    await window.companionIpc.returnToApp();
+                }
+            } catch (_) {}
+            resetCompanionState();
+        }, 250);
     }
 
     if (returnBtn) {
@@ -314,6 +523,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 8. Playful Fairy Tricks & Secondary Interaction
+    const petManager = (typeof PetInteractionManager !== 'undefined')
+        ? new PetInteractionManager()
+        : (window.PetInteractionManager ? new window.PetInteractionManager() : null);
+
     if (trickMenuBtn && trickDropdown) {
         trickMenuBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -335,13 +548,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 trickDropdown.classList.remove('open');
                 if (trick && typeof renderer.playTrick === 'function') {
                     renderer.playTrick(trick);
-                    const trickLabels = {
-                        spin: 'Twirl! 💫 Spinning through the stars!',
-                        jump: 'Boing! 🦘 High fairy leap!',
-                        fly: 'Swoosh! 🦋 Gliding on celestial wings!',
-                        bounce: 'Sparkle! ✨ Happy flutter bounce!'
-                    };
-                    displayMessage(trickLabels[trick] || `Playing ${trick}! ✨`, true);
+                    const trickDef = petManager ? petManager.getTrick(trick) : null;
+                    const msg = trickDef ? trickDef.message : `Playing ${trick}! ✨`;
+                    isUserHovering = true;
+                    displayMessage(msg, true);
+                    if (window.companionIpc && window.companionIpc.playTrick) {
+                        window.companionIpc.playTrick(trick).catch(() => {});
+                    }
                 }
             });
         });
@@ -351,8 +564,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (fairyStage) {
         fairyStage.addEventListener('click', () => {
             if (!hasMoved) {
+                if (petManager && !petManager.canTriggerPet()) return;
+                const phrase = petManager ? petManager.getNextAffectionPhrase() : 'Purr! ✨ That tickles, thank you! 💖';
                 renderer.setVisualState({ emotion: 'pet' });
-                displayMessage('Purr! ✨ That tickles, thank you! 💖', true);
+                isUserHovering = true;
+                displayMessage(phrase, true);
+                if (window.companionIpc && window.companionIpc.petCompanion) {
+                    window.companionIpc.petCompanion({ phrase }).catch(() => {});
+                }
             }
         });
     }
@@ -391,15 +610,34 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!voiceData) return;
                 if (voiceData.voiceState === 'speaking') {
                     renderer.setVisualState({ emotion: 'speaking' });
+                    if (statusText) statusText.textContent = 'SPEAKING';
+                    if (statusDot) {
+                        statusDot.style.background = '#70d6ff';
+                        statusDot.style.boxShadow = '0 0 6px #70d6ff';
+                    }
                     if (voiceData.text) {
                         displayMessage(voiceData.text, false);
                     }
                 } else if (voiceData.voiceState === 'listening') {
                     renderer.setVisualState({ emotion: 'listening' });
+                    if (statusText) statusText.textContent = 'LISTENING';
+                    if (statusDot) {
+                        statusDot.style.background = '#ff70a6';
+                        statusDot.style.boxShadow = '0 0 6px #ff70a6';
+                    }
                     displayMessage('Listening carefully... 🎙️', true);
                 } else if (voiceData.voiceState === 'idle') {
                     if (renderer.state.emotion === 'speaking' || renderer.state.emotion === 'listening') {
                         renderer.setVisualState({ emotion: 'idle' });
+                    }
+                    if (statusText) statusText.textContent = 'IDLE';
+                    if (statusDot) {
+                        statusDot.style.background = '#70d6ff';
+                        statusDot.style.boxShadow = '0 0 6px #70d6ff';
+                    }
+                    if (!isUserHovering && (!companionContainer || !companionContainer.matches(':focus-within'))) {
+                        collapseSidePanel();
+                        scheduleHideControls(150);
                     }
                 }
             });
@@ -413,10 +651,20 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
+        if (window.companionIpc.onResetState) {
+            window.companionIpc.onResetState(() => {
+                resetCompanionState();
+            });
+        }
+
         if (window.companionIpc.onVisibilityChanged) {
             window.companionIpc.onVisibilityChanged((data) => {
-                if (data && typeof renderer.setVisibility === 'function') {
-                    renderer.setVisibility(Boolean(data.isVisible));
+                const isVisible = Boolean(data && data.isVisible);
+                if (typeof renderer.setVisibility === 'function') {
+                    renderer.setVisibility(isVisible);
+                }
+                if (!isVisible) {
+                    resetCompanionState();
                 }
             });
         }

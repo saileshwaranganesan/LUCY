@@ -258,6 +258,335 @@ function registerFileTools(registry, workspaceRoot = process.cwd()) {
             };
         }
     });
+
+    // 5. file_search
+    registry.registerTool({
+        id: 'file_search',
+        name: 'File Searcher',
+        description: 'Recursively search for files and folders by name within the workspace boundary',
+        riskTier: RISK_TIERS.WORKSPACE_READ,
+        schema: {
+            type: 'object',
+            properties: {
+                query: { type: 'string', description: 'Search term or filename query' },
+                path: { type: 'string', description: 'Relative starting directory path', default: '.' },
+                maxResults: { type: 'number', description: 'Maximum results to return', default: 50 }
+            },
+            required: ['query']
+        },
+        handler: async (params) => {
+            const baseDir = assertInsideWorkspace(params.path || '.');
+            if (!fs.existsSync(baseDir)) {
+                return { ok: false, status: 'not_found', error: `Directory not found: ${params.path || '.'}` };
+            }
+            const maxResults = typeof params.maxResults === 'number' ? Math.min(params.maxResults, 100) : 50;
+            const matches = [];
+            const queryLower = String(params.query || '').toLowerCase();
+
+            async function scan(currentDir) {
+                if (matches.length >= maxResults) return;
+                let entries;
+                try {
+                    entries = await fsp.readdir(currentDir, { withFileTypes: true });
+                } catch {
+                    return;
+                }
+                for (const entry of entries) {
+                    if (matches.length >= maxResults) break;
+                    const fullPath = path.join(currentDir, entry.name);
+                    const relPath = path.relative(baseDir, fullPath);
+
+                    if (entry.name.toLowerCase().includes(queryLower)) {
+                        let sizeBytes = null;
+                        if (entry.isFile()) {
+                            try {
+                                const st = await fsp.stat(fullPath);
+                                sizeBytes = st.size;
+                            } catch {}
+                        }
+                        matches.push({
+                            name: entry.name,
+                            path: relPath || entry.name,
+                            isDirectory: entry.isDirectory(),
+                            isFile: entry.isFile(),
+                            sizeBytes
+                        });
+                    }
+
+                    if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== '.git') {
+                        await scan(fullPath);
+                    }
+                }
+            }
+
+            await scan(baseDir);
+
+            return {
+                ok: true,
+                status: 'search_success',
+                query: params.query,
+                count: matches.length,
+                matches,
+                verification: { verified: true, method: 'recursive_search' }
+            };
+        },
+        dryRunSimulate: async (params) => {
+            return {
+                simulatedAction: 'search',
+                query: params.query,
+                path: params.path || '.'
+            };
+        }
+    });
+
+    // 6. file_mkdir
+    registry.registerTool({
+        id: 'file_mkdir',
+        name: 'Directory Creator',
+        description: 'Create a directory recursively within the workspace boundary',
+        riskTier: RISK_TIERS.WORKSPACE_WRITE,
+        schema: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Relative path of directory to create' }
+            },
+            required: ['path']
+        },
+        handler: async (params) => {
+            const dirPath = assertInsideWorkspace(params.path);
+            await fsp.mkdir(dirPath, { recursive: true });
+            const exists = fs.existsSync(dirPath);
+
+            return {
+                ok: exists,
+                status: exists ? 'mkdir_success' : 'mkdir_failed',
+                path: params.path,
+                verification: { verified: exists, method: 'post_mkdir_check' }
+            };
+        },
+        dryRunSimulate: async (params) => {
+            return {
+                simulatedAction: 'mkdir',
+                target: params.path
+            };
+        }
+    });
+
+    // 7. file_copy
+    registry.registerTool({
+        id: 'file_copy',
+        name: 'File Copier',
+        description: 'Copy a file within the workspace boundary',
+        riskTier: RISK_TIERS.WORKSPACE_WRITE,
+        schema: {
+            type: 'object',
+            properties: {
+                source: { type: 'string', description: 'Relative source file path' },
+                destination: { type: 'string', description: 'Relative destination file path' },
+                overwrite: { type: 'boolean', description: 'Whether to overwrite existing destination', default: false }
+            },
+            required: ['source', 'destination']
+        },
+        handler: async (params) => {
+            const srcPath = assertInsideWorkspace(params.source);
+            const dstPath = assertInsideWorkspace(params.destination);
+
+            if (!fs.existsSync(srcPath)) {
+                return { ok: false, status: 'source_not_found', error: `Source not found: ${params.source}` };
+            }
+            if (fs.existsSync(dstPath) && !params.overwrite) {
+                return { ok: false, status: 'destination_exists', error: `Destination already exists: ${params.destination}` };
+            }
+
+            await fsp.mkdir(path.dirname(dstPath), { recursive: true });
+            await fsp.copyFile(srcPath, dstPath);
+
+            const dstStat = await fsp.stat(dstPath);
+            const srcStat = await fsp.stat(srcPath);
+            const verified = dstStat.size === srcStat.size;
+
+            return {
+                ok: verified,
+                status: verified ? 'copy_success' : 'copy_verification_failed',
+                source: params.source,
+                destination: params.destination,
+                bytesCopied: dstStat.size,
+                verification: { verified, method: 'post_copy_stat_check' }
+            };
+        },
+        dryRunSimulate: async (params) => {
+            return {
+                simulatedAction: 'copy',
+                source: params.source,
+                destination: params.destination
+            };
+        }
+    });
+
+    // 8. file_move
+    registry.registerTool({
+        id: 'file_move',
+        name: 'File Mover / Renamer',
+        description: 'Move or rename a file within the workspace boundary',
+        riskTier: RISK_TIERS.WORKSPACE_WRITE,
+        schema: {
+            type: 'object',
+            properties: {
+                source: { type: 'string', description: 'Relative source path' },
+                destination: { type: 'string', description: 'Relative destination path' },
+                overwrite: { type: 'boolean', description: 'Whether to overwrite existing destination', default: false }
+            },
+            required: ['source', 'destination']
+        },
+        handler: async (params) => {
+            const srcPath = assertInsideWorkspace(params.source);
+            const dstPath = assertInsideWorkspace(params.destination);
+
+            if (!fs.existsSync(srcPath)) {
+                return { ok: false, status: 'source_not_found', error: `Source not found: ${params.source}` };
+            }
+            if (fs.existsSync(dstPath) && !params.overwrite) {
+                return { ok: false, status: 'destination_exists', error: `Destination already exists: ${params.destination}` };
+            }
+
+            await fsp.mkdir(path.dirname(dstPath), { recursive: true });
+            await fsp.rename(srcPath, dstPath);
+
+            const dstExists = fs.existsSync(dstPath);
+            const srcExists = fs.existsSync(srcPath);
+            const verified = dstExists && !srcExists;
+
+            return {
+                ok: verified,
+                status: verified ? 'move_success' : 'move_failed',
+                source: params.source,
+                destination: params.destination,
+                verification: { verified, method: 'post_move_existence_check' }
+            };
+        },
+        dryRunSimulate: async (params) => {
+            return {
+                simulatedAction: 'move',
+                source: params.source,
+                destination: params.destination
+            };
+        }
+    });
+
+    // 9. file_open_external
+    registry.registerTool({
+        id: 'file_open_external',
+        name: 'External File Opener',
+        description: 'Open a file or folder with its default registered Windows application or File Explorer',
+        riskTier: RISK_TIERS.WORKSPACE_READ,
+        schema: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Relative path to file or folder to open' }
+            },
+            required: ['path']
+        },
+        handler: async (params) => {
+            const targetPath = assertInsideWorkspace(params.path);
+            if (!fs.existsSync(targetPath)) {
+                return { ok: false, status: 'not_found', error: `File or folder not found: ${params.path}` };
+            }
+
+            // Attempt electron shell.openPath first, then Windows start fallback
+            let opened = false;
+            let openError = null;
+
+            try {
+                const electron = require('electron');
+                if (electron && electron.shell && typeof electron.shell.openPath === 'function') {
+                    const err = await electron.shell.openPath(targetPath);
+                    if (err) {
+                        openError = err;
+                    } else {
+                        opened = true;
+                    }
+                }
+            } catch {}
+
+            if (!opened && process.platform === 'win32') {
+                const { spawn } = require('child_process');
+                await new Promise((resolve) => {
+                    const proc = spawn('cmd.exe', ['/c', 'start', '""', targetPath], {
+                        detached: true,
+                        stdio: 'ignore',
+                        windowsHide: true
+                    });
+                    proc.unref();
+                    proc.on('error', (err) => {
+                        openError = err.message;
+                        resolve();
+                    });
+                    setTimeout(() => {
+                        opened = true;
+                        resolve();
+                    }, 150);
+                });
+            }
+
+            return {
+                ok: opened,
+                status: opened ? 'open_success' : 'open_failed',
+                path: params.path,
+                resolvedPath: targetPath,
+                error: openError || undefined,
+                verification: { verified: opened && fs.existsSync(targetPath), method: 'registered_shell_opener' }
+            };
+        },
+        dryRunSimulate: async (params) => {
+            const targetPath = assertInsideWorkspace(params.path);
+            return {
+                simulatedAction: 'open_external',
+                target: params.path,
+                exists: fs.existsSync(targetPath)
+            };
+        }
+    });
+
+    // 10. file_stat
+    registry.registerTool({
+        id: 'file_stat',
+        name: 'File Status Inspector',
+        description: 'Inspect status, existence, size, and modification timestamp of a file or folder',
+        riskTier: RISK_TIERS.WORKSPACE_READ,
+        schema: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Relative path to file or directory' }
+            },
+            required: ['path']
+        },
+        handler: async (params) => {
+            const targetPath = assertInsideWorkspace(params.path);
+            if (!fs.existsSync(targetPath)) {
+                return { ok: false, status: 'not_found', error: `File or directory not found: ${params.path}` };
+            }
+            const st = await fsp.stat(targetPath);
+            return {
+                ok: true,
+                status: 'stat_success',
+                path: params.path,
+                exists: true,
+                sizeBytes: st.size,
+                isFile: st.isFile(),
+                isDirectory: st.isDirectory(),
+                modifiedAt: st.mtime.toISOString(),
+                verification: { verified: true, method: 'stat_query' }
+            };
+        },
+        dryRunSimulate: async (params) => {
+            const targetPath = assertInsideWorkspace(params.path);
+            return {
+                simulatedAction: 'stat',
+                target: params.path,
+                exists: fs.existsSync(targetPath)
+            };
+        }
+    });
 }
 
 module.exports = {

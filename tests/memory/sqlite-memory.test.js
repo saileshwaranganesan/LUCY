@@ -560,4 +560,31 @@ test('Batch 05 - SQLite Persistent Memory & Safe Migration', async (t) => {
 
         store.close();
     });
+
+    await t.test('17. Orphaned .tmp_* files older than 60s are safely swept on adapter initialization', async () => {
+        const sweepDir = fs.mkdtempSync(path.join(testTempDir, 'lucy-sweep-'));
+        const dbFile = path.join(sweepDir, 'lucy-memory.db');
+
+        // Create an old orphaned temp file
+        const oldTempFile = path.join(sweepDir, `lucy-memory.db.tmp_${Date.now() - 120000}_abcd`);
+        fs.writeFileSync(oldTempFile, 'orphaned temporary bytes', 'utf8');
+        // Backdate mtime to 2 minutes ago
+        const past = new Date(Date.now() - 120000);
+        fs.utimesSync(oldTempFile, past, past);
+
+        // Create a recent temp file (< 60s)
+        const recentTempFile = path.join(sweepDir, `lucy-memory.db.tmp_${Date.now()}_efgh`);
+        fs.writeFileSync(recentTempFile, 'recent active temporary bytes', 'utf8');
+
+        // Initialize adapter
+        const adapter = new SqliteMemoryAdapter({ dbPath: dbFile });
+        await adapter.init();
+
+        assert.equal(fs.existsSync(oldTempFile), false, 'Old orphaned temp file must be safely unlinked');
+        assert.equal(fs.existsSync(recentTempFile), true, 'Recent temp file must be preserved');
+
+        // Clean up recent temp file
+        try { fs.unlinkSync(recentTempFile); } catch {}
+        adapter.close();
+    });
 });

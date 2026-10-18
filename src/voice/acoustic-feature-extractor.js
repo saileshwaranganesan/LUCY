@@ -15,8 +15,8 @@
  * Licenced under Apache-2.0 / MIT compatible. 100% in-memory local processing.
  */
 
-const SAMPLE_RATE = 16000;
-const FRAME_SIZE = 400; // 25ms at 16kHz
+const AFE_SAMPLE_RATE = 16000;
+const AFE_FRAME_SIZE = 400; // 25ms at 16kHz
 const FRAME_STEP = 160; // 10ms hop at 16kHz
 const FFT_SIZE = 512;
 const NUM_MEL_FILTERS = 26;
@@ -24,9 +24,9 @@ const NUM_MFCC = 13;
 const PRE_EMPHASIS = 0.97;
 
 // Precomputed Hamming window
-const HAMMING_WINDOW = new Float32Array(FRAME_SIZE);
-for (let n = 0; n < FRAME_SIZE; n++) {
-    HAMMING_WINDOW[n] = 0.54 - 0.46 * Math.cos((2 * Math.PI * n) / (FRAME_SIZE - 1));
+const HAMMING_WINDOW = new Float32Array(AFE_FRAME_SIZE);
+for (let n = 0; n < AFE_FRAME_SIZE; n++) {
+    HAMMING_WINDOW[n] = 0.54 - 0.46 * Math.cos((2 * Math.PI * n) / (AFE_FRAME_SIZE - 1));
 }
 
 // Convert Hz to Mel
@@ -40,7 +40,7 @@ function melToHz(mel) {
 }
 
 // Build 26 Mel triangular filterbanks
-function createMelFilterbanks(numFilters = NUM_MEL_FILTERS, fftSize = FFT_SIZE, sampleRate = SAMPLE_RATE, minHz = 100, maxHz = 7500) {
+function createMelFilterbanks(numFilters = NUM_MEL_FILTERS, fftSize = FFT_SIZE, sampleRate = AFE_SAMPLE_RATE, minHz = 100, maxHz = 7500) {
     const minMel = hzToMel(minHz);
     const maxMel = hzToMel(maxHz);
     const melStep = (maxMel - minMel) / (numFilters + 1);
@@ -203,7 +203,7 @@ function normalizeAudioBuffer(input) {
  * - RMS energy
  */
 function extractFrameFeatures(frame400) {
-    if (frame400.length < FRAME_SIZE) {
+    if (frame400.length < AFE_FRAME_SIZE) {
         return null;
     }
 
@@ -215,7 +215,7 @@ function extractFrameFeatures(frame400) {
     let prevVal = frame400[0];
     let frameRmsSum = 0;
 
-    for (let n = 0; n < FRAME_SIZE; n++) {
+    for (let n = 0; n < AFE_FRAME_SIZE; n++) {
         const val = frame400[n];
         frameRmsSum += val * val;
 
@@ -230,8 +230,8 @@ function extractFrameFeatures(frame400) {
         real[n] = preVal * HAMMING_WINDOW[n];
     }
 
-    const zcr = zcrCount / FRAME_SIZE;
-    const rms = Math.sqrt(frameRmsSum / FRAME_SIZE);
+    const zcr = zcrCount / AFE_FRAME_SIZE;
+    const rms = Math.sqrt(frameRmsSum / AFE_FRAME_SIZE);
 
     // 2. FFT
     fft(real, imag);
@@ -242,7 +242,7 @@ function extractFrameFeatures(frame400) {
     let totalPower = 0;
     let weightedFreqSum = 0;
     let highFreqPower = 0;
-    const binHz = SAMPLE_RATE / FFT_SIZE; // ~31.25 Hz per bin
+    const binHz = AFE_SAMPLE_RATE / FFT_SIZE; // ~31.25 Hz per bin
     const cutoff4kHzBin = Math.floor(4000 / binHz);
 
     for (let k = 0; k < numBins; k++) {
@@ -295,16 +295,16 @@ function extractFrameFeatures(frame400) {
  */
 function extractAudioFeatures(audioSamples) {
     const samples = normalizeAudioBuffer(audioSamples);
-    if (samples.length < FRAME_SIZE) {
+    if (samples.length < AFE_FRAME_SIZE) {
         return [];
     }
 
     const frames = [];
-    const numFrames = Math.floor((samples.length - FRAME_SIZE) / FRAME_STEP) + 1;
+    const numFrames = Math.floor((samples.length - AFE_FRAME_SIZE) / FRAME_STEP) + 1;
 
     for (let f = 0; f < numFrames; f++) {
         const start = f * FRAME_STEP;
-        const slice = samples.subarray(start, start + FRAME_SIZE);
+        const slice = samples.subarray(start, start + AFE_FRAME_SIZE);
         const feat = extractFrameFeatures(slice);
         if (feat) {
             frames.push(feat);
@@ -334,12 +334,22 @@ function extractAudioFeatures(audioSamples) {
     return frames;
 }
 
-module.exports = {
-    SAMPLE_RATE,
-    FRAME_SIZE,
-    FRAME_STEP,
-    NUM_MFCC,
-    normalizeAudioBuffer,
-    extractFrameFeatures,
-    extractAudioFeatures
-};
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        SAMPLE_RATE: AFE_SAMPLE_RATE,
+        FRAME_SIZE: AFE_FRAME_SIZE,
+        FRAME_STEP,
+        NUM_MFCC,
+        normalizeAudioBuffer,
+        extractFrameFeatures,
+        extractAudioFeatures
+    };
+}
+
+if (typeof window !== 'undefined') {
+    window.SAMPLE_RATE = AFE_SAMPLE_RATE;
+    window.FRAME_SIZE = AFE_FRAME_SIZE;
+    window.normalizeAudioBuffer = normalizeAudioBuffer;
+    window.extractFrameFeatures = extractFrameFeatures;
+    window.extractAudioFeatures = extractAudioFeatures;
+}

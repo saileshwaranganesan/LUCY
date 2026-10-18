@@ -4,7 +4,12 @@ const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const ARTIFACTS_DIR = 'C:\\Users\\admin\\.gemini\\antigravity-ide\\brain\\72c6770c-c89f-4cf6-a495-f818e8d3d33d';
+const LOCAL_ARTIFACTS = path.resolve(__dirname, '../artifacts');
+const ARTIFACTS_DIR = process.env.LUCY_ARTIFACTS_DIR || (
+    fs.existsSync('C:\\Users\\admin\\.gemini\\antigravity-ide\\brain\\7ae752c2-9344-4b22-a07e-0613214bb3df')
+        ? 'C:\\Users\\admin\\.gemini\\antigravity-ide\\brain\\7ae752c2-9344-4b22-a07e-0613214bb3df'
+        : LOCAL_ARTIFACTS
+);
 const ISOLATED_PROFILE = path.resolve(__dirname, '../scratch/isolated-floating-ux2-profile');
 
 class SimpleCdpClient {

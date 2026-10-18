@@ -19,22 +19,98 @@ const { validateMoveWindow, validateExecuteRequest } = require('../security/ipc-
  * 6. High discoverability: reliable summon, pin/unpin, and dock/restore lifecycle.
  */
 class FloatingCompanionWindow {
-    static DEFAULT_WIDTH = 220;
-    static DEFAULT_HEIGHT = 260;
+    static MIN_WIDTH = 140;
+    static MIN_HEIGHT = 170;
+    static DEFAULT_WIDTH = 160;
+    static DEFAULT_HEIGHT = 190;
+    static MAX_WIDTH = 520;
+    static MAX_HEIGHT = 600;
 
     constructor(options = {}) {
         this.mainWindow = options.mainWindow || null;
+        this.onRestoreMainWindow = options.onRestoreMainWindow || null;
+        this.onPinChanged = options.onPinChanged || null;
         this.companionBridge = options.companionBridge || null;
         this.coordinator = options.coordinator || null;
         this.browserWindowConstructor = options.BrowserWindow || BrowserWindow;
         this.window = null;
         this.isShown = false;
         this.isPinned = true;
+        this.isRestoring = false;
+        this.boundsFile = options.boundsFile || null;
         this.currentWidth = FloatingCompanionWindow.DEFAULT_WIDTH;
         this.currentHeight = FloatingCompanionWindow.DEFAULT_HEIGHT;
         this.lastPosition = this._loadSavedBounds();
+        this._isMoving = false;
+        this._isTemporarySize = false;
+        this._moveResetTimer = null;
+
+        this._onDisplayMetricsChanged = () => this.validateAndClampPosition();
+        if (screen && typeof screen.on === 'function') {
+            try {
+                screen.on('display-metrics-changed', this._onDisplayMetricsChanged);
+                screen.on('display-removed', this._onDisplayMetricsChanged);
+            } catch (_) {}
+        }
 
         this._registerIpcHandlers();
+    }
+
+    setOnRestoreMainWindow(fn) {
+        this.onRestoreMainWindow = fn;
+    }
+
+    _getContentSize() {
+        if (!this.window || this.window.isDestroyed()) {
+            return [this.currentWidth, this.currentHeight];
+        }
+        try {
+            if (typeof this.window.getContentSize === 'function') {
+                const [cw, ch] = this.window.getContentSize();
+                if (Number.isFinite(cw) && Number.isFinite(ch) && cw > 0 && ch > 0) {
+                    return [cw, ch];
+                }
+            }
+            if (typeof this.window.getSize === 'function') {
+                return this.window.getSize();
+            }
+        } catch (_) {}
+        return [this.currentWidth, this.currentHeight];
+    }
+
+    _updateWindowPosition(x, y) {
+        if (!this.window || this.window.isDestroyed()) return;
+        const clamped = this._clampToBounds(x, y, this.currentWidth, this.currentHeight);
+        try {
+            if (typeof this.window.setBounds === 'function') {
+                this.window.setBounds({
+                    x: clamped.x,
+                    y: clamped.y,
+                    width: this.currentWidth,
+                    height: this.currentHeight
+                });
+            } else if (typeof this.window.setPosition === 'function') {
+                this.window.setPosition(clamped.x, clamped.y);
+            }
+        } catch (_) {
+            try {
+                if (typeof this.window.setPosition === 'function') {
+                    this.window.setPosition(clamped.x, clamped.y);
+                }
+            } catch (_) {}
+        }
+        this._savePosition(clamped.x, clamped.y);
+    }
+
+    validateAndClampPosition() {
+        if (!this.window || this.window.isDestroyed()) return;
+        try {
+            const [x, y] = this.window.getPosition();
+            const clamped = this._clampToBounds(x, y, this.currentWidth, this.currentHeight);
+            if (clamped.x !== x || clamped.y !== y) {
+                this._updateWindowPosition(clamped.x, clamped.y);
+            }
+        } catch (_) {}
     }
 
     _debounce(fn, delayMs) {
@@ -49,6 +125,7 @@ class FloatingCompanionWindow {
     }
 
     _getBoundsFile() {
+        if (this.boundsFile) return this.boundsFile;
         try {
             const { app } = require('electron');
             if (app && typeof app.getPath === 'function') {
@@ -58,7 +135,12 @@ class FloatingCompanionWindow {
         return null;
     }
 
-    _clampToBounds(x, y, width = FloatingCompanionWindow.DEFAULT_WIDTH, height = FloatingCompanionWindow.DEFAULT_HEIGHT) {
+    _clampToBounds(x, y, width = FloatingCompanionWindow.DEFAULT_WIDTH, height = FloatingCompanionWindow.DEFAULT_HEIGHT, customWorkArea = null) {
+        if (customWorkArea) {
+            const clampedX = Math.round(Math.max(customWorkArea.x + 8, Math.min(x, customWorkArea.x + customWorkArea.width - width - 8)));
+            const clampedY = Math.round(Math.max(customWorkArea.y + 8, Math.min(y, customWorkArea.y + customWorkArea.height - height - 8)));
+            return { x: clampedX, y: clampedY };
+        }
         if (!screen || typeof screen.getAllDisplays !== 'function') {
             return { x, y };
         }
@@ -84,20 +166,27 @@ class FloatingCompanionWindow {
         if (file && fs.existsSync(file)) {
             try {
                 const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-                if (data && typeof data.x === 'number' && typeof data.y === 'number') {
+                if (data && typeof data === 'object') {
                     if (data.isPinned !== undefined) {
                         this.isPinned = Boolean(data.isPinned);
                     }
-                    if (typeof data.width === 'number' && typeof data.height === 'number') {
-                        this.currentWidth = Math.max(180, Math.min(520, Math.round(data.width)));
-                        this.currentHeight = Math.max(220, Math.min(600, Math.round(data.height)));
+                    if (typeof data.width === 'number' && typeof data.height === 'number' && Number.isFinite(data.width) && Number.isFinite(data.height)) {
+                        this.currentWidth = Math.max(FloatingCompanionWindow.MIN_WIDTH, Math.min(FloatingCompanionWindow.MAX_WIDTH, Math.round(data.width)));
+                        this.currentHeight = Math.max(FloatingCompanionWindow.MIN_HEIGHT, Math.min(FloatingCompanionWindow.MAX_HEIGHT, Math.round(data.height)));
+                    } else {
+                        this.currentWidth = FloatingCompanionWindow.DEFAULT_WIDTH;
+                        this.currentHeight = FloatingCompanionWindow.DEFAULT_HEIGHT;
                     }
-                    const clamped = this._clampToBounds(data.x, data.y, this.currentWidth, this.currentHeight);
-                    this.lastPosition = clamped;
-                    return clamped;
+                    if (typeof data.x === 'number' && typeof data.y === 'number' && Number.isFinite(data.x) && Number.isFinite(data.y)) {
+                        const clamped = this._clampToBounds(data.x, data.y, this.currentWidth, this.currentHeight);
+                        this.lastPosition = clamped;
+                        return clamped;
+                    }
                 }
             } catch (_) {}
         }
+        this.currentWidth = FloatingCompanionWindow.DEFAULT_WIDTH;
+        this.currentHeight = FloatingCompanionWindow.DEFAULT_HEIGHT;
         return null;
     }
 
@@ -106,15 +195,19 @@ class FloatingCompanionWindow {
     }
 
     _saveBounds(x, y, width = this.currentWidth, height = this.currentHeight) {
-        this.lastPosition = { x, y };
-        this.currentWidth = Math.max(180, Math.min(520, Math.round(width)));
-        this.currentHeight = Math.max(220, Math.min(600, Math.round(height)));
+        if (typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y)) {
+            this.lastPosition = { x: Math.round(x), y: Math.round(y) };
+        }
+        if (typeof width === 'number' && typeof height === 'number' && Number.isFinite(width) && Number.isFinite(height)) {
+            this.currentWidth = Math.max(FloatingCompanionWindow.MIN_WIDTH, Math.min(FloatingCompanionWindow.MAX_WIDTH, Math.round(width)));
+            this.currentHeight = Math.max(FloatingCompanionWindow.MIN_HEIGHT, Math.min(FloatingCompanionWindow.MAX_HEIGHT, Math.round(height)));
+        }
         const file = this._getBoundsFile();
         if (file) {
             try {
                 fs.writeFileSync(file, JSON.stringify({
-                    x,
-                    y,
+                    x: this.lastPosition ? this.lastPosition.x : 100,
+                    y: this.lastPosition ? this.lastPosition.y : 100,
                     width: this.currentWidth,
                     height: this.currentHeight,
                     isPinned: this.isPinned
@@ -124,7 +217,21 @@ class FloatingCompanionWindow {
     }
 
     _savePosition(x, y) {
-        this._saveBounds(x, y, this.currentWidth, this.currentHeight);
+        if (typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y)) {
+            this.lastPosition = { x: Math.round(x), y: Math.round(y) };
+        }
+        const file = this._getBoundsFile();
+        if (file) {
+            try {
+                fs.writeFileSync(file, JSON.stringify({
+                    x: this.lastPosition ? this.lastPosition.x : 100,
+                    y: this.lastPosition ? this.lastPosition.y : 100,
+                    width: this.currentWidth,
+                    height: this.currentHeight,
+                    isPinned: this.isPinned
+                }, null, 2), 'utf8');
+            } catch (_) {}
+        }
     }
 
     setMainWindow(mainWindow) {
@@ -144,8 +251,7 @@ class FloatingCompanionWindow {
      */
     createWindow() {
         if (this.window && !this.window.isDestroyed()) {
-            this.window.show();
-            this.isShown = true;
+            this.show();
             return this.window;
         }
 
@@ -168,10 +274,11 @@ class FloatingCompanionWindow {
         this.window = new WinCtor({
             width: winWidth,
             height: winHeight,
-            minWidth: 180,
-            minHeight: 220,
-            maxWidth: 520,
-            maxHeight: 600,
+            useContentSize: true,
+            minWidth: FloatingCompanionWindow.MIN_WIDTH,
+            minHeight: FloatingCompanionWindow.MIN_HEIGHT,
+            maxWidth: FloatingCompanionWindow.MAX_WIDTH,
+            maxHeight: FloatingCompanionWindow.MAX_HEIGHT,
             x: defaultX,
             y: defaultY,
             frame: false,
@@ -187,13 +294,19 @@ class FloatingCompanionWindow {
                 preload: path.join(__dirname, 'companion-preload.js'),
                 contextIsolation: true,
                 nodeIntegration: false,
-                sandbox: true
+                sandbox: true,
+                autoplayPolicy: 'no-user-gesture-required',
+                backgroundThrottling: false
             }
         });
 
-        if (this.isPinned) {
-            this.window.setAlwaysOnTop(true, 'screen-saver');
-        }
+        this._applyAlwaysOnTop();
+
+        try {
+            if (typeof this.window.setContentSize === 'function') {
+                this.window.setContentSize(winWidth, winHeight);
+            }
+        } catch (_) {}
 
         const companionHtmlPath = path.join(__dirname, 'companion.html');
         this.window.loadFile(companionHtmlPath);
@@ -211,11 +324,29 @@ class FloatingCompanionWindow {
 
         this.window.once('ready-to-show', () => {
             if (this.window && !this.window.isDestroyed()) {
-                this.window.show();
+                try {
+                    if (typeof this.window.setContentSize === 'function') {
+                        this.window.setContentSize(this.currentWidth, this.currentHeight);
+                    }
+                } catch (_) {}
+                // Non-activating presentation to avoid stealing focus from active desktop apps
+                if (typeof this.window.showInactive === 'function') {
+                    this.window.showInactive();
+                } else {
+                    this.window.show();
+                }
                 this.isShown = true;
 
-                // Sync pin state to renderer
-                this.window.webContents.send('companion:pinChanged', { isPinned: this.isPinned });
+                // Re-assert authoritative pin level on presentation
+                this._applyAlwaysOnTop();
+
+                // Synchronize authoritative pin state to renderers
+                this._syncPinStateToRenderers();
+
+                if (this.window.webContents) {
+                    this.window.webContents.send('companion:resized', { width: this.currentWidth, height: this.currentHeight });
+                }
+                this._notifyMainWindowResized(this.currentWidth, this.currentHeight);
 
                 // Send initial state & play landing arrival
                 if (this.companionBridge) {
@@ -225,36 +356,48 @@ class FloatingCompanionWindow {
             }
         });
 
-        const debouncedSave = this._debounce(() => {
+        // Ensure Windows OS restoring or showing reasserts alwaysOnTop
+        this.window.on('restore', () => {
+            this._applyAlwaysOnTop();
+        });
+        this.window.on('show', () => {
+            this._applyAlwaysOnTop();
+        });
+
+        const debouncedSavePosition = this._debounce(() => {
             if (this.window && !this.window.isDestroyed()) {
                 try {
                     const [x, y] = this.window.getPosition();
-                    const [w, h] = (typeof this.window.getSize === 'function')
-                        ? this.window.getSize()
-                        : [this.currentWidth, this.currentHeight];
-                    this._saveBounds(x, y, w, h);
+                    this._savePosition(x, y);
                 } catch (_) {}
             }
-        }, 300);
+        }, 200);
 
         this.window.on('resize', () => {
+            if (this._isMoving || this._isTemporarySize) {
+                return;
+            }
             if (this.window && !this.window.isDestroyed()) {
                 try {
-                    if (typeof this.window.getSize === 'function') {
-                        const [w, h] = this.window.getSize();
-                        this.currentWidth = w;
-                        this.currentHeight = h;
+                    const [w, h] = this._getContentSize();
+                    const clampedW = Math.max(FloatingCompanionWindow.MIN_WIDTH, Math.min(FloatingCompanionWindow.MAX_WIDTH, Math.round(w)));
+                    const clampedH = Math.max(FloatingCompanionWindow.MIN_HEIGHT, Math.min(FloatingCompanionWindow.MAX_HEIGHT, Math.round(h)));
+                    if (Math.abs(clampedW - this.currentWidth) >= 4 || Math.abs(clampedH - this.currentHeight) >= 4) {
+                        this.currentWidth = clampedW;
+                        this.currentHeight = clampedH;
+                        const [x, y] = this.window.getPosition();
+                        this._saveBounds(x, y, clampedW, clampedH);
                         if (this.window.webContents) {
-                            this.window.webContents.send('companion:resized', { width: w, height: h });
+                            this.window.webContents.send('companion:resized', { width: clampedW, height: clampedH });
                         }
+                        this._notifyMainWindowResized(clampedW, clampedH);
                     }
                 } catch (_) {}
             }
-            debouncedSave();
         });
 
         this.window.on('moved', () => {
-            debouncedSave();
+            debouncedSavePosition();
         });
 
         // Crash resilience: isolate renderer failure
@@ -262,50 +405,146 @@ class FloatingCompanionWindow {
             console.warn('[FloatingCompanionWindow] Renderer process terminated:', details);
             this.window = null;
             this.isShown = false;
+            this._notifyMainWindowState(false);
         });
 
         this.window.on('closed', () => {
             this.window = null;
             this.isShown = false;
+            this._notifyMainWindowState(false);
         });
 
         return this.window;
     }
 
-    show() {
+    /**
+     * Authoritatively apply native window always-on-top level.
+     * When pinned, sets topmost level to 'screen-saver' to reliably float above
+     * browsers, editors, and other standard desktop applications.
+     * When unpinned, resets to 'normal' (standard window stacking order).
+     * @returns {{ ok: boolean, isPinned: boolean, error?: string }}
+     */
+    _applyAlwaysOnTop() {
+        if (!this.window || this.window.isDestroyed()) {
+            return { ok: true, isPinned: this.isPinned };
+        }
+        try {
+            if (typeof this.window.setAlwaysOnTop === 'function') {
+                if (this.isPinned) {
+                    this.window.setAlwaysOnTop(true, 'screen-saver');
+                } else {
+                    this.window.setAlwaysOnTop(false, 'normal');
+                }
+            }
+            let actualPinned = this.isPinned;
+            if (typeof this.window.isAlwaysOnTop === 'function') {
+                actualPinned = Boolean(this.window.isAlwaysOnTop());
+            }
+            return { ok: true, isPinned: actualPinned };
+        } catch (err) {
+            console.error('[FloatingCompanionWindow] Failed to apply always-on-top state:', err);
+            return { ok: false, isPinned: this.isPinned, error: err.message };
+        }
+    }
+
+    _notifyMainWindowPinChanged(isPinned) {
+        let targetWin = this.mainWindow;
+        if (targetWin && !targetWin.isDestroyed?.() && targetWin.webContents && typeof targetWin.webContents.send === 'function') {
+            try {
+                targetWin.webContents.send('lucy:companionPinChanged', { isPinned: Boolean(isPinned) });
+            } catch (_) {}
+        }
+    }
+
+    _syncPinStateToRenderers() {
+        if (this.window && !this.window.isDestroyed() && this.window.webContents && typeof this.window.webContents.send === 'function') {
+            try {
+                this.window.webContents.send('companion:pinChanged', { isPinned: this.isPinned });
+            } catch (_) {}
+        }
+        this._notifyMainWindowPinChanged(this.isPinned);
+    }
+
+    _notifyMainWindowState(isOpen, details = {}) {
+        let targetWin = this.mainWindow;
+        if (targetWin && !targetWin.isDestroyed?.() && targetWin.webContents && typeof targetWin.webContents.send === 'function') {
+            try {
+                targetWin.webContents.send('lucy:companionWindowToggled', { isOpen: Boolean(isOpen), ...details });
+            } catch (_) {}
+        }
+    }
+
+    _notifyMainWindowResized(width, height) {
+        let targetWin = this.mainWindow;
+        if (targetWin && !targetWin.isDestroyed?.() && targetWin.webContents && typeof targetWin.webContents.send === 'function') {
+            try {
+                targetWin.webContents.send('lucy:companionResized', { width, height });
+            } catch (_) {}
+        }
+    }
+
+    show(options = {}) {
         if (!this.window || this.window.isDestroyed()) {
             this.createWindow();
         }
         if (this.window && !this.window.isDestroyed()) {
-            this.window.show();
+            try {
+                if (typeof this.window.setContentSize === 'function') {
+                    this.window.setContentSize(this.currentWidth, this.currentHeight);
+                } else if (typeof this.window.setSize === 'function') {
+                    this.window.setSize(this.currentWidth, this.currentHeight);
+                }
+            } catch (_) {}
+
+            if (options.activate) {
+                this.window.show();
+            } else if (typeof this.window.showInactive === 'function') {
+                this.window.showInactive();
+            } else {
+                this.window.show();
+            }
             this.isShown = true;
+            this._applyAlwaysOnTop();
             this.sendVisualUpdate({ emotion: 'landing' });
             if (this.window.webContents) {
+                this.window.webContents.send('companion:resized', { width: this.currentWidth, height: this.currentHeight });
                 this.window.webContents.send('companion:visibilityChanged', { isVisible: true });
             }
+            this._syncPinStateToRenderers();
+            this._notifyMainWindowResized(this.currentWidth, this.currentHeight);
+            this._notifyMainWindowState(true);
         }
     }
 
-    hide() {
+    hide(options = {}) {
         if (this.window && !this.window.isDestroyed()) {
             try {
                 const [x, y] = this.window.getPosition();
-                const [w, h] = (typeof this.window.getSize === 'function')
-                    ? this.window.getSize()
-                    : [this.currentWidth, this.currentHeight];
-                this._saveBounds(x, y, w, h);
+                this._savePosition(x, y);
+            } catch (_) {}
+            try {
+                this.window.setAlwaysOnTop(false);
             } catch (_) {}
             if (this.window.webContents) {
-                this.window.webContents.send('companion:visibilityChanged', { isVisible: false });
+                try {
+                    this.window.webContents.send('companion:resetState');
+                    this.window.webContents.send('companion:visibilityChanged', { isVisible: false });
+                } catch (_) {}
             }
-            this.window.hide();
+            try {
+                this.window.hide();
+            } catch (_) {}
             this.isShown = false;
+            if (!options.suppressNotification) {
+                this._notifyMainWindowState(false);
+            }
         }
     }
 
-    toggle() {
+    async toggle() {
         if (this.isShown && this.window && !this.window.isDestroyed()) {
-            return this.returnToApp();
+            await this.returnToApp();
+            return false;
         } else {
             this.show();
             return true;
@@ -329,9 +568,9 @@ class FloatingCompanionWindow {
             // Ensure coordinates are currently valid on visible display
             try {
                 const [x, y] = this.window.getPosition();
-                const clamped = this._clampToBounds(x, y);
+                const clamped = this._clampToBounds(x, y, this.currentWidth, this.currentHeight);
                 if (clamped.x !== x || clamped.y !== y) {
-                    this.window.setPosition(clamped.x, clamped.y);
+                    this._updateWindowPosition(clamped.x, clamped.y);
                 }
             } catch (_) {}
 
@@ -355,16 +594,42 @@ class FloatingCompanionWindow {
         return true;
     }
 
-    setPinned(isPinned) {
-        this.isPinned = Boolean(isPinned);
+    setPinned(desiredPinned) {
+        const targetState = Boolean(desiredPinned);
+        const previousState = this.isPinned;
+        this.isPinned = targetState;
+
         if (this.window && !this.window.isDestroyed()) {
-            this.window.setAlwaysOnTop(this.isPinned, this.isPinned ? 'screen-saver' : 'normal');
-            this.window.webContents.send('companion:pinChanged', { isPinned: this.isPinned });
+            const applied = this._applyAlwaysOnTop();
+            if (!applied.ok) {
+                // Revert state if applying native always-on-top failed
+                this.isPinned = previousState;
+                this._syncPinStateToRenderers();
+                return this.isPinned;
+            }
+            this.isPinned = applied.isPinned;
         }
+
         if (this.lastPosition) {
             this._savePosition(this.lastPosition.x, this.lastPosition.y);
+        } else {
+            this._saveBounds(100, 100);
         }
+
+        this._syncPinStateToRenderers();
+        if (typeof this.onPinChanged === 'function') {
+            try {
+                this.onPinChanged(this.isPinned);
+            } catch (_) {}
+        }
+
         return this.isPinned;
+    }
+
+    togglePin() {
+        const target = !this.isPinned;
+        const result = this.setPinned(target);
+        return { ok: result === target, isPinned: this.isPinned };
     }
 
     getStatus() {
@@ -381,22 +646,101 @@ class FloatingCompanionWindow {
      * Seamless Return Transition:
      * Un-minimizes & focuses main window, hides floating pet, and triggers landing animation in main app.
      */
-    returnToApp() {
-        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-            if (this.mainWindow.isMinimized()) {
-                this.mainWindow.restore();
-            }
-            this.mainWindow.show();
-            this.mainWindow.focus();
-            this.mainWindow.webContents.send('lucy:companionWindowToggled', { isOpen: false, returning: true });
+    async returnToApp() {
+        if (this.isRestoring) {
+            return { ok: true, inProgress: true };
         }
+        this.isRestoring = true;
 
-        this.hide();
-        return false;
+        try {
+            // 1. Immediately hide and unpin floating companion window so it cannot cover mainWindow
+            this.hide({ suppressNotification: true });
+
+            // 2. Safely resolve or restore main assistant window
+            let targetWin = this.mainWindow;
+            if ((!targetWin || targetWin.isDestroyed?.()) && typeof this.onRestoreMainWindow === 'function') {
+                targetWin = await this.onRestoreMainWindow();
+                this.mainWindow = targetWin;
+            }
+
+            if (targetWin && !targetWin.isDestroyed?.()) {
+                try {
+                    if (typeof targetWin.isMinimized === 'function' && targetWin.isMinimized()) {
+                        targetWin.restore();
+                    }
+                    if (typeof targetWin.isVisible === 'function' && !targetWin.isVisible()) {
+                        targetWin.show();
+                    }
+                    if (typeof targetWin.show === 'function') {
+                        targetWin.show();
+                    }
+
+                    // Windows OS Focus Guarantee: briefly toggle alwaysOnTop to bring window above any desktop windows
+                    try {
+                        if (typeof targetWin.setAlwaysOnTop === 'function') {
+                            targetWin.setAlwaysOnTop(true);
+                            if (typeof targetWin.focus === 'function') targetWin.focus();
+                            targetWin.setAlwaysOnTop(false);
+                        } else if (typeof targetWin.focus === 'function') {
+                            targetWin.focus();
+                        }
+                    } catch (_) {}
+
+                    if (targetWin.webContents && typeof targetWin.webContents.send === 'function') {
+                        targetWin.webContents.send('lucy:companionWindowToggled', { isOpen: false, returning: true });
+                    }
+                } catch (err) {
+                    console.warn('[FloatingCompanionWindow] Error restoring mainWindow:', err.message);
+                }
+            }
+
+            return { ok: true, restored: true };
+        } finally {
+            this.isRestoring = false;
+        }
     }
 
     isOpen() {
         return Boolean(this.window && !this.window.isDestroyed() && this.isShown);
+    }
+
+    setWindowSize(width, height, isTemporary = false) {
+        const rawW = Number(width);
+        const rawH = Number(height);
+        if (!Number.isFinite(rawW) || !Number.isFinite(rawH)) {
+            return false;
+        }
+        const newW = Math.max(FloatingCompanionWindow.MIN_WIDTH, Math.min(FloatingCompanionWindow.MAX_WIDTH, Math.round(rawW)));
+        const newH = Math.max(FloatingCompanionWindow.MIN_HEIGHT, Math.min(FloatingCompanionWindow.MAX_HEIGHT, Math.round(rawH)));
+        if (!isTemporary) {
+            this.currentWidth = newW;
+            this.currentHeight = newH;
+            this._isTemporarySize = false;
+        } else {
+            this._isTemporarySize = true;
+        }
+        if (this.window && !this.window.isDestroyed()) {
+            if (typeof this.window.setContentSize === 'function') {
+                this.window.setContentSize(newW, newH);
+            } else if (typeof this.window.setSize === 'function') {
+                this.window.setSize(newW, newH);
+            }
+            if (!isTemporary) {
+                try {
+                    const [x, y] = this.window.getPosition();
+                    this._saveBounds(x, y, newW, newH);
+                } catch (_) {}
+            }
+            if (this.window.webContents) {
+                this.window.webContents.send('companion:resized', { width: newW, height: newH });
+            }
+        } else if (!isTemporary) {
+            this._saveBounds(this.lastPosition?.x || 100, this.lastPosition?.y || 100, newW, newH);
+        }
+        if (!isTemporary) {
+            this._notifyMainWindowResized(newW, newH);
+        }
+        return { ok: true, width: newW, height: newH };
     }
 
     sendVisualUpdate(state) {
@@ -424,12 +768,17 @@ class FloatingCompanionWindow {
             }
             const { deltaX, deltaY } = validation.sanitized;
             if (this.window && !this.window.isDestroyed()) {
+                this._isMoving = true;
+                if (this._moveResetTimer) clearTimeout(this._moveResetTimer);
+                this._moveResetTimer = setTimeout(() => {
+                    this._isMoving = false;
+                    this._moveResetTimer = null;
+                }, 250);
+
                 const [x, y] = this.window.getPosition();
                 const newX = Math.round(x + deltaX);
                 const newY = Math.round(y + deltaY);
-                const clamped = this._clampToBounds(newX, newY, this.currentWidth, this.currentHeight);
-                this.window.setPosition(clamped.x, clamped.y);
-                this._saveBounds(clamped.x, clamped.y, this.currentWidth, this.currentHeight);
+                this._updateWindowPosition(newX, newY);
             }
         });
 
@@ -458,13 +807,11 @@ class FloatingCompanionWindow {
         });
 
         ipcMain.handle('companion:returnToApp', async () => {
-            this.returnToApp();
-            return { ok: true, returned: true };
+            return await this.returnToApp();
         });
 
         ipcMain.handle('companion:togglePin', async () => {
-            const newPin = this.setPinned(!this.isPinned);
-            return { ok: true, isPinned: newPin };
+            return this.togglePin();
         });
 
         ipcMain.handle('companion:getStatus', async () => {
@@ -480,26 +827,8 @@ class FloatingCompanionWindow {
             if (!payload || typeof payload !== 'object') {
                 return { ok: false, error: 'Invalid size payload' };
             }
-            const rawW = Number(payload.width);
-            const rawH = Number(payload.height);
-            if (!Number.isFinite(rawW) || !Number.isFinite(rawH)) {
-                return { ok: false, error: 'Non-finite dimensions' };
-            }
-            const newW = Math.max(180, Math.min(520, Math.round(rawW)));
-            const newH = Math.max(220, Math.min(600, Math.round(rawH)));
-            this.currentWidth = newW;
-            this.currentHeight = newH;
-            if (this.window && !this.window.isDestroyed()) {
-                if (typeof this.window.setSize === 'function') {
-                    this.window.setSize(newW, newH);
-                }
-                const [x, y] = this.window.getPosition();
-                this._saveBounds(x, y, newW, newH);
-                if (this.window.webContents) {
-                    this.window.webContents.send('companion:resized', { width: newW, height: newH });
-                }
-            }
-            return { ok: true, width: newW, height: newH };
+            const isTemp = Boolean(payload.temporary);
+            return this.setWindowSize(payload.width, payload.height, isTemp);
         });
 
         ipcMain.handle('companion:resizeDelta', async (_event, payload = {}) => {
@@ -508,25 +837,15 @@ class FloatingCompanionWindow {
             }
             const dW = Number(payload.deltaWidth) || 0;
             const dH = Number(payload.deltaHeight) || 0;
-            const newW = Math.max(180, Math.min(520, Math.round((this.currentWidth || 220) + dW)));
-            const newH = Math.max(220, Math.min(600, Math.round((this.currentHeight || 260) + dH)));
-            this.currentWidth = newW;
-            this.currentHeight = newH;
-            if (this.window && !this.window.isDestroyed()) {
-                if (typeof this.window.setSize === 'function') {
-                    this.window.setSize(newW, newH);
-                }
-                const [x, y] = this.window.getPosition();
-                this._saveBounds(x, y, newW, newH);
-                if (this.window.webContents) {
-                    this.window.webContents.send('companion:resized', { width: newW, height: newH });
-                }
-            }
-            return { ok: true, width: newW, height: newH };
+            const currentW = this.currentWidth || FloatingCompanionWindow.DEFAULT_WIDTH;
+            const currentH = this.currentHeight || FloatingCompanionWindow.DEFAULT_HEIGHT;
+            const targetW = currentW + dW;
+            const targetH = currentH + dH;
+            return this.setWindowSize(targetW, targetH, false);
         });
 
         ipcMain.handle('companion:playTrick', async (_event, trickName) => {
-            const allowedTricks = ['spin', 'jump', 'fly', 'bounce', 'pet', 'magic'];
+            const allowedTricks = ['spin', 'jump', 'fly', 'bounce', 'somersault', 'dance', 'pet', 'magic'];
             const trick = String(trickName || '').toLowerCase().trim();
             if (!allowedTricks.includes(trick)) {
                 return { ok: false, error: `Unsupported trick: ${trick}` };
@@ -537,9 +856,12 @@ class FloatingCompanionWindow {
             return { ok: true, trick };
         });
 
-        ipcMain.handle('companion:pet', async () => {
+        ipcMain.handle('companion:pet', async (_event, payload = {}) => {
+            if (this.mainWindow && !this.mainWindow.isDestroyed() && this.mainWindow.webContents) {
+                this.mainWindow.webContents.send('companion:onPetInteraction', payload);
+            }
             if (this.companionBridge) {
-                return this.companionBridge.handleUserInteraction('pet');
+                return this.companionBridge.handleUserInteraction('pet', payload);
             }
             return { acknowledged: true };
         });
@@ -573,11 +895,24 @@ class FloatingCompanionWindow {
     }
 
     destroy() {
+        if (this._moveResetTimer) {
+            clearTimeout(this._moveResetTimer);
+            this._moveResetTimer = null;
+        }
+        if (screen && typeof screen.removeListener === 'function' && this._onDisplayMetricsChanged) {
+            try {
+                screen.removeListener('display-metrics-changed', this._onDisplayMetricsChanged);
+                screen.removeListener('display-removed', this._onDisplayMetricsChanged);
+            } catch (_) {}
+        }
         if (this.window && !this.window.isDestroyed()) {
             this.window.destroy();
             this.window = null;
         }
         this.isShown = false;
+        this._notifyMainWindowState(false);
+        this.mainWindow = null;
+        this.onRestoreMainWindow = null;
     }
 }
 

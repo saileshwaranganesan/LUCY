@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; font-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data: blob:; connect-src 'none'; font-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'self';">
   <title>L.U.C.Y. — Autonomous Desktop Assistant</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -23,8 +23,8 @@
           <div class="portal-glyph">🧚‍♀️✨</div>
           <div style="font-size: 11px; color: var(--accent-cyan); font-weight: 600;">Lucy is floating on your desktop</div>
           <div style="display: flex; gap: 6px; margin-top: 6px;">
-            <button id="inlineSummonBtn" class="btn-action" style="font-size: 10px; padding: 4px 10px; background: rgba(179, 136, 255, 0.2); border: 1px solid rgba(179, 136, 255, 0.4); color: #b388ff;" title="Bring floating pet to front over other windows">✨ Summon</button>
-            <button id="inlineReturnBtn" class="btn-action" style="font-size: 10px; padding: 4px 10px; background: rgba(0, 245, 212, 0.15); border: 1px solid rgba(0, 245, 212, 0.4);" title="Dock Lucy back into this sidebar">↩️ Dock</button>
+            <button id="inlineSummonBtn" class="btn-action" style="font-size: 11px; padding: 4px 10px; background: rgba(179, 136, 255, 0.2); border: 1px solid rgba(179, 136, 255, 0.4); color: #b388ff;" title="Bring floating pet to front over other windows">✨ Summon</button>
+            <button id="inlineReturnBtn" class="btn-action" style="font-size: 11px; padding: 4px 10px; background: rgba(0, 245, 212, 0.15); border: 1px solid rgba(0, 245, 212, 0.4);" title="Dock Lucy back into this sidebar">↩️ Dock</button>
           </div>
         </div>
         <div class="speech-bubble" id="speechBubble">Sparkle! ✨ Ready for your instruction.</div>
@@ -40,13 +40,26 @@
       </div>
 
       <div style="width: 100%; display: flex; flex-direction: column; gap: 8px;">
-        <div style="display: flex; gap: 8px;">
-          <button id="petBtn" class="btn-action" style="flex: 1; padding: 6px; font-size: 11px;">✨ Pet Lucy</button>
-          <button id="toggleDryRunBtn" class="btn-action" style="flex: 1; padding: 6px; font-size: 11px; background: rgba(255,255,255,0.08); box-shadow: none;">Dry-Run: OFF</button>
+        <div style="display: flex; gap: 8px; position: relative;">
+          <button id="petBtn" class="btn-primary" style="flex: 1; padding: 7px; font-size: 11.5px;" title="Pet Lucy for affectionate response and heart burst">✨ Pet Lucy</button>
+          <button id="trickMenuBtnMain" class="btn-secondary" style="flex: 1; padding: 7px; font-size: 11.5px; color: #b388ff; border-color: rgba(179, 136, 255, 0.35);" title="Playful fairy tricks & stunts">💫 Tricks ▾</button>
+          <div id="trickDropdownMain" class="trick-dropdown-main" style="display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: rgba(15, 23, 42, 0.96); border: 1px solid rgba(179, 136, 255, 0.3); border-radius: 8px; padding: 6px; z-index: 100; box-shadow: 0 8px 24px rgba(0,0,0,0.5); backdrop-filter: blur(12px);">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
+              <button class="main-trick-opt btn-secondary" data-trick="spin" style="padding: 5px; font-size: 11px;">💫 Spin</button>
+              <button class="main-trick-opt btn-secondary" data-trick="jump" style="padding: 5px; font-size: 11px;">🦘 Jump</button>
+              <button class="main-trick-opt btn-secondary" data-trick="fly" style="padding: 5px; font-size: 11px;">🦋 Fly</button>
+              <button class="main-trick-opt btn-secondary" data-trick="bounce" style="padding: 5px; font-size: 11px;">✨ Bounce</button>
+              <button class="main-trick-opt btn-secondary" data-trick="somersault" style="padding: 5px; font-size: 11px;">🤸 Somersault</button>
+              <button class="main-trick-opt btn-secondary" data-trick="dance" style="padding: 5px; font-size: 11px;">💃 Dance</button>
+            </div>
+          </div>
         </div>
-        <button id="sidebarMemoryBtn" class="btn-action" style="width: 100%; padding: 6px; font-size: 11px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); box-shadow: none;">🧠 Memory & Continuity</button>
-        <button id="sidebarSettingsBtn" class="btn-action" style="width: 100%; padding: 6px; font-size: 11px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); box-shadow: none;">⚙️ Provider Settings</button>
-        <button id="toggleFloatingBtn" class="btn-action" style="width: 100%; padding: 6px; font-size: 11px; background: rgba(0, 245, 212, 0.12); border: 1px solid rgba(0, 245, 212, 0.3); color: var(--accent-cyan); box-shadow: none;" title="Float Lucy Fairy to desktop or return to app">🪟 Float Pet</button>
+        <div style="display: flex; gap: 8px;">
+          <button id="toggleDryRunBtn" class="btn-secondary" style="flex: 1; padding: 7px; font-size: 11.5px;">Dry-Run: OFF</button>
+          <button id="toggleFloatingBtn" class="btn-secondary" style="flex: 1; padding: 7px; font-size: 11.5px; color: var(--accent-cyan); border-color: rgba(0, 245, 212, 0.3);" title="Float Lucy Fairy to desktop or return to app">🪟 Float Pet</button>
+        </div>
+        <button id="sidebarMemoryBtn" class="btn-secondary" style="width: 100%; padding: 7px; font-size: 11.5px;">🧠 Memory & Continuity</button>
+        <button id="sidebarSettingsBtn" class="btn-secondary" style="width: 100%; padding: 7px; font-size: 11.5px;" title="Open unified Settings Center">⚙️ Settings Center</button>
       </div>
     </aside>
 
@@ -73,27 +86,914 @@
           </div>
         </div>
         <div style="display: flex; gap: 8px; align-items: center;">
-          <button id="toggleTtsBtn" class="btn-action" style="padding: 6px 12px; font-size: 11px; background: rgba(255,255,255,0.08); box-shadow: none; border: 1px solid var(--bg-card-border);" title="Toggle assistant spoken voice responses">🔊 Voice: ON</button>
-          <button id="hudMemoryBtn" class="btn-action" style="padding: 6px 12px; font-size: 11px; background: rgba(255,255,255,0.08); box-shadow: none; border: 1px solid var(--bg-card-border);" title="Manage persistent memory & task continuity">🧠 Memory</button>
-          <button id="hudSettingsBtn" class="btn-action" style="padding: 6px 14px; font-size: 12px; background: rgba(255,255,255,0.08); box-shadow: none; border: 1px solid var(--bg-card-border);">⚙️ Settings</button>
-          <button id="hudExitBtn" class="btn-cancel" style="padding: 6px 10px; font-size: 11px; color: var(--accent-red); border: 1px solid rgba(255, 75, 75, 0.3);" title="Explicitly Exit L.U.C.Y.">✕ Exit</button>
+          <button id="toggleTtsBtn" class="btn-secondary" style="padding: 6px 12px; font-size: 11.5px;" title="Toggle assistant spoken voice responses">🔊 Voice: ON</button>
+          <button id="hudMemoryBtn" class="btn-secondary" style="padding: 6px 12px; font-size: 11.5px;" title="Manage persistent memory & task continuity">🧠 Memory</button>
+          <button id="hudSettingsBtn" class="btn-secondary" style="padding: 6px 14px; font-size: 11.5px;">⚙️ Settings</button>
+          <button id="hudExitBtn" class="btn-cancel" style="padding: 6px 12px; font-size: 11.5px;" title="Explicitly Exit L.U.C.Y.">✕ Exit</button>
         </div>
       </header>
 
-      <!-- Task Execution Feed -->
-      <section class="task-feed" id="taskFeed">
-        <div class="task-feed-header">
-          <span>Activity & Verification Feed</span>
-          <span style="font-weight: 400; font-size: 11px;">Single Authority Coordinator</span>
-        </div>
-        <div class="log-entry" id="welcomeEntry">
-          <div class="log-meta">
-            <span>System Ready</span>
-            <span>Verified</span>
+      <!-- JARVIS Navigation Deck -->
+      <nav class="jarvis-nav-deck" id="jarvisNavDeck" role="tablist" aria-label="Main Navigation">
+        <button type="button" class="nav-deck-tab active" data-view="viewHome" id="tabNavHome" role="tab" aria-selected="true">
+          <span class="tab-glyph">⬡</span> Command Centre
+        </button>
+        <button type="button" class="nav-deck-tab" data-view="viewConversation" id="tabNavConversation" role="tab" aria-selected="false">
+          <span class="tab-glyph">💬</span> Conversation
+        </button>
+        <button type="button" class="nav-deck-tab" data-view="viewIntelligence" id="tabNavIntelligence" role="tab" aria-selected="false">
+          <span class="tab-glyph">🧠</span> Intelligence
+        </button>
+        <button type="button" class="nav-deck-tab" data-view="viewActions" id="tabNavActions" role="tab" aria-selected="false">
+          <span class="tab-glyph">⚡</span> Actions & Feed
+        </button>
+        <button type="button" class="nav-deck-tab" data-view="viewSettings" id="tabNavSettings" role="tab" aria-selected="false" title="Open centralized Settings Center">
+          <span class="tab-glyph">⚙️</span> Settings Center
+        </button>
+        <!-- Legacy test runner compatibility anchor: data-view="viewCompanionSettings" -->
+      </nav>
+
+      <!-- JARVIS 5-View Viewport -->
+      <div class="jarvis-views-viewport" id="jarvisViewsViewport">
+
+        <!-- 1. Home / Command Centre View -->
+        <section class="jarvis-view active" id="viewHome">
+          <!-- Hero Identity Card -->
+          <div class="jarvis-hero-card">
+            <div class="jarvis-scanlines"></div>
+            <div class="jarvis-sweep-line"></div>
+            <span class="jarvis-corner-bracket tl"></span>
+            <span class="jarvis-corner-bracket tr"></span>
+            <span class="jarvis-corner-bracket bl"></span>
+            <span class="jarvis-corner-bracket br"></span>
+            <div class="hero-identity" style="position: relative; z-index: 3;">
+              <div class="hero-emblem" id="heroEmblem">🧚‍♀️</div>
+              <div class="hero-titles">
+                <h2>L.U.C.Y. COMMAND SYSTEM</h2>
+                <div class="hero-subtitle" id="greetingBannerText">Celestial Familiar v0.1.0 — Ready for instructions</div>
+              </div>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center; position: relative; z-index: 3;">
+              <span class="state-tag" style="background: rgba(0, 242, 254, 0.1); border: 1px solid rgba(0, 242, 254, 0.3); padding: 6px 12px; border-radius: var(--radius-full); font-size: 11px;">
+                <span class="status-dot" id="homeStatusDot" style="background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green);"></span>
+                <span id="homeStatusLabel" style="font-weight: 700; color: var(--accent-cyan);">ONLINE</span>
+              </span>
+            </div>
           </div>
-          <div>L.U.C.Y. core initialized. The assistant is ready to execute authorized computer tasks with guaranteed verification receipts.</div>
-        </div>
-      </section>
+
+          <!-- Real-Time Telemetry Grid -->
+          <div class="jarvis-telemetry-grid">
+            <div class="telemetry-card">
+              <div class="telemetry-header">
+                <span>Active AI Route</span>
+                <span>⚡</span>
+              </div>
+              <div class="telemetry-val" id="telemetryProvider">Gemini 2.0 Flash</div>
+              <div class="telemetry-sub" id="telemetryRoutingPolicy">Policy: Auto Free-First</div>
+            </div>
+
+            <div class="telemetry-card violet">
+              <div class="telemetry-header">
+                <span>Local Fairy Voice</span>
+                <span>🎙️</span>
+              </div>
+              <div class="telemetry-val" id="telemetryTts">Kokoro-82M (Bella)</div>
+              <div class="telemetry-sub" id="telemetryTtsStatus">Free & Offline | INT8 ONNX</div>
+            </div>
+
+            <div class="telemetry-card">
+              <div class="telemetry-header">
+                <span>Speech Recognition</span>
+                <span>🗣️</span>
+              </div>
+              <div class="telemetry-val" id="telemetryAsr">Whisper.cpp (Local)</div>
+              <div class="telemetry-sub">Zero Cloud Audio Egress</div>
+            </div>
+
+            <div class="telemetry-card green">
+              <div class="telemetry-header">
+                <span>Desktop Companion</span>
+                <span>🪟</span>
+              </div>
+              <div class="telemetry-val" id="telemetryCompanion">160 × 190 px</div>
+              <div class="telemetry-sub" id="telemetryCompanionStatus">Docked in Sidebar</div>
+            </div>
+
+            <div class="telemetry-card">
+              <div class="telemetry-header">
+                <span>Memory Footprint</span>
+                <span>🧠</span>
+              </div>
+              <div class="telemetry-val" id="telemetryMemory">Tracking...</div>
+              <div class="telemetry-sub">Budget: 450 MB Active Max</div>
+            </div>
+          </div>
+
+          <!-- Quick Command Portals -->
+          <div class="jarvis-portals-grid">
+            <button type="button" class="portal-action-card" id="portalConversationBtn">
+              <div class="portal-title"><span>💬</span> Open Conversation</div>
+              <div class="portal-desc">Direct chat interface, live streaming AI responses, and audio-reactive spectral visualizer.</div>
+            </button>
+
+            <button type="button" class="portal-action-card" id="portalMemoryBtn">
+              <div class="portal-title"><span>🧠</span> Memory Vault</div>
+              <div class="portal-desc">Inspect persistent cognitive memories, task continuity checkpoints, and stored facts.</div>
+            </button>
+
+            <button type="button" class="portal-action-card" id="portalIntelligenceBtn">
+              <div class="portal-title"><span>🔀</span> AI Model Routing</div>
+              <div class="portal-desc">Manage API connections, configure local Ollama, and adjust latency/cost policies.</div>
+            </button>
+
+            <button type="button" class="portal-action-card" id="portalFloatPetBtn">
+              <div class="portal-title"><span>🪟</span> Desktop Companion</div>
+              <div class="portal-desc">Float Lucy's compact 160×190 familiar to hover over desktop applications.</div>
+            </button>
+          </div>
+        </section>
+
+        <!-- 2. Conversation View -->
+        <section class="jarvis-view" id="viewConversation">
+          <!-- Audio-Reactive Visualizer Bar -->
+          <div class="jarvis-visualizer-bar" id="audioVisualizerContainer">
+            <div class="viz-status">
+              <span class="viz-pulse-dot" id="vizPulseDot"></span>
+              <span class="viz-status-text" id="vizStatusText">SUB-SYSTEM READY</span>
+            </div>
+            <canvas id="audioVisualizerCanvas" width="480" height="32" class="viz-canvas" title="Live audio-reactive waveform"></canvas>
+            <div class="viz-engine-tag" id="vizEngineTag">KOKORO-82M NEURAL</div>
+          </div>
+
+          <!-- Task Execution / Chat Feed -->
+          <section class="task-feed" id="taskFeed" style="flex: 1; height: 100%;">
+            <div class="task-feed-header">
+              <span>Activity & Conversation Stream</span>
+              <span style="font-weight: 400; font-size: 11px;">Single Authority Coordinator</span>
+            </div>
+            <div class="log-entry" id="welcomeEntry">
+              <div class="log-meta">
+                <span>System Ready</span>
+                <span>Verified</span>
+              </div>
+              <div>L.U.C.Y. core initialized. The assistant is ready to execute authorized computer tasks with guaranteed verification receipts.</div>
+            </div>
+          </section>
+        </section>
+
+        <!-- 3. Intelligence View -->
+        <section class="jarvis-view" id="viewIntelligence">
+          <div class="jarvis-box">
+            <div class="jarvis-box-title">
+              <span>🧠 Multi-Provider AI Orchestration</span>
+              <button type="button" id="intelOpenSettingsBtn" class="btn-action" style="padding: 4px 12px; font-size: 11px;">⚙️ Manage Keys</button>
+            </div>
+            <div style="font-size: 12.5px; color: var(--text-muted); line-height: 1.5;">
+              L.U.C.Y. routes requests across local models and cloud providers using capability matching, spending limits, and fail-closed security.
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px;">
+              <div style="background: rgba(0,0,0,0.25); border: 1px solid rgba(0, 242, 254, 0.2); border-radius: var(--radius-sm); padding: 12px; display: flex; flex-direction: column; gap: 6px;">
+                <div style="font-size: 12px; font-weight: 700; color: var(--accent-cyan); display: flex; align-items: center; gap: 6px;">
+                  <span>🎙️</span> Kokoro-82M Neural TTS
+                </div>
+                <div style="font-size: 11.5px; color: var(--text-main);">INT8 Quantized ONNX (108.8 MB)</div>
+                <div style="font-size: 11px; color: var(--text-muted);">Presets: Bella (af_bella), Sky (af_sky) | License: Apache-2.0</div>
+                <div style="font-size: 11px; color: var(--accent-green); margin-top: 2px;">✓ 100% Offline & Free | Worker Memory Budget: 450 MB</div>
+              </div>
+
+              <div style="background: rgba(0,0,0,0.25); border: 1px solid rgba(157, 78, 221, 0.25); border-radius: var(--radius-sm); padding: 12px; display: flex; flex-direction: column; gap: 6px;">
+                <div style="font-size: 12px; font-weight: 700; color: var(--accent-purple); display: flex; align-items: center; gap: 6px;">
+                  <span>🗣️</span> Whisper.cpp Recognition
+                </div>
+                <div style="font-size: 11.5px; color: var(--text-main);">GGML Tiny English (77.7 MB)</div>
+                <div style="font-size: 11px; color: var(--text-muted);">Engine: whisper-cli.exe | License: MIT</div>
+                <div style="font-size: 11px; color: var(--accent-green); margin-top: 2px;">✓ Zero Network Transmission | Local Audio Capture</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="jarvis-box">
+            <div class="jarvis-box-title">
+              <span>🔀 Global Routing & Policy Control</span>
+            </div>
+            <div style="display: flex; gap: 12px; align-items: center;">
+              <label style="font-size: 11.5px; color: var(--text-muted); font-weight: 700;">POLICY MODE:</label>
+              <select id="intelRoutingModeSelect" style="flex: 1; background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 12px; border-radius: var(--radius-sm); outline: none;">
+                <option value="auto">Auto (Healthiest eligible connection, bounded failover)</option>
+                <option value="prefer_local">Prefer Local Inference (Ollama first)</option>
+                <option value="local_only">Local Only (100% offline, zero network data egress)</option>
+                <option value="free_only">Free Only (Strictly zero-cost models, no paid fallback)</option>
+                <option value="manual">Manual Override (Designated provider)</option>
+              </select>
+            </div>
+            <div style="font-size: 11.5px; color: var(--text-muted);" id="intelPolicyNote">
+              Automatic route optimization is active. Requests choose the most performant free provider.
+            </div>
+          </div>
+        </section>
+
+        <!-- 4. Actions & Verification View -->
+        <section class="jarvis-view" id="viewActions">
+          <div class="jarvis-box">
+            <div class="jarvis-box-title">
+              <span>⚡ Autonomous Execution Control</span>
+              <span style="font-size: 11px; color: var(--accent-green); font-weight: 700;">SINGLE AUTHORITY ACTIVE</span>
+            </div>
+            <div style="font-size: 12.5px; color: var(--text-muted); line-height: 1.5;">
+              Every tool execution creates a verifiable receipt with stdout, duration, and tamper-resistant checksums. Consequential actions (filesystem, browser, automation) strictly require authorization.
+            </div>
+          </div>
+
+          <div class="jarvis-box" style="flex: 1;">
+            <div class="jarvis-box-title">
+              <span>📋 Step Verification History</span>
+              <button type="button" id="clearFeedViewBtn" class="btn-cancel" style="padding: 3px 10px; font-size: 11px;">Clear View</button>
+            </div>
+            <div id="actionsTimelineFeed" style="display: flex; flex-direction: column; gap: 8px; overflow-y: auto; max-height: 380px;">
+              <div style="font-size: 11.5px; color: var(--text-muted); text-align: center; padding: 20px;">
+                No actions executed yet in this session. Send an instruction via the console below.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. Centralized Settings Center (Repair 10 Unified Architecture) -->
+        <section class="jarvis-view" id="viewSettings" role="region" aria-label="Settings Center">
+          <div class="settings-center-container">
+            <!-- Header Card -->
+            <div class="settings-center-header">
+              <div class="settings-center-title-group">
+                <div class="settings-center-icon">⚙️</div>
+                <div>
+                  <div style="font-size: 15px; font-weight: 700; color: #ffffff; letter-spacing: 0.6px;">SETTINGS CENTER</div>
+                  <div style="font-size: 11.5px; color: var(--text-muted); font-weight: 400;">Centralized Configuration, AI Providers, Voice & Hardware Coordination</div>
+                </div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="state-tag" style="background: rgba(0, 242, 254, 0.1); border: 1px solid rgba(0, 242, 254, 0.3); padding: 4px 10px; border-radius: var(--radius-full); font-size: 11px;">
+                  <span class="status-dot" style="background: var(--accent-green); box-shadow: 0 0 6px var(--accent-green);"></span>
+                  <span style="font-weight: 700; color: var(--accent-cyan);">COORDINATOR ACTIVE</span>
+                </span>
+              </div>
+            </div>
+
+            <!-- Tab Navigation Bar (8 Canonical Categories) -->
+            <div class="settings-center-tabs" role="tablist" aria-label="Settings Categories">
+              <button type="button" class="settings-center-tab-btn active" data-settings-tab="general" id="settingsTabBtnGeneral" role="tab" aria-selected="true">
+                <span class="tab-icon">🖥️</span> General
+              </button>
+              <button type="button" class="settings-center-tab-btn" data-settings-tab="companion" id="settingsTabBtnCompanion" role="tab" aria-selected="false">
+                <span class="tab-icon">🧚</span> Companion
+              </button>
+              <button type="button" class="settings-center-tab-btn" data-settings-tab="voice" id="settingsTabBtnVoice" role="tab" aria-selected="false">
+                <span class="tab-icon">🎙️</span> Voice & Audio
+              </button>
+              <button type="button" class="settings-center-tab-btn" data-settings-tab="ai" id="settingsTabBtnAi" role="tab" aria-selected="false">
+                <span class="tab-icon">🧠</span> AI & Models
+              </button>
+              <button type="button" class="settings-center-tab-btn" data-settings-tab="handsfree" id="settingsTabBtnHandsfree" role="tab" aria-selected="false">
+                <span class="tab-icon">🗣️</span> Hands-Free
+              </button>
+              <button type="button" class="settings-center-tab-btn" data-settings-tab="memory" id="settingsTabBtnMemory" role="tab" aria-selected="false">
+                <span class="tab-icon">💾</span> Memory & Privacy
+              </button>
+              <button type="button" class="settings-center-tab-btn" data-settings-tab="automation" id="settingsTabBtnAutomation" role="tab" aria-selected="false">
+                <span class="tab-icon">⚡</span> Automation
+              </button>
+              <button type="button" class="settings-center-tab-btn" data-settings-tab="about" id="settingsTabBtnAbout" role="tab" aria-selected="false">
+                <span class="tab-icon">ℹ️</span> About
+              </button>
+            </div>
+
+            <!-- Scrollable Content Viewport -->
+            <div class="settings-center-viewport" id="settingsCenterViewport">
+
+              <!-- ==========================================
+                   TAB 1: GENERAL
+                   ========================================== -->
+              <div class="settings-center-pane active" data-settings-tab="general" id="paneGeneral" role="tabpanel" aria-labelledby="settingsTabBtnGeneral">
+                <!-- Lifecycle & Startup Card -->
+                <div class="jarvis-box">
+                  <div class="jarvis-box-title">
+                    <span>🖥️ Application Preferences & Close Behaviour</span>
+                    <span id="closeActionTag" style="font-size: 11px; color: var(--accent-cyan); font-weight: 600;">Background Mode</span>
+                  </div>
+                  <div style="font-size: 12px; color: var(--text-muted); line-height: 1.45;">
+                    Configure how L.U.C.Y. behaves when you close the main application window. Settings are automatically persisted in <code>app-config.json</code>.
+                  </div>
+
+                  <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 6px;">
+                    <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Main Window Close Action</label>
+                    <select id="settingCloseAction" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;">
+                      <option value="background">Keep Lucy running in background (preserve floating companion & tray)</option>
+                      <option value="minimize_to_tray">Minimise to tray (hide main window & companion)</option>
+                      <option value="exit">Exit Lucy (complete intentional shutdown)</option>
+                    </select>
+                    <!-- Synchronized modal alias for compatibility -->
+                    <select id="settingCloseActionModal" style="display: none;">
+                      <option value="background">Keep Lucy running in background</option>
+                      <option value="minimize_to_tray">Minimise to tray</option>
+                      <option value="exit">Exit Lucy</option>
+                    </select>
+                  </div>
+
+                  <!-- Background Voice & Listening -->
+                  <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px dashed var(--bg-card-border); padding-top: 10px; margin-top: 6px;">
+                    <div>
+                      <div style="font-size: 12.5px; font-weight: 700; color: var(--text-main);">Background Voice & Wake-Word Listening</div>
+                      <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">Allow microphone processing and wake-word detection while main window is hidden or minimised.</div>
+                    </div>
+                    <input type="checkbox" id="checkBackgroundListening" style="accent-color: var(--accent-cyan); width: 18px; height: 18px; cursor: pointer;" />
+                    <input type="checkbox" id="settingBackgroundListeningModal" style="display: none;" />
+                  </div>
+
+                  <!-- Current Lifecycle State Display -->
+                  <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px dashed var(--bg-card-border); padding-top: 10px; margin-top: 6px;">
+                    <div>
+                      <div style="font-size: 12.5px; font-weight: 700; color: var(--text-main);">Current Application Lifecycle State</div>
+                      <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">Real-time execution state tracked by ApplicationLifecycleManager.</div>
+                    </div>
+                    <span id="lifecycleStateBadge" style="font-size: 11px; color: var(--accent-green); background: rgba(0, 245, 212, 0.1); border: 1px solid rgba(0, 245, 212, 0.3); padding: 3px 10px; border-radius: var(--radius-sm); font-weight: 700;">ACTIVE</span>
+                  </div>
+                </div>
+
+                <!-- Clean Shutdown Card -->
+                <div class="jarvis-box">
+                  <div class="jarvis-box-title">
+                    <span style="color: var(--accent-red);">⏹️ Safe Application Termination</span>
+                  </div>
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                      <div style="font-size: 12.5px; font-weight: 700; color: var(--text-main);">Explicit Application Exit</div>
+                      <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">Safely closes all background workers, saves dirty configuration state, cleans up native processes, and exits.</div>
+                    </div>
+                    <button type="button" id="btnExplicitExitCompanion" class="btn-cancel" style="font-size: 11.5px; padding: 7px 16px;">⏹️ Exit Lucy</button>
+                    <button type="button" id="explicitExitBtn" style="display: none;"></button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ==========================================
+                   TAB 2: COMPANION (Contains #viewCompanionSettings for backwards compatibility)
+                   ========================================== -->
+              <div class="settings-center-pane" data-settings-tab="companion" id="paneCompanion" role="tabpanel" aria-labelledby="settingsTabBtnCompanion">
+                <!-- Companion wrapper preserves ID for legacy tests -->
+                <div id="viewCompanionSettings" style="display: flex; flex-direction: column; gap: 12px; width: 100%;">
+                  <!-- Dimensions & Sizing Card -->
+                  <div class="jarvis-box">
+                    <div class="jarvis-box-title">
+                      <span>🪟 Floating Pet Dimensions & Sizing</span>
+                      <span id="companionDimensionsLabel" style="color: var(--accent-cyan); font-weight: 700;">160 × 190 px</span>
+                    </div>
+                    <div style="font-size: 12px; color: var(--text-muted);">
+                      Configure the desktop familiar's floating window size. Changes are clamped to safe platform bounds (140..520 × 170..600) and automatically persisted across application restarts.
+                    </div>
+
+                    <div style="display: flex; gap: 10px; align-items: center; margin-top: 6px; flex-wrap: wrap;">
+                      <button type="button" id="btnResetTinyPet" class="btn-action" style="padding: 6px 14px; font-size: 11.5px;" title="Reset floating companion to tiny 160 × 190 px">
+                        ⬡ Tiny Default (160 × 190)
+                      </button>
+                      <button type="button" id="btnMediumPet" class="btn-secondary" style="padding: 6px 14px; font-size: 11.5px;" title="Set companion to comfortable medium size">
+                        Comfortable (220 × 260)
+                      </button>
+                      <button type="button" id="settingsToggleFloatBtn" class="btn-secondary" style="padding: 6px 14px; font-size: 11.5px; color: var(--accent-cyan); border-color: rgba(0, 242, 254, 0.35);">
+                        🪟 Float Pet to Desktop
+                      </button>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 10px;">
+                      <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 11.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">
+                          <span>Width</span>
+                          <span id="sliderWidthVal" style="color: var(--accent-cyan); font-weight: 700;">160 px</span>
+                        </div>
+                        <input type="range" id="sliderCompanionWidth" min="140" max="520" step="10" value="160" style="accent-color: var(--accent-cyan); width: 100%; cursor: pointer;" />
+                      </div>
+
+                      <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 11.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">
+                          <span>Height</span>
+                          <span id="sliderHeightVal" style="color: var(--accent-cyan); font-weight: 700;">190 px</span>
+                        </div>
+                        <input type="range" id="sliderCompanionHeight" min="170" max="600" step="10" value="190" style="accent-color: var(--accent-cyan); width: 100%; cursor: pointer;" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Docking, Pinning & Placement Card -->
+                  <div class="jarvis-box">
+                    <div class="jarvis-box-title">
+                      <span>📌 Desktop Placement & Pinning</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <div>
+                        <div style="font-size: 12.5px; font-weight: 700; color: var(--text-main);">Pin Fairy Companion to Top</div>
+                        <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">Keep desktop companion floating above all other application windows (Always-on-top).</div>
+                      </div>
+                      <input type="checkbox" id="checkCompanionPinned" checked style="accent-color: var(--accent-cyan); width: 18px; height: 18px; cursor: pointer;" />
+                      <input type="checkbox" id="settingCompanionPinnedModal" checked style="display: none;" />
+                    </div>
+                  </div>
+
+                  <!-- Aerial Stunt & Animation Card -->
+                  <div class="jarvis-box">
+                    <div class="jarvis-box-title">
+                      <span>✨ Playful Aerial Stunts & Animations</span>
+                    </div>
+                    <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">
+                      Trigger expressive physical choreography directly on Lucy's 3D celestial familiar stage.
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px;">
+                      <button type="button" class="main-trick-opt btn-secondary" data-trick="spin" style="padding: 7px 10px; font-size: 11.5px;">💫 Spin</button>
+                      <button type="button" class="main-trick-opt btn-secondary" data-trick="jump" style="padding: 7px 10px; font-size: 11.5px;">🦘 Jump</button>
+                      <button type="button" class="main-trick-opt btn-secondary" data-trick="fly" style="padding: 7px 10px; font-size: 11.5px;">🦋 Fly</button>
+                      <button type="button" class="main-trick-opt btn-secondary" data-trick="bounce" style="padding: 7px 10px; font-size: 11.5px;">✨ Bounce</button>
+                      <button type="button" class="main-trick-opt btn-secondary" data-trick="somersault" style="padding: 7px 10px; font-size: 11.5px;">🤸 Somersault</button>
+                      <button type="button" class="main-trick-opt btn-secondary" data-trick="dance" style="padding: 7px 10px; font-size: 11.5px;">💃 Dance</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ==========================================
+                   TAB 3: VOICE & AUDIO
+                   ========================================== -->
+              <div class="settings-center-pane" data-settings-tab="voice" id="paneVoice" role="tabpanel" aria-labelledby="settingsTabBtnVoice">
+                <div class="jarvis-box">
+                  <div class="jarvis-box-title">
+                    <span>🎙️ Local Fairy Voice (Kokoro-82M & Windows Speech)</span>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                      <button type="button" id="btnTestFairyVoice" class="btn-action" style="padding: 5px 16px; font-size: 11.5px;">
+                        ▶ Test Fairy Voice
+                      </button>
+                      <button type="button" id="previewVoiceBtn" style="display: none;"></button>
+                      <button type="button" id="resetVoiceDefaultsBtn" class="btn-cancel" style="padding: 5px 12px; font-size: 11px;">
+                        ↺ Reset
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div>
+                      <div style="font-size: 12.5px; font-weight: 700; color: var(--text-main);">Speech Audio Output</div>
+                      <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 1px;">Audible spoken responses from Lucy during conversations and task notifications.</div>
+                    </div>
+                    <label style="font-size: 11.5px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                      <input type="checkbox" id="settingTtsEnabled" checked style="accent-color: var(--accent-pink); width: 18px; height: 18px; cursor: pointer;" />
+                      Voice Enabled
+                    </label>
+                  </div>
+
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; border-top: 1px dashed var(--bg-card-border); padding-top: 10px;">
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                      <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">TTS Speech Engine</label>
+                      <select id="settingsTtsEngineSelect" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;">
+                        <option value="kokoro">Kokoro-82M Neural Voice (Free & 100% Offline)</option>
+                        <option value="windows-speech">Windows Built-in Speech (SAPI5)</option>
+                      </select>
+                    </div>
+
+                    <div style="display: flex; flex-direction: column; gap: 6px;" id="kokoroPersonaContainer">
+                      <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Fairy Voice Persona Preset</label>
+                      <select id="settingsKokoroVoiceSelect" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;">
+                        <option value="af_bella">Bella (af_bella — Soft, Warm & Natural Fairy)</option>
+                        <option value="af_sky">Sky (af_sky — Bright, Ethereal & Melodic Fairy)</option>
+                      </select>
+                    </div>
+
+                    <div style="display: none; flex-direction: column; gap: 6px;" id="sapi5VoiceContainer">
+                      <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Windows SAPI5 Voice</label>
+                      <select id="settingVoiceSelect" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;">
+                        <option value="">Default (Auto-select female/natural voice)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <!-- Sliders: Rate, Pitch, Volume -->
+                  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-top: 10px;">
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                      <div style="display: flex; justify-content: space-between; font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">
+                        <span>Speech Rate</span>
+                        <span id="rateLabelVal" style="color: var(--accent-cyan); font-weight: 700;">1.00x</span>
+                        <span id="voiceRateVal" style="display: none;">1.00</span>
+                      </div>
+                      <input type="range" id="sliderVoiceRate" min="0.6" max="1.4" step="0.05" value="1.0" style="accent-color: var(--accent-cyan); width: 100%; cursor: pointer;" />
+                      <input type="range" id="settingVoiceRate" min="0.5" max="1.5" step="0.05" value="1.02" style="display: none;" />
+                    </div>
+
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                      <div style="display: flex; justify-content: space-between; font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">
+                        <span>Pitch</span>
+                        <span id="pitchLabelVal" style="color: var(--accent-purple); font-weight: 700;">1.05x</span>
+                        <span id="voicePitchVal" style="display: none;">1.05</span>
+                      </div>
+                      <input type="range" id="sliderVoicePitch" min="0.6" max="1.4" step="0.05" value="1.05" style="accent-color: var(--accent-purple); width: 100%; cursor: pointer;" />
+                      <input type="range" id="settingVoicePitch" min="0.5" max="1.5" step="0.05" value="1.05" style="display: none;" />
+                    </div>
+
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                      <div style="display: flex; justify-content: space-between; font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">
+                        <span>Volume</span>
+                        <span id="volumeLabelVal" style="color: var(--accent-green); font-weight: 700;">100%</span>
+                        <span id="voiceVolumeVal" style="display: none;">100%</span>
+                      </div>
+                      <input type="range" id="sliderVoiceVolume" min="0" max="1.0" step="0.05" value="1.0" style="accent-color: var(--accent-green); width: 100%; cursor: pointer;" />
+                      <input type="range" id="settingVoiceVolume" min="0" max="1" step="0.05" value="1.0" style="display: none;" />
+                    </div>
+                  </div>
+
+                  <div class="settings-banner green" style="margin-top: 10px;">
+                    🛡️ <strong>100% Offline Synthesis:</strong> Kokoro-82M ONNX runs entirely on CPU inside your local environment. Zero audio is transmitted to the cloud.
+                  </div>
+                </div>
+              </div>
+
+              <!-- ==========================================
+                   TAB 4: AI & MODELS (Consolidates #settingsModal)
+                   ========================================== -->
+              <div class="settings-center-pane" data-settings-tab="ai" id="paneAi" role="tabpanel" aria-labelledby="settingsTabBtnAi">
+                <!-- AI Sub-Navigation Bar -->
+                <div class="settings-sub-tabs">
+                  <button type="button" class="settings-sub-tab-btn active" id="subTabAiConnBtn" data-ai-sub="connections">🔑 Connections & Keys</button>
+                  <button type="button" class="settings-sub-tab-btn" id="subTabAiRoutingBtn" data-ai-sub="routing">🔀 AI Routing Policy</button>
+                  <button type="button" class="settings-sub-tab-btn" id="subTabAiDiagBtn" data-ai-sub="diagnostics">📊 Diagnostics</button>
+                </div>
+
+                <!-- Sub-Pane 1: Connections & Keys -->
+                <div id="tabConnections" class="settings-tab-content" style="display: flex; flex-direction: column; gap: 12px;">
+                  <div style="font-size: 12px; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;">
+                    <span>Configure multiple connections and keys per provider. Stored securely via <strong>Windows DPAPI</strong>.</span>
+                    <button id="showAddConnBtn" class="btn-action" style="padding: 4px 12px; font-size: 11px;">+ Add Connection</button>
+                  </div>
+
+                  <!-- Add Connection Drawer / Form -->
+                  <div id="addConnectionForm" style="display: none; flex-direction: column; gap: 10px; background: rgba(0, 242, 254, 0.03); border: 1px solid rgba(0, 242, 254, 0.2); padding: 12px; border-radius: var(--radius-sm);">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <span style="font-size: 12px; font-weight: 700; color: var(--accent-cyan);" id="formTitle">Add Provider Connection</span>
+                      <button id="cancelAddConnBtn" class="btn-cancel" style="padding: 2px 8px; font-size: 10px;">Cancel</button>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                      <div style="display: flex; flex-direction: column; gap: 4px;">
+                        <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Provider</label>
+                        <select id="connProviderSelect" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 7px 10px; border-radius: var(--radius-sm); outline: none;">
+                          <option value="gemini">Google Gemini API</option>
+                          <option value="openrouter">OpenRouter</option>
+                          <option value="groq">GroqCloud (Ultra-fast)</option>
+                          <option value="cerebras">Cerebras Inference (Ultra-fast)</option>
+                          <option value="huggingface">Hugging Face</option>
+                          <option value="ollama">Local Ollama</option>
+                          <option value="custom-openai">Custom OpenAI-Compatible</option>
+                        </select>
+                      </div>
+                      <div style="display: flex; flex-direction: column; gap: 4px;">
+                        <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Connection Label</label>
+                        <input type="text" id="connLabelInput" placeholder="e.g. Primary Gemini, Free Groq" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 7px 10px; border-radius: var(--radius-sm); outline: none;" />
+                      </div>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 4px;" id="connApiKeyRow">
+                      <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">API Key</label>
+                      <input type="password" id="connApiKeyInput" placeholder="Enter API Key (stored encrypted via Windows DPAPI)" autocomplete="new-password" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 7px 10px; border-radius: var(--radius-sm); outline: none;" />
+                    </div>
+                    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px;">
+                      <div style="display: flex; flex-direction: column; gap: 4px;">
+                        <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Default Model</label>
+                        <input type="text" id="connModelInput" list="connModelList" placeholder="e.g. gemini-2.0-flash, llama-3.3-70b-versatile" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 7px 10px; border-radius: var(--radius-sm); outline: none;" />
+                        <datalist id="connModelList"></datalist>
+                      </div>
+                      <div style="display: flex; flex-direction: column; gap: 4px;">
+                        <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Priority (1-100)</label>
+                        <input type="number" id="connPriorityInput" min="1" max="100" value="10" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 7px 10px; border-radius: var(--radius-sm); outline: none;" />
+                      </div>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 4px;" id="connBaseUrlRow">
+                      <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Endpoint Base URL (Optional)</label>
+                      <input type="text" id="connBaseUrlInput" placeholder="Leave blank for official default endpoint" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 7px 10px; border-radius: var(--radius-sm); outline: none;" />
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+                      <label style="font-size: 11.5px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" id="connFreeOnlyInput" style="accent-color: var(--accent-cyan);" />
+                        Strictly Free Tier Only
+                      </label>
+                      <button id="saveConnBtn" class="btn-action" style="padding: 6px 16px; font-size: 11.5px;">Save Connection</button>
+                    </div>
+                  </div>
+
+                  <!-- Connections List Container -->
+                  <div id="connectionsListContainer" style="display: flex; flex-direction: column; gap: 8px; max-height: 280px; overflow-y: auto;">
+                    <div style="font-size: 11.5px; color: var(--text-muted); text-align: center; padding: 20px;">Loading connections...</div>
+                  </div>
+
+                  <div class="settings-banner">
+                    🛡️ <strong>Multi-Key Resilience:</strong> You can add multiple keys for the same provider. Connections automatically track rate limits, cooldowns, and error states without ever exposing secrets to renderer JSON.
+                  </div>
+                </div>
+
+                <!-- Sub-Pane 2: AI Routing & Tasks -->
+                <div id="tabRouting" class="settings-tab-content" style="display: none; flex-direction: column; gap: 12px;">
+                  <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <label style="font-size: 11.5px; text-transform: uppercase; color: var(--accent-cyan); font-weight: 700;">Global Routing Policy</label>
+                    <select id="routingModeSelect" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;">
+                      <option value="auto">Auto (Capability-aware, bounded failover, healthiest route)</option>
+                      <option value="prefer_local">Prefer Local Inference (Ollama first, fallback to free hosted)</option>
+                      <option value="local_only">Local Only (100% offline, zero network data egress)</option>
+                      <option value="free_only">Free Only (Strictly zero-cost models, no paid fallback)</option>
+                      <option value="manual">Manual Override (Force designated provider/model)</option>
+                    </select>
+                    <div style="font-size: 11.5px; color: var(--text-muted);" id="routingModeDescription">
+                      Automatically routes requests to the best available eligible connection based on required capabilities (vision, tools, reasoning).
+                    </div>
+                  </div>
+
+                  <!-- Manual override group -->
+                  <div id="manualOverrideGroup" style="display: none; grid-template-columns: 1fr 1fr; gap: 10px; background: rgba(255,255,255,0.03); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--bg-card-border);">
+                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                      <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Manual Provider</label>
+                      <select id="manualProviderSelect" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 8px; border-radius: var(--radius-sm); outline: none;">
+                        <option value="gemini">Google Gemini</option>
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="groq">GroqCloud</option>
+                        <option value="cerebras">Cerebras</option>
+                        <option value="ollama">Ollama</option>
+                        <option value="huggingface">Hugging Face</option>
+                      </select>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                      <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Manual Model ID</label>
+                      <input type="text" id="manualModelInput" placeholder="e.g. gemini-2.0-flash" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 8px; border-radius: var(--radius-sm); outline: none;" />
+                    </div>
+                  </div>
+
+                  <!-- Task-Specific Model Preferences -->
+                  <div style="border-top: 1px solid var(--bg-card-border); padding-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+                    <label style="font-size: 11.5px; text-transform: uppercase; color: var(--accent-cyan); font-weight: 700;">Task-Specific Model Preferences</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                      <div style="display: flex; flex-direction: column; gap: 4px;">
+                        <span style="font-size: 11px; color: var(--text-muted); font-weight: 600;">🧠 Complex Reasoning & Planning</span>
+                        <input type="text" id="taskOverrideReasoning" placeholder="Auto (or specify model ID)" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 8px; font-size: 11.5px; border-radius: var(--radius-sm); outline: none;" />
+                      </div>
+                      <div style="display: flex; flex-direction: column; gap: 4px;">
+                        <span style="font-size: 11px; color: var(--text-muted); font-weight: 600;">💻 Coding & Automation</span>
+                        <input type="text" id="taskOverrideCoding" placeholder="Auto (or specify model ID)" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 8px; font-size: 11.5px; border-radius: var(--radius-sm); outline: none;" />
+                      </div>
+                      <div style="display: flex; flex-direction: column; gap: 4px;">
+                        <span style="font-size: 11px; color: var(--text-muted); font-weight: 600;">👁️ Vision & Screenshots</span>
+                        <input type="text" id="taskOverrideVision" placeholder="Auto (requires vision capability)" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 8px; font-size: 11.5px; border-radius: var(--radius-sm); outline: none;" />
+                      </div>
+                      <div style="display: flex; flex-direction: column; gap: 4px;">
+                        <span style="font-size: 11px; color: var(--text-muted); font-weight: 600;">⚡ Lightweight & Fast</span>
+                        <input type="text" id="taskOverrideLightweight" placeholder="Auto (or specify model ID)" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 8px; font-size: 11.5px; border-radius: var(--radius-sm); outline: none;" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Safety & Spending Safeguards -->
+                  <div style="border-top: 1px solid var(--bg-card-border); padding-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <label style="font-size: 11px; text-transform: uppercase; color: var(--accent-green); font-weight: 700;">🛡️ Spending Safeguards</label>
+                      <label style="font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" id="policyFreeOnlyCheck" checked style="accent-color: var(--accent-green);" />
+                        Strict Free-Only Mode
+                      </label>
+                    </div>
+                    <div style="font-size: 11px; color: var(--text-muted); line-height: 1.4;">
+                      Unknown pricing is <strong>never</strong> treated as free. Automatic failover never activates paid providers without explicit user authorization.
+                    </div>
+                  </div>
+
+                  <div style="display: flex; justify-content: flex-end; margin-top: 4px;">
+                    <button id="saveRoutingConfigBtn" class="btn-action" style="padding: 6px 18px; font-size: 11.5px;">Save Routing Policy</button>
+                  </div>
+                </div>
+
+                <!-- Sub-Pane 3: Routing Diagnostics -->
+                <div id="tabDiagnostics" class="settings-tab-content" style="display: none; flex-direction: column; gap: 12px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 12px; color: var(--text-muted);">Real-time inspection of routing choices, fallbacks, and cooldowns.</span>
+                    <button id="refreshDiagnosticsBtn" class="btn-cancel" style="padding: 4px 12px; font-size: 11px; color: var(--accent-cyan); border-color: rgba(0, 242, 254, 0.3);">🔄 Refresh Diagnostics</button>
+                  </div>
+
+                  <!-- Recent Route Highlight -->
+                  <div id="diagnosticsLastRoute" style="background: rgba(0, 242, 254, 0.05); border: 1px solid rgba(0, 242, 254, 0.2); padding: 12px; border-radius: var(--radius-sm); font-size: 11.5px;">
+                    <div style="color: var(--text-muted); font-size: 11px; text-transform: uppercase; font-weight: 700;">Most Recent Active Route</div>
+                    <div id="lastRouteDetails" style="color: var(--text-main); font-weight: 600; margin-top: 4px;">No requests processed in this session yet.</div>
+                  </div>
+
+                  <!-- Diagnostics Log Feed -->
+                  <div id="diagnosticsFeed" style="display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; background: rgba(0,0,0,0.25); border: 1px solid var(--bg-card-border); padding: 10px; border-radius: var(--radius-sm); font-family: monospace; font-size: 11px;">
+                    <div style="color: var(--text-muted); text-align: center; padding: 10px;">No routing events recorded yet.</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ==========================================
+                   TAB 5: HANDS-FREE
+                   ========================================== -->
+              <div class="settings-center-pane" data-settings-tab="handsfree" id="paneHandsfree" role="tabpanel" aria-labelledby="settingsTabBtnHandsfree">
+                <div class="jarvis-box">
+                  <div class="jarvis-box-title">
+                    <span>🗣️ Hands-Free Keyword Activation ("Hey Lucy")</span>
+                    <span id="wakeWordStatusBadge" style="font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; background: rgba(255,255,255,0.08); color: var(--text-muted); text-transform: uppercase;">Disabled</span>
+                    <span id="modalWakeWordStatusBadge" style="display: none;"></span>
+                  </div>
+
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                      <div style="font-size: 12.5px; font-weight: 700; color: var(--text-main);">Wake-Word Detection</div>
+                      <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">Local acoustic keyword spotting. Audio is never sent to the network.</div>
+                    </div>
+                    <input type="checkbox" id="checkWakeWordActive" style="accent-color: var(--accent-cyan); width: 18px; height: 18px; cursor: pointer;" />
+                    <input type="checkbox" id="settingWakeWordEnabled" style="display: none;" />
+                  </div>
+
+                  <div id="wakeWordOptionsGroup" style="display: none; flex-direction: column; gap: 8px; border-top: 1px dashed var(--bg-card-border); padding-top: 10px; margin-top: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <span style="font-size: 11.5px; color: var(--text-muted);">Configured Wake Phrases: <strong>"Hey Lucy", "Lucy"</strong></span>
+                      <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-size: 11px; color: var(--text-muted);">Sensitivity:</span>
+                        <span id="wakeWordSensitivityVal" style="font-size: 11.5px; color: var(--accent-cyan); font-weight: 700;">0.50</span>
+                      </div>
+                    </div>
+                    <input type="range" id="settingWakeWordSensitivity" min="0.1" max="1.0" step="0.05" value="0.5" style="accent-color: var(--accent-cyan); width: 100%; cursor: pointer;" />
+                  </div>
+
+                  <div class="settings-banner" style="margin-top: 10px;">
+                    🔒 <strong>Privacy Guarantee:</strong> 100% local MFCC-DTW acoustic inference running in-process. Audio streams stay strictly in memory and zero frames are uploaded.
+                  </div>
+                </div>
+
+                <!-- Conversational Cycle & VAD Card -->
+                <div class="jarvis-box">
+                  <div class="jarvis-box-title">
+                    <span>🔄 Conversational Cycle & Voice Activity Detection (VAD)</span>
+                  </div>
+
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                      <div style="font-size: 12.5px; font-weight: 700; color: var(--text-main);">Continuous Follow-up Window</div>
+                      <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">Keep mic open for follow-up statements after Lucy completes an answer.</div>
+                    </div>
+                    <input type="checkbox" id="settingContinuousConversation" checked style="accent-color: var(--accent-purple); width: 18px; height: 18px; cursor: pointer;" />
+                  </div>
+
+                  <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px dashed var(--bg-card-border); padding-top: 10px; margin-top: 8px;">
+                    <div>
+                      <div style="font-size: 12.5px; font-weight: 700; color: var(--text-main);">Allow Barge-In</div>
+                      <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">Speaking interrupts Lucy while she is talking to immediately capture new input.</div>
+                    </div>
+                    <input type="checkbox" id="settingBargeInEnabled" checked style="accent-color: var(--accent-purple); width: 18px; height: 18px; cursor: pointer;" />
+                  </div>
+
+                  <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px dashed var(--bg-card-border); padding-top: 10px; margin-top: 8px;">
+                    <div>
+                      <div style="font-size: 12.5px; font-weight: 700; color: var(--text-main);">VAD Endpoint Sensitivity</div>
+                      <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">Threshold for distinguishing background noise from human speech.</div>
+                    </div>
+                    <select id="settingVadSensitivity" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); font-size: 11.5px; padding: 4px 10px; border-radius: var(--radius-sm); outline: none;">
+                      <option value="normal" selected>Normal</option>
+                      <option value="high">High Sensitivity</option>
+                      <option value="low">Low Sensitivity</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ==========================================
+                   TAB 6: MEMORY & PRIVACY
+                   ========================================== -->
+              <div class="settings-center-pane" data-settings-tab="memory" id="paneMemory" role="tabpanel" aria-labelledby="settingsTabBtnMemory">
+                <div class="jarvis-box">
+                  <div class="jarvis-box-title">
+                    <span>🧠 Persistent Memory Configuration</span>
+                    <button type="button" id="btnOpenMemoryVaultModal" class="btn-action" style="padding: 4px 12px; font-size: 11px;">
+                      Open Full Memory Vault ↗
+                    </button>
+                  </div>
+
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                      <div style="font-size: 12.5px; font-weight: 700; color: var(--text-main);">Long-Term Memory Retention</div>
+                      <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">Persist user preferences, project facts, and task continuity checkpoints across app restarts.</div>
+                    </div>
+                    <input type="checkbox" id="settingsToggleLongTerm" checked style="accent-color: var(--accent-purple); width: 18px; height: 18px; cursor: pointer;" />
+                  </div>
+
+                  <div style="border-top: 1px dashed var(--bg-card-border); padding-top: 10px; margin-top: 8px; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="font-size: 12px; font-weight: 700; color: var(--text-main);">Data Retention & Maintenance</div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                      <button type="button" id="settingsExportMemoryBtn" class="btn-secondary" style="padding: 6px 12px; font-size: 11.5px; color: var(--accent-cyan); border-color: rgba(0, 242, 254, 0.3);">
+                        📥 Export Memories to JSON
+                      </button>
+                      <button type="button" id="settingsImportMemoryBtn" class="btn-secondary" style="padding: 6px 12px; font-size: 11.5px; color: var(--accent-purple); border-color: rgba(157, 78, 221, 0.3);">
+                        📤 Import Memories
+                      </button>
+                      <button type="button" id="settingsClearWorkingDataBtn" class="btn-cancel" style="padding: 6px 12px; font-size: 11.5px;">
+                        🗑️ Purge Working Data Cache
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="settings-banner purple" style="margin-top: 10px;">
+                    🛡️ <strong>Secret Protection:</strong> Passwords, API keys, and sensitive tokens are systematically redacted before memory insertion. Untrusted external sources cannot create user-approved memories.
+                  </div>
+                </div>
+              </div>
+
+              <!-- ==========================================
+                   TAB 7: AUTOMATION
+                   ========================================== -->
+              <div class="settings-center-pane" data-settings-tab="automation" id="paneAutomation" role="tabpanel" aria-labelledby="settingsTabBtnAutomation">
+                <div class="jarvis-box">
+                  <div class="jarvis-box-title">
+                    <span>⚡ Desktop Automation Execution Mode</span>
+                    <span id="automationTierTag" style="font-size: 11px; color: var(--accent-green); font-weight: 700;">NON-INTRUSIVE (TIER 1-3)</span>
+                  </div>
+
+                  <div style="font-size: 12px; color: var(--text-muted); line-height: 1.45;">
+                    Control how L.U.C.Y. interacts with your desktop environment. By default, Lucy uses non-intrusive APIs to perform tasks without moving your physical mouse or stealing keyboard focus.
+                  </div>
+
+                  <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 8px;">
+                    <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Interaction Strategy</label>
+                    <select id="settingAutomationMode" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;">
+                      <option value="non_intrusive">Non-Intrusive Mode (Recommended — Native UI Automation, PowerShell, DOM, Background APIs)</option>
+                      <option value="foreground_required">Foreground Required Mode (Allow physical mouse move and keyboard simulation when necessary)</option>
+                    </select>
+                  </div>
+
+                  <div class="settings-banner green" style="margin-top: 10px;">
+                    🛡️ <strong>Cursor Independence:</strong> In Non-Intrusive Mode, you can continue typing and clicking in your active applications without disruption or accidental focus stealing while Lucy operates.
+                  </div>
+
+                  <!-- Dry Run Toggle -->
+                  <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px dashed var(--bg-card-border); padding-top: 10px; margin-top: 10px;">
+                    <div>
+                      <div style="font-size: 12.5px; font-weight: 700; color: var(--text-main);">Dry-Run Simulation Mode</div>
+                      <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">Plan and verify execution steps with receipts without touching real files or applications.</div>
+                    </div>
+                    <button type="button" id="toggleDryRunSettingsBtn" class="btn-secondary" style="padding: 6px 14px; font-size: 11.5px;">Dry-Run: OFF</button>
+                  </div>
+
+                  <!-- Consequential Action Policy -->
+                  <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px dashed var(--bg-card-border); padding-top: 10px; margin-top: 10px;">
+                    <div>
+                      <div style="font-size: 12.5px; font-weight: 700; color: var(--text-main);">Consequential Action Authorization</div>
+                      <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">File deletion, external commands, and automation strictly require user authorization before execution.</div>
+                    </div>
+                    <span style="font-size: 11px; font-weight: 700; color: var(--accent-green); background: rgba(6, 214, 160, 0.1); border: 1px solid rgba(6, 214, 160, 0.3); padding: 3px 10px; border-radius: var(--radius-sm);">GATED & VERIFIED</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ==========================================
+                   TAB 8: ABOUT
+                   ========================================== -->
+              <div class="settings-center-pane" data-settings-tab="about" id="paneAbout" role="tabpanel" aria-labelledby="settingsTabBtnAbout">
+                <div class="jarvis-box">
+                  <div class="jarvis-box-title">
+                    <span>ℹ️ Application Identity & System Information</span>
+                    <span style="color: var(--accent-cyan); font-weight: 700;">Release 1.0.0</span>
+                  </div>
+
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 4px;">
+                    <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--bg-card-border); padding: 12px; border-radius: var(--radius-sm);">
+                      <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Product</div>
+                      <div style="font-size: 14px; font-weight: 700; color: var(--accent-cyan); margin-top: 2px;">L.U.C.Y. (Local Universal Companion for You)</div>
+                      <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 4px;">Celestial Fairy Companion & Desktop Automation Assistant</div>
+                    </div>
+
+                    <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--bg-card-border); padding: 12px; border-radius: var(--radius-sm);">
+                      <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Single Authority Coordinator</div>
+                      <div style="font-size: 14px; font-weight: 700; color: var(--accent-green); margin-top: 2px;">Active & Enforcing</div>
+                      <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 4px;">Every action produces an audit-verifiable receipt with checksum.</div>
+                    </div>
+                  </div>
+
+                  <div style="border-top: 1px solid var(--bg-card-border); padding-top: 10px; margin-top: 12px;">
+                    <div style="font-size: 11.5px; font-weight: 700; color: var(--accent-cyan); text-transform: uppercase; margin-bottom: 6px;">Integrated Technology Subsystems</div>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; font-size: 11.5px;">
+                      <div style="padding: 6px 10px; background: rgba(255,255,255,0.03); border: 1px solid var(--bg-card-border); border-radius: 4px;">
+                        <strong>Local Speech:</strong> Kokoro-82M ONNX INT8
+                      </div>
+                      <div style="padding: 6px 10px; background: rgba(255,255,255,0.03); border: 1px solid var(--bg-card-border); border-radius: 4px;">
+                        <strong>Local Recognition:</strong> whisper.cpp C++ Engine
+                      </div>
+                      <div style="padding: 6px 10px; background: rgba(255,255,255,0.03); border: 1px solid var(--bg-card-border); border-radius: 4px;">
+                        <strong>Key Security:</strong> Windows DPAPI Crypt32
+                      </div>
+                      <div style="padding: 6px 10px; background: rgba(255,255,255,0.03); border: 1px solid var(--bg-card-border); border-radius: 4px;">
+                        <strong>Automation:</strong> Tier 1-3 Non-Intrusive
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </section>
+
+      </div>
 
       <!-- Input Console -->
       <footer class="command-console">
@@ -128,283 +1028,10 @@
     </div>
   </div>
 
-  <!-- Provider Settings Modal -->
-  <div class="modal-overlay" id="settingsModal">
-    <div class="permission-modal" style="width: 720px; max-width: 95vw; max-height: 88vh; overflow-y: auto; border-color: var(--accent-cyan); box-shadow: var(--glow-cyan); display: flex; flex-direction: column; gap: 12px;">
-      <div class="modal-title" style="color: var(--accent-cyan); display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--bg-card-border); padding-bottom: 10px;">
-        <span style="display: flex; align-items: center; gap: 8px;">⚙️ Multi-Provider AI Orchestration & Settings</span>
-        <button id="closeSettingsXBtn" class="btn-cancel" style="padding: 2px 8px; font-size: 14px; border: none; background: transparent; cursor: pointer;">✕</button>
-      </div>
-
-      <!-- Settings Navigation Tabs -->
-      <div style="display: flex; gap: 6px; border-bottom: 1px solid var(--bg-card-border); padding-bottom: 8px;">
-        <button type="button" class="settings-tab-btn active" data-tab="tabConnections" id="tabBtnConnections" style="background: rgba(0, 242, 254, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan); padding: 6px 12px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 700; cursor: pointer;">🔑 Connections & Keys</button>
-        <button type="button" class="settings-tab-btn" data-tab="tabRouting" id="tabBtnRouting" style="background: rgba(255,255,255,0.05); border: 1px solid var(--bg-card-border); color: var(--text-dim); padding: 6px 12px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 700; cursor: pointer;">🔀 AI Routing & Tasks</button>
-        <button type="button" class="settings-tab-btn" data-tab="tabDiagnostics" id="tabBtnDiagnostics" style="background: rgba(255,255,255,0.05); border: 1px solid var(--bg-card-border); color: var(--text-dim); padding: 6px 12px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 700; cursor: pointer;">📊 Routing Diagnostics</button>
-        <button type="button" class="settings-tab-btn" data-tab="tabVoiceSystem" id="tabBtnVoiceSystem" style="background: rgba(255,255,255,0.05); border: 1px solid var(--bg-card-border); color: var(--text-dim); padding: 6px 12px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 700; cursor: pointer;">🎙️ Voice & System</button>
-      </div>
-
-      <!-- Tab 1: Connections & Keys -->
-      <div id="tabConnections" class="settings-tab-content" style="display: flex; flex-direction: column; gap: 14px;">
-        <div style="font-size: 12px; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;">
-          <span>Configure multiple connections and keys per provider. Stored via <strong>Windows DPAPI</strong>.</span>
-          <button id="showAddConnBtn" class="btn-action" style="padding: 4px 10px; font-size: 11px;">+ Add Connection</button>
-        </div>
-
-        <!-- Add Connection Drawer / Form -->
-        <div id="addConnectionForm" style="display: none; flex-direction: column; gap: 10px; background: rgba(0, 242, 254, 0.03); border: 1px solid rgba(0, 242, 254, 0.2); padding: 12px; border-radius: var(--radius-sm);">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <span style="font-size: 12px; font-weight: 700; color: var(--accent-cyan);" id="formTitle">Add Provider Connection</span>
-            <button id="cancelAddConnBtn" class="btn-cancel" style="padding: 2px 6px; font-size: 10px;">Cancel</button>
-          </div>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-            <div style="display: flex; flex-direction: column; gap: 4px;">
-              <label style="font-size: 10px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Provider</label>
-              <select id="connProviderSelect" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 8px; border-radius: var(--radius-sm); outline: none;">
-                <option value="gemini">Google Gemini API</option>
-                <option value="openrouter">OpenRouter</option>
-                <option value="groq">GroqCloud (Ultra-fast)</option>
-                <option value="cerebras">Cerebras Inference (Ultra-fast)</option>
-                <option value="huggingface">Hugging Face</option>
-                <option value="ollama">Local Ollama</option>
-                <option value="custom-openai">Custom OpenAI-Compatible</option>
-              </select>
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 4px;">
-              <label style="font-size: 10px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Connection Label</label>
-              <input type="text" id="connLabelInput" placeholder="e.g. Primary Gemini, Free Groq" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 8px; border-radius: var(--radius-sm); outline: none;" />
-            </div>
-          </div>
-          <div style="display: flex; flex-direction: column; gap: 4px;" id="connApiKeyRow">
-            <label style="font-size: 10px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">API Key</label>
-            <input type="password" id="connApiKeyInput" placeholder="Enter API Key (stored in Windows DPAPI)" autocomplete="new-password" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 8px; border-radius: var(--radius-sm); outline: none;" />
-          </div>
-          <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px;">
-            <div style="display: flex; flex-direction: column; gap: 4px;">
-              <label style="font-size: 10px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Default Model</label>
-              <input type="text" id="connModelInput" list="connModelList" placeholder="e.g. gemini-2.0-flash, llama-3.3-70b-versatile" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 8px; border-radius: var(--radius-sm); outline: none;" />
-              <datalist id="connModelList"></datalist>
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 4px;">
-              <label style="font-size: 10px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Priority (1-100)</label>
-              <input type="number" id="connPriorityInput" min="1" max="100" value="10" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 8px; border-radius: var(--radius-sm); outline: none;" />
-            </div>
-          </div>
-          <div style="display: flex; flex-direction: column; gap: 4px;" id="connBaseUrlRow">
-            <label style="font-size: 10px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Endpoint Base URL (Optional)</label>
-            <input type="text" id="connBaseUrlInput" placeholder="Leave blank for official default endpoint" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 8px; border-radius: var(--radius-sm); outline: none;" />
-          </div>
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
-            <label style="font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; cursor: pointer;">
-              <input type="checkbox" id="connFreeOnlyInput" style="accent-color: var(--accent-cyan);" />
-              Strictly Free Tier Only
-            </label>
-            <button id="saveConnBtn" class="btn-action" style="padding: 6px 14px; font-size: 11px;">Save Connection</button>
-          </div>
-        </div>
-
-        <!-- Connections List -->
-        <div id="connectionsListContainer" style="display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto;">
-          <div style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 20px;">Loading connections...</div>
-        </div>
-
-        <!-- Legacy Single Key Migration Card -->
-        <div style="background: rgba(0, 242, 254, 0.05); border: 1px solid rgba(0, 242, 254, 0.2); padding: 10px; border-radius: var(--radius-sm); font-size: 11px; color: var(--text-muted); line-height: 1.4;">
-          🛡️ <strong>Multi-Key Resilience:</strong> You can add multiple keys for the same provider. Connections automatically track rate limits, cooldowns, and error states without ever exposing secrets to renderer JSON.
-        </div>
-      </div>
-
-      <!-- Tab 2: AI Routing & Tasks -->
-      <div id="tabRouting" class="settings-tab-content" style="display: none; flex-direction: column; gap: 14px;">
-        <div style="display: flex; flex-direction: column; gap: 6px;">
-          <label style="font-size: 11px; text-transform: uppercase; color: var(--accent-cyan); font-weight: 700;">Global Routing Policy</label>
-          <select id="routingModeSelect" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;">
-            <option value="auto">Auto (Capability-aware, bounded failover, healthiest route)</option>
-            <option value="prefer_local">Prefer Local Inference (Ollama first, fallback to free hosted)</option>
-            <option value="local_only">Local Only (100% offline, zero network data egress)</option>
-            <option value="free_only">Free Only (Strictly zero-cost models, no paid fallback)</option>
-            <option value="manual">Manual Override (Force designated provider/model)</option>
-          </select>
-          <div style="font-size: 11px; color: var(--text-muted);" id="routingModeDescription">
-            Automatically routes requests to the best available eligible connection based on required capabilities (vision, tools, reasoning).
-          </div>
-        </div>
-
-        <!-- Manual override group -->
-        <div id="manualOverrideGroup" style="display: none; grid-template-columns: 1fr 1fr; gap: 10px; background: rgba(255,255,255,0.03); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--bg-card-border);">
-          <div style="display: flex; flex-direction: column; gap: 4px;">
-            <label style="font-size: 10px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Manual Provider</label>
-            <select id="manualProviderSelect" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 8px; border-radius: var(--radius-sm); outline: none;">
-              <option value="gemini">Google Gemini</option>
-              <option value="openrouter">OpenRouter</option>
-              <option value="groq">GroqCloud</option>
-              <option value="cerebras">Cerebras</option>
-              <option value="ollama">Ollama</option>
-              <option value="huggingface">Hugging Face</option>
-            </select>
-          </div>
-          <div style="display: flex; flex-direction: column; gap: 4px;">
-            <label style="font-size: 10px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Manual Model ID</label>
-            <input type="text" id="manualModelInput" placeholder="e.g. gemini-2.0-flash" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 8px; border-radius: var(--radius-sm); outline: none;" />
-          </div>
-        </div>
-
-        <!-- Task-Specific Model Preferences -->
-        <div style="border-top: 1px solid var(--bg-card-border); padding-top: 10px; display: flex; flex-direction: column; gap: 8px;">
-          <label style="font-size: 11px; text-transform: uppercase; color: var(--accent-cyan); font-weight: 700;">Task-Specific Model Preferences</label>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-            <div style="display: flex; flex-direction: column; gap: 2px;">
-              <span style="font-size: 10px; color: var(--text-dim); font-weight: 600;">🧠 Complex Reasoning & Planning</span>
-              <input type="text" id="taskOverrideReasoning" placeholder="Auto (or specify model ID)" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 4px 8px; font-size: 11px; border-radius: var(--radius-sm); outline: none;" />
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 2px;">
-              <span style="font-size: 10px; color: var(--text-dim); font-weight: 600;">💻 Coding & Automation</span>
-              <input type="text" id="taskOverrideCoding" placeholder="Auto (or specify model ID)" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 4px 8px; font-size: 11px; border-radius: var(--radius-sm); outline: none;" />
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 2px;">
-              <span style="font-size: 10px; color: var(--text-dim); font-weight: 600;">👁️ Vision & Screenshots</span>
-              <input type="text" id="taskOverrideVision" placeholder="Auto (requires vision capability)" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 4px 8px; font-size: 11px; border-radius: var(--radius-sm); outline: none;" />
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 2px;">
-              <span style="font-size: 10px; color: var(--text-dim); font-weight: 600;">⚡ Lightweight & Fast</span>
-              <input type="text" id="taskOverrideLightweight" placeholder="Auto (or specify model ID)" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 4px 8px; font-size: 11px; border-radius: var(--radius-sm); outline: none;" />
-            </div>
-          </div>
-        </div>
-
-        <!-- Safety & Spending Safeguards -->
-        <div style="border-top: 1px solid var(--bg-card-border); padding-top: 10px; display: flex; flex-direction: column; gap: 8px;">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <label style="font-size: 11px; text-transform: uppercase; color: var(--accent-green); font-weight: 700;">🛡️ Spending Safeguards</label>
-            <label style="font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; cursor: pointer;">
-              <input type="checkbox" id="policyFreeOnlyCheck" checked style="accent-color: var(--accent-green);" />
-              Strict Free-Only Mode
-            </label>
-          </div>
-          <div style="font-size: 11px; color: var(--text-muted); line-height: 1.4;">
-            Unknown pricing is <strong>never</strong> treated as free. Automatic failover never activates paid providers without explicit user authorization.
-          </div>
-        </div>
-
-        <div style="display: flex; justify-content: flex-end; margin-top: 6px;">
-          <button id="saveRoutingConfigBtn" class="btn-action" style="padding: 6px 16px; font-size: 11px;">Save Routing Policy</button>
-        </div>
-      </div>
-
-      <!-- Tab 3: Routing Diagnostics -->
-      <div id="tabDiagnostics" class="settings-tab-content" style="display: none; flex-direction: column; gap: 12px;">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <span style="font-size: 12px; color: var(--text-muted);">Real-time inspection of routing choices, fallbacks, and cooldowns.</span>
-          <button id="refreshDiagnosticsBtn" class="btn-cancel" style="padding: 4px 10px; font-size: 11px; color: var(--accent-cyan); border-color: rgba(0, 242, 254, 0.3);">🔄 Refresh</button>
-        </div>
-
-        <!-- Recent Route Highlight -->
-        <div id="diagnosticsLastRoute" style="background: rgba(0, 242, 254, 0.05); border: 1px solid rgba(0, 242, 254, 0.2); padding: 10px; border-radius: var(--radius-sm); font-size: 11px;">
-          <div style="color: var(--text-dim); font-size: 10px; text-transform: uppercase; font-weight: 700;">Most Recent Active Route</div>
-          <div id="lastRouteDetails" style="color: var(--text-main); font-weight: 600; margin-top: 2px;">No requests processed in this session yet.</div>
-        </div>
-
-        <!-- Diagnostics Log Feed -->
-        <div id="diagnosticsFeed" style="display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow-y: auto; background: rgba(0,0,0,0.25); border: 1px solid var(--bg-card-border); padding: 8px; border-radius: var(--radius-sm); font-family: monospace; font-size: 10px;">
-          <div style="color: var(--text-dim); text-align: center; padding: 10px;">No routing events recorded yet.</div>
-        </div>
-      </div>
-
-      <!-- Tab 4: Voice & Background -->
-      <div id="tabVoiceSystem" class="settings-tab-content" style="display: none; flex-direction: column; gap: 12px;">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <label style="font-size: 11px; text-transform: uppercase; color: var(--accent-pink); font-weight: 700;">🎙️ Voice Customization</label>
-            <button type="button" id="resetVoiceDefaultsBtn" class="btn-cancel" style="font-size: 10px; padding: 2px 6px; border-radius: 4px;">↺ Reset</button>
-          </div>
-          <label style="font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; cursor: pointer;">
-            <input type="checkbox" id="settingTtsEnabled" checked style="accent-color: var(--accent-pink);" />
-            Speech Audio Output
-          </label>
-        </div>
-
-        <div style="display: flex; flex-direction: column; gap: 4px;">
-          <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Voice Selection</label>
-          <div style="display: flex; gap: 6px; align-items: center;">
-            <select id="settingVoiceSelect" style="flex: 1; background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 6px 10px; border-radius: var(--radius-sm); outline: none;">
-              <option value="">Default (Auto-select female/natural voice)</option>
-            </select>
-            <button type="button" id="previewVoiceBtn" class="btn-action" style="padding: 6px 12px; font-size: 11px; flex-shrink: 0;" title="Listen to a preview of this voice">▶ Preview</button>
-          </div>
-        </div>
-
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
-          <div style="display: flex; flex-direction: column; gap: 4px;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <label style="font-size: 10px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Pitch</label>
-              <span id="voicePitchVal" style="font-size: 10px; color: var(--accent-pink); font-weight: 700;">1.05</span>
-            </div>
-            <input type="range" id="settingVoicePitch" min="0.5" max="1.5" step="0.05" value="1.05" style="accent-color: var(--accent-pink); width: 100%; cursor: pointer;" />
-          </div>
-
-          <div style="display: flex; flex-direction: column; gap: 4px;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <label style="font-size: 10px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Speed / Rate</label>
-              <span id="voiceRateVal" style="font-size: 10px; color: var(--accent-cyan); font-weight: 700;">1.02</span>
-            </div>
-            <input type="range" id="settingVoiceRate" min="0.5" max="1.5" step="0.05" value="1.02" style="accent-color: var(--accent-cyan); width: 100%; cursor: pointer;" />
-          </div>
-
-          <div style="display: flex; flex-direction: column; gap: 4px;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <label style="font-size: 10px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Volume</label>
-              <span id="voiceVolumeVal" style="font-size: 10px; color: var(--accent-gold); font-weight: 700;">100%</span>
-            </div>
-            <input type="range" id="settingVoiceVolume" min="0" max="1" step="0.05" value="1.0" style="accent-color: var(--accent-gold); width: 100%; cursor: pointer;" />
-          </div>
-        </div>
-
-        <!-- Wake-Word Activation -->
-        <div style="border-top: 1px dashed var(--bg-card-border); padding-top: 10px; display: flex; flex-direction: column; gap: 8px;">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <label style="font-size: 11px; text-transform: uppercase; color: var(--accent-cyan); font-weight: 700;">🗣️ Hands-Free Wake-Word</label>
-            <label style="font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; cursor: pointer;">
-              <input type="checkbox" id="settingWakeWordEnabled" style="accent-color: var(--accent-cyan);" />
-              Enable "Hey Lucy"
-            </label>
-          </div>
-          <div id="wakeWordOptionsGroup" style="display: none; flex-direction: column; gap: 6px;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span style="font-size: 11px; color: var(--text-muted);">Configured Phrases: <strong>"Hey Lucy", "Lucy"</strong></span>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <span style="font-size: 11px; color: var(--text-dim);">Sensitivity:</span>
-                <span id="wakeWordSensitivityVal" style="font-size: 11px; color: var(--accent-cyan); font-weight: 700;">0.50</span>
-              </div>
-            </div>
-            <input type="range" id="settingWakeWordSensitivity" min="0.1" max="1.0" step="0.05" value="0.5" style="accent-color: var(--accent-cyan); width: 100%; cursor: pointer;" />
-            <div style="font-size: 10px; color: var(--text-muted); line-height: 1.3;">
-              🔒 <strong>Privacy Guarantee:</strong> 100% local MFCC-DTW acoustic inference. Zero audio uploaded to network.
-            </div>
-          </div>
-        </div>
-
-        <!-- Persistent Background Runtime & Tray Section -->
-        <div style="border-top: 1px solid var(--bg-card-border); padding-top: 10px; display: flex; flex-direction: column; gap: 8px;">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <label style="font-size: 11px; text-transform: uppercase; color: var(--accent-cyan); font-weight: 700;">🔄 Background Runtime & Tray</label>
-            <label style="font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; cursor: pointer;">
-              <input type="checkbox" id="settingBackgroundMode" checked style="accent-color: var(--accent-cyan);" />
-              Keep running in background
-            </label>
-          </div>
-          <div style="font-size: 11px; color: var(--text-muted); line-height: 1.3;">
-            Closing the main window hides it to the system tray while keeping the fairy companion and background tasks active.
-          </div>
-          <div style="display: flex; justify-content: flex-end; margin-top: 4px;">
-            <button type="button" id="explicitExitBtn" class="btn-cancel" style="color: var(--accent-red); border-color: rgba(255, 75, 75, 0.4); font-size: 11px; padding: 4px 12px;">⏹️ Exit L.U.C.Y. Completely</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="modal-actions" style="margin-top: 10px; border-top: 1px solid var(--bg-card-border); padding-top: 10px;">
-        <button id="cancelSettingsBtn" class="btn-cancel">Close</button>
-      </div>
-    </div>
+  <!-- Retired Settings Modal: Consolidated into Canonical #viewSettings Settings Center -->
+  <div class="modal-overlay" id="settingsModal" style="display: none !important; visibility: hidden; pointer-events: none;">
+    <button id="closeSettingsXBtn" style="display: none;"></button>
+    <button id="cancelSettingsBtn" style="display: none;"></button>
   </div>
 
   <!-- Memory & Task Continuity Modal -->
@@ -419,6 +1046,7 @@
       <div class="memory-tabs">
         <button id="tabMemoriesBtn" class="memory-tab-btn active">📚 Stored Memories</button>
         <button id="tabContinuityBtn" class="memory-tab-btn">🔄 Task Continuity & Recovery</button>
+        <button id="tabProjectsBtn" class="memory-tab-btn">📁 Project Snapshots</button>
         <button id="tabAddMemoryBtn" class="memory-tab-btn">➕ Add Explicit Memory</button>
       </div>
 
@@ -437,12 +1065,25 @@
             <button class="cat-pill" data-cat="working_data">Working Data</button>
           </div>
           <div style="display: flex; gap: 6px; align-items: center;">
-            <input type="text" id="memorySearchInput" placeholder="Filter memories..." style="background: rgba(14,20,38,0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 5px 10px; border-radius: var(--radius-sm); font-size: 11px; width: 140px; outline: none;" />
+            <input type="text" id="memorySearchInput" placeholder="Filter memories..." style="background: rgba(14,20,38,0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 5px 10px; border-radius: var(--radius-sm); font-size: 11px; width: 130px; outline: none;" />
             <button id="clearCategoryBtn" class="btn-cancel" style="padding: 4px 8px; font-size: 11px; color: var(--accent-red);">Clear Filtered</button>
+            <button id="exportMemoryBtn" class="btn-cancel" style="padding: 4px 8px; font-size: 11px; color: var(--accent-cyan);" title="Export memories to JSON">📥 Export</button>
+            <button id="importMemoryBtn" class="btn-cancel" style="padding: 4px 8px; font-size: 11px; color: var(--accent-purple);" title="Import memories from JSON">📤 Import</button>
+            <input type="file" id="memoryFileInput" accept=".json" style="display: none;" />
           </div>
         </div>
 
         <div id="memoryListContainer" style="display: flex; flex-direction: column; gap: 10px; overflow-y: auto; max-height: 400px;">
+          <!-- Loaded dynamically -->
+        </div>
+      </div>
+
+      <!-- Tab: Project Snapshots -->
+      <div class="tab-pane" id="paneProjects">
+        <div style="background: rgba(157, 78, 221, 0.08); border: 1px solid rgba(157, 78, 221, 0.25); padding: 10px; border-radius: var(--radius-sm); font-size: 11px; color: var(--text-muted); line-height: 1.4; margin-bottom: 10px;">
+          📁 <strong>Project Snapshots:</strong> Track architectural choices, accepted/rejected decisions, current stage, and outstanding tasks to maintain seamless continuity across sessions.
+        </div>
+        <div id="projectSnapshotsContainer" style="display: flex; flex-direction: column; gap: 10px; overflow-y: auto; max-height: 400px;">
           <!-- Loaded dynamically -->
         </div>
       </div>
@@ -461,7 +1102,7 @@
       <div class="tab-pane" id="paneAddMemory">
         <div style="display: flex; flex-direction: column; gap: 12px;">
           <div style="display: flex; flex-direction: column; gap: 6px;">
-            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Category</label>
+            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Category</label>
             <select id="addMemoryCategory" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;">
               <option value="user_approved">User-Approved (Facts, instructions, confirmed preferences)</option>
               <option value="project">Project Memory (Decisions, architecture, requirements)</option>
@@ -470,17 +1111,17 @@
           </div>
 
           <div style="display: flex; flex-direction: column; gap: 6px;">
-            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Key / Label</label>
+            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Key / Label</label>
             <input type="text" id="addMemoryKey" placeholder="e.g. user_preferred_editor or project_stack" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;" />
           </div>
 
           <div style="display: flex; flex-direction: column; gap: 6px;">
-            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Content</label>
+            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Content</label>
             <textarea id="addMemoryContent" rows="4" placeholder="Enter facts, instructions, or project decisions to persist..." style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none; resize: vertical;"></textarea>
           </div>
 
           <div id="workingDataTtlGroup" style="display: none; flex-direction: column; gap: 6px;">
-            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Expiration TTL</label>
+            <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Expiration TTL</label>
             <select id="addMemoryTtl" style="background: rgba(14, 20, 38, 0.95); border: 1px solid var(--bg-card-border); color: var(--text-main); padding: 8px 10px; border-radius: var(--radius-sm); outline: none;">
               <option value="3600000">1 Hour</option>
               <option value="86400000">24 Hours</option>
@@ -504,7 +1145,13 @@
   <script src="../voice/speech-recognition.js"></script>
   <script src="../voice/speech-synthesis.js"></script>
   <script src="../voice/audio-recorder.js"></script>
+  <script src="../voice/acoustic-feature-extractor.js"></script>
+  <script src="../voice/acoustic-synthesizer.js"></script>
+  <script src="../voice/acoustic-wake-model.js"></script>
+  <script src="../voice/wake-word-engine.js"></script>
+  <script src="../voice/voice-activity-detector.js"></script>
   <script src="../voice/voice-controller.js"></script>
+  <script src="../companion/pet-interactions.js"></script>
   <script src="companion-renderer.js"></script>
   <script src="app.js"></script>
 </body>

@@ -9,6 +9,7 @@ directories:
 
 files:
   - "src/**/*"
+  - "node_modules/sql.js/**/*"
   - "package.json"
   - "LICENSE"
   - "NOTICE"
@@ -31,6 +32,7 @@ extraResources:
 asar: true
 asarUnpack:
   - "src/tools/native-uia/LucyUiaWorker.exe"
+  - "src/voice/kokoro-worker.py"
   - "node_modules/playwright-core/**/*"
   - "node_modules/sql.js/dist/sql-wasm.wasm"
 

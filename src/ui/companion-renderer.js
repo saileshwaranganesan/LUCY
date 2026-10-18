@@ -36,22 +36,40 @@ class CelestialFamiliarRenderer {
             skirtSway: 0,
             hairSway: 0,
             antennaeSway: 0,
-            // Action animations
+            // Action animations & stunts
             actionTimer: 0,
             actionDuration: 0,
             spinAngle: 0,
+            somersaultAngle: 0,
+            flightOffsetX: 0,
+            danceArmWave: 0,
             transitionOffset: 0,
             scaleY: 1,
-            opacity: 1
+            opacity: 1,
+            // Idle saccades / breathing
+            idleGlanceTimer: 0,
+            idleGlanceDuration: 3.0
         };
 
         this.targetFps = 24;
         this.lastFrameTime = 0;
         this.isInteracting = false;
+        this.isHovered = false;
         this.lastInteractionTime = Date.now();
         this.isObscured = false;
         this.rafId = null;
-        this.dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? Math.min(2, window.devicePixelRatio) : 1;
+        const rect = (canvas && typeof canvas.getBoundingClientRect === 'function') ? canvas.getBoundingClientRect() : null;
+        const defaultW = (rect && rect.width > 0) ? rect.width : ((canvas && canvas.width > 0) ? canvas.width : 160);
+        const defaultH = (rect && rect.height > 0) ? rect.height : ((canvas && canvas.height > 0) ? canvas.height : 190);
+        this.logicalWidth = (options.width && options.width > 0) ? options.width : Math.round(defaultW);
+        this.logicalHeight = (options.height && options.height > 0) ? options.height : Math.round(defaultH);
+        this.dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? Math.min(2.5, window.devicePixelRatio) : 1;
+        if (this.canvas) {
+            const physicalW = Math.round(this.logicalWidth * this.dpr);
+            const physicalH = Math.round(this.logicalHeight * this.dpr);
+            if (this.canvas.width !== physicalW) this.canvas.width = physicalW;
+            if (this.canvas.height !== physicalH) this.canvas.height = physicalH;
+        }
         this.prefersReducedMotion = (typeof window !== 'undefined' && window.matchMedia)
             ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
             : false;
@@ -66,13 +84,27 @@ class CelestialFamiliarRenderer {
         this._bindEvents();
     }
 
-    onResize(width, height) {
-        if (!this.canvas) return;
+    onResize(width, height, dpr) {
+        if (typeof dpr === 'number' && dpr > 0) {
+            this.dpr = Math.min(2.5, dpr);
+        } else if (typeof window !== 'undefined' && window.devicePixelRatio) {
+            this.dpr = Math.min(2.5, window.devicePixelRatio);
+        }
         if (typeof width === 'number' && width > 0) {
-            this.canvas.width = Math.round(width);
+            this.logicalWidth = Math.round(width);
         }
         if (typeof height === 'number' && height > 0) {
-            this.canvas.height = Math.round(height);
+            this.logicalHeight = Math.round(height);
+        }
+        if (!this.canvas) return;
+
+        const physicalW = Math.round(this.logicalWidth * this.dpr);
+        const physicalH = Math.round(this.logicalHeight * this.dpr);
+        if (this.canvas.width !== physicalW) {
+            this.canvas.width = physicalW;
+        }
+        if (this.canvas.height !== physicalH) {
+            this.canvas.height = physicalH;
         }
     }
 
@@ -109,6 +141,7 @@ class CelestialFamiliarRenderer {
 
         this._mouseMoveHandler = (e) => {
             this.markInteracted();
+            this.isHovered = true;
             const rect = this.canvas.getBoundingClientRect();
             if (rect.width <= 0 || rect.height <= 0) return;
             const cx = rect.width / 2;
@@ -120,6 +153,7 @@ class CelestialFamiliarRenderer {
         };
 
         this._mouseLeaveHandler = () => {
+            this.isHovered = false;
             this.state.eyeTargetX = 0;
             this.state.eyeTargetY = 0;
         };
@@ -133,8 +167,12 @@ class CelestialFamiliarRenderer {
         this.markInteracted();
         const prevEmotion = this.state.emotion;
         if (visualState.emotion) {
-            this.state.emotion = visualState.emotion;
-            this.targetFps = (visualState.emotion === 'idle') ? 24 : 60;
+            // Protect active pet reaction and stunts from premature voice state overwrite
+            const isProtectedActiveState = (this.state.emotion === 'pet' || String(this.state.emotion).startsWith('trick_')) && (this.state.actionTimer < this.state.actionDuration);
+            if (!isProtectedActiveState || visualState.emotion !== 'speaking' || visualState.force) {
+                this.state.emotion = visualState.emotion;
+                this.targetFps = (visualState.emotion === 'idle') ? 24 : 60;
+            }
         }
 
         if (this.state.emotion === 'pet' && prevEmotion !== 'pet') {
@@ -149,6 +187,10 @@ class CelestialFamiliarRenderer {
             this.triggerFlight();
         } else if ((this.state.emotion === 'trick_bounce' || this.state.emotion === 'bounce') && prevEmotion !== 'trick_bounce') {
             this.triggerBounce();
+        } else if ((this.state.emotion === 'trick_somersault' || this.state.emotion === 'somersault') && prevEmotion !== 'trick_somersault') {
+            this.triggerSomersault();
+        } else if ((this.state.emotion === 'trick_dance' || this.state.emotion === 'dance') && prevEmotion !== 'trick_dance') {
+            this.triggerDance();
         } else if (this.state.emotion === 'takeoff') {
             this.triggerTakeoff();
         } else if (this.state.emotion === 'landing') {
@@ -160,9 +202,11 @@ class CelestialFamiliarRenderer {
         const trick = String(trickName || '').toLowerCase().trim();
         switch (trick) {
             case 'spin':
+            case 'twirl':
                 this.triggerSpin();
                 break;
             case 'jump':
+            case 'leap':
                 this.triggerJump();
                 break;
             case 'fly':
@@ -170,7 +214,17 @@ class CelestialFamiliarRenderer {
                 this.triggerFlight();
                 break;
             case 'bounce':
+            case 'flutter':
                 this.triggerBounce();
+                break;
+            case 'somersault':
+            case 'flip':
+            case 'loop':
+                this.triggerSomersault();
+                break;
+            case 'dance':
+            case 'groove':
+                this.triggerDance();
                 break;
             case 'pet':
                 this.setVisualState({ emotion: 'pet' });
@@ -190,6 +244,7 @@ class CelestialFamiliarRenderer {
         this.state.actionTimer = 0;
         this.state.actionDuration = 1.6;
         this.state.spinAngle = 0;
+        this.state.somersaultAngle = 0;
         this.markInteracted();
         this.burstParticles = [];
         for (let i = 0; i < 28; i++) {
@@ -215,6 +270,8 @@ class CelestialFamiliarRenderer {
         this.state.actionTimer = 0;
         this.state.actionDuration = 1.3;
         this.state.transitionOffset = 0;
+        this.state.spinAngle = 0;
+        this.state.somersaultAngle = 0;
         this.state.scaleY = 1.0;
         this.markInteracted();
         for (let i = 0; i < 16; i++) {
@@ -239,6 +296,8 @@ class CelestialFamiliarRenderer {
         this.state.actionDuration = 2.0;
         this.state.transitionOffset = 0;
         this.state.flightOffsetX = 0;
+        this.state.spinAngle = 0;
+        this.state.somersaultAngle = 0;
         this.markInteracted();
     }
 
@@ -248,8 +307,67 @@ class CelestialFamiliarRenderer {
         this.state.actionTimer = 0;
         this.state.actionDuration = 1.2;
         this.state.transitionOffset = 0;
+        this.state.spinAngle = 0;
+        this.state.somersaultAngle = 0;
         this.state.scaleY = 1.0;
         this.markInteracted();
+    }
+
+    triggerSomersault() {
+        this.state.emotion = 'trick_somersault';
+        this.targetFps = 60;
+        this.state.actionTimer = 0;
+        this.state.actionDuration = 1.8;
+        this.state.transitionOffset = 0;
+        this.state.somersaultAngle = 0;
+        this.state.spinAngle = 0;
+        this.state.scaleY = 1.0;
+        this.markInteracted();
+        this.burstParticles = [];
+        for (let i = 0; i < 32; i++) {
+            const angle = (i / 32) * Math.PI * 2;
+            const dist = Math.random() * 28 + 12;
+            this.burstParticles.push({
+                x: Math.cos(angle) * dist,
+                y: Math.sin(angle) * dist - 15,
+                vx: Math.cos(angle) * (Math.random() * 2.2 + 1.2),
+                vy: Math.sin(angle) * (Math.random() * 2.2 + 1.2) - 0.5,
+                radius: Math.random() * 2.6 + 1.0,
+                alpha: 1,
+                decay: 0.025,
+                color: ['#70d6ff', '#ffd166', '#b388ff', '#f472b6'][i % 4],
+                shape: 'sparkle'
+            });
+        }
+    }
+
+    triggerDance() {
+        this.state.emotion = 'trick_dance';
+        this.targetFps = 60;
+        this.state.actionTimer = 0;
+        this.state.actionDuration = 2.4;
+        this.state.transitionOffset = 0;
+        this.state.flightOffsetX = 0;
+        this.state.spinAngle = 0;
+        this.state.somersaultAngle = 0;
+        this.state.scaleY = 1.0;
+        this.markInteracted();
+        this.burstParticles = [];
+        for (let i = 0; i < 22; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist = Math.random() * 32 + 8;
+            this.burstParticles.push({
+                x: Math.cos(angle) * dist,
+                y: Math.sin(angle) * dist,
+                vx: (Math.random() - 0.5) * 1.6,
+                vy: -Math.random() * 2.0 - 0.5,
+                radius: Math.random() * 2.5 + 1.0,
+                alpha: 1,
+                decay: 0.02,
+                color: Math.random() > 0.45 ? '#f472b6' : '#ffd166',
+                shape: Math.random() > 0.4 ? 'heart' : 'sparkle'
+            });
+        }
     }
 
     triggerPetBurst() {
@@ -427,6 +545,12 @@ class CelestialFamiliarRenderer {
                 hoverSpeed = 3.2;
                 hoverAmp = 9;
                 wingSpeed = 18;
+                this.state.actionTimer += dt;
+                if (this.state.actionTimer >= this.state.actionDuration) {
+                    this.state.emotion = 'happy';
+                    this.state.actionTimer = 0;
+                    this.targetFps = 24;
+                }
             } else if (this.state.emotion === 'trick_spin') {
                 wingSpeed = 26;
                 this.state.actionTimer += dt;
@@ -484,6 +608,44 @@ class CelestialFamiliarRenderer {
                     this.state.transitionOffset = 0;
                     this.state.scaleY = 1.0;
                 }
+            } else if (this.state.emotion === 'trick_somersault') {
+                wingSpeed = 30;
+                this.state.actionTimer += dt;
+                const prog = Math.min(1, this.state.actionTimer / this.state.actionDuration);
+                // Complete 360-degree aerial somersault loop
+                this.state.somersaultAngle = prog * Math.PI * 2;
+                this.state.transitionOffset = -Math.sin(prog * Math.PI) * 55;
+                if (prog < 0.15) {
+                    this.state.scaleY = 0.88;
+                } else if (prog < 0.85) {
+                    this.state.scaleY = 1.1;
+                } else {
+                    this.state.scaleY = 0.92 + ((prog - 0.85) / 0.15) * 0.08;
+                }
+                if (this.state.actionTimer >= this.state.actionDuration) {
+                    this.state.emotion = 'idle';
+                    this.targetFps = 24;
+                    this.state.somersaultAngle = 0;
+                    this.state.transitionOffset = 0;
+                    this.state.scaleY = 1.0;
+                }
+            } else if (this.state.emotion === 'trick_dance') {
+                wingSpeed = 22;
+                this.state.actionTimer += dt;
+                const prog = Math.min(1, this.state.actionTimer / this.state.actionDuration);
+                const beat = prog * Math.PI * 8; // 4 melodic sways
+                this.state.flightOffsetX = Math.sin(beat) * 14;
+                this.state.transitionOffset = -Math.abs(Math.sin(beat)) * 9;
+                this.state.scaleY = 1.0 + Math.sin(beat * 2) * 0.04;
+                this.state.danceArmWave = Math.sin(beat);
+                if (this.state.actionTimer >= this.state.actionDuration) {
+                    this.state.emotion = 'idle';
+                    this.targetFps = 24;
+                    this.state.flightOffsetX = 0;
+                    this.state.transitionOffset = 0;
+                    this.state.scaleY = 1.0;
+                    this.state.danceArmWave = 0;
+                }
             } else if (this.state.emotion === 'magic') {
                 wingSpeed = 22;
                 this.state.actionTimer += dt;
@@ -501,7 +663,33 @@ class CelestialFamiliarRenderer {
                 this.state.scaleY = 1.0;
                 this.state.flightOffsetX = 0;
                 this.state.spinAngle = 0;
+                this.state.somersaultAngle = 0;
+                this.state.danceArmWave = 0;
             }
+        }
+
+        // Natural idle eye saccades / looking around when not tracking mouse
+        if (!this.isHovered && (this.state.emotion === 'idle' || this.state.emotion === 'happy')) {
+            this.state.idleGlanceTimer = (this.state.idleGlanceTimer || 0) + dt;
+            if (this.state.idleGlanceTimer > (this.state.idleGlanceDuration || 2.4)) {
+                this.state.idleGlanceTimer = 0;
+                this.state.idleGlanceDuration = 2.0 + Math.random() * 2.2;
+                // Alternate between looking to a gentle angle and returning to center
+                if (Math.abs(this.state.eyeTargetX) < 0.05 && Math.abs(this.state.eyeTargetY) < 0.05) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const magnitude = 0.35 + Math.random() * 0.45;
+                    this.state.eyeTargetX = Math.cos(angle) * magnitude;
+                    this.state.eyeTargetY = Math.sin(angle) * magnitude * 0.6;
+                } else {
+                    this.state.eyeTargetX = 0;
+                    this.state.eyeTargetY = 0;
+                }
+            }
+        }
+
+        // Subtle natural breathing oscillation during idle
+        if (this.state.emotion === 'idle' && !this.state.actionTimer) {
+            this.state.scaleY = 1.0 + Math.sin(sec * 1.8) * 0.018;
         }
 
         this.state.hoverPhase = Math.sin(sec * hoverSpeed) * hoverAmp;
@@ -557,213 +745,220 @@ class CelestialFamiliarRenderer {
     }
 
     _getColorPalette() {
+        // Canonical fairy character palette: consistent lavender, royal purple, and soft pink
+        const base = {
+            // Principal Character Colors: Lavender & Royal Violet
+            hair: '#d8b4fe',          // Ethereal soft lavender
+            hairAccent: '#9333ea',    // Royal violet depth & shading
+            hairShadow: '#581c87',    // Deep plum-violet shadow
+            hairGloss: 'rgba(255, 255, 255, 0.85)',
+            
+            // Costume: Lavender & Violet Bodice with Soft Petal Pink Accents
+            bodiceMain: '#7c3aed',    // Celestial violet
+            bodiceShade: '#5b21b6',   // Deep violet shadow
+            bodiceHighlight: '#c084fc',
+            bodiceTrim: '#f472b6',    // Soft petal pink sweetheart neckline trim
+            dress: 'rgba(168, 85, 247, 0.65)',      // Translucent lilac gossamer skirt
+            dressInner: 'rgba(244, 114, 182, 0.55)', // Soft petal rose pink inner petal
+            dressEdge: 'rgba(255, 255, 255, 0.85)',
+            
+            // Humanoid Anatomy: Smooth Radiant Porcelain Skin & Rosy Blushes
+            skin: '#fff5f8',
+            skinShade: '#fce7f3',
+            skinContour: 'rgba(160, 110, 180, 0.42)', // Delicate crisp anatomical outline
+            skinBlush: 'rgba(255, 120, 160, 0.5)',    // Rosy cheeks, elbows & fingertips
+            
+            // Expressive Eyes: Deep Celestial Violet/Indigo with Crisp Catchlights
+            eyes: '#6366f1',
+            eyesPupil: '#1e1b4b',
+            
+            // Gossamer Translucent Wings with Starlight Veins
+            wingsInner: 'rgba(147, 197, 253, 0.52)',
+            wingsOuter: 'rgba(196, 181, 253, 0.48)',
+            wingsVein: 'rgba(255, 255, 255, 0.68)',
+            
+            // Celestial Accessories
+            accent: '#ffd166',        // Starlight champagne gold tiara star, brooch, boot gems
+            core: '#a855f7'           // Canonical celestial purple glow
+        };
+
+        // Emotion-specific ambient aura and magical lighting adjustments
+        // The character's anatomy, hair, dress, and identity REMAIN 100% UNIFORM.
         switch (this.state.emotion) {
             case 'happy':
             case 'pet':
                 return {
-                    core: '#ff85a1',
-                    accent: '#ffd166',
-                    aura: 'rgba(255, 133, 161, 0.35)',
-                    eyes: '#ff70a6',
-                    wingsInner: 'rgba(255, 133, 161, 0.52)',
-                    wingsOuter: 'rgba(255, 209, 102, 0.45)',
-                    dress: 'rgba(255, 133, 161, 0.6)',
-                    hair: '#f5d0fe',
-                    hairAccent: '#c084fc'
+                    ...base,
+                    aura: 'rgba(244, 114, 182, 0.35)', // Warm joyful petal-pink starlight aura
+                    auraGlow: '#f472b6'
                 };
             case 'speaking':
             case 'talking':
                 return {
-                    core: '#70d6ff',
-                    accent: '#ffd166',
-                    aura: 'rgba(112, 214, 255, 0.36)',
-                    eyes: '#70d6ff',
-                    wingsInner: 'rgba(112, 214, 255, 0.52)',
-                    wingsOuter: 'rgba(179, 136, 255, 0.44)',
-                    dress: 'rgba(112, 214, 255, 0.6)',
-                    hair: '#ddd6fe',
-                    hairAccent: '#9d4edd'
+                    ...base,
+                    aura: 'rgba(129, 140, 248, 0.32)', // Resonant celestial blue-violet pulse
+                    auraGlow: '#818cf8'
                 };
             case 'listening':
                 return {
-                    core: '#ff70a6',
-                    accent: '#ffd166',
-                    aura: 'rgba(255, 112, 166, 0.38)',
-                    eyes: '#ff9ebb',
-                    wingsInner: 'rgba(255, 112, 166, 0.52)',
-                    wingsOuter: 'rgba(196, 181, 253, 0.42)',
-                    dress: 'rgba(255, 112, 166, 0.6)',
-                    hair: '#fbcfe8',
-                    hairAccent: '#f472b6'
+                    ...base,
+                    aura: 'rgba(192, 132, 252, 0.34)', // Attentive luminous lilac halo
+                    auraGlow: '#c084fc'
                 };
             case 'thinking':
             case 'focused':
                 return {
-                    core: '#b388ff',
-                    accent: '#70d6ff',
-                    aura: 'rgba(179, 136, 255, 0.38)',
-                    eyes: '#c084fc',
-                    wingsInner: 'rgba(179, 136, 255, 0.52)',
-                    wingsOuter: 'rgba(112, 214, 255, 0.44)',
-                    dress: 'rgba(179, 136, 255, 0.6)',
-                    hair: '#ddd6fe',
-                    hairAccent: '#8b5cf6'
+                    ...base,
+                    aura: 'rgba(147, 197, 253, 0.32)', // Focused starlight glow
+                    auraGlow: '#93c5fd'
                 };
             case 'working':
                 return {
-                    core: '#38bdf8',
-                    accent: '#ffd166',
-                    aura: 'rgba(56, 189, 248, 0.36)',
-                    eyes: '#38bdf8',
-                    wingsInner: 'rgba(56, 189, 248, 0.52)',
-                    wingsOuter: 'rgba(179, 136, 255, 0.42)',
-                    dress: 'rgba(56, 189, 248, 0.58)',
-                    hair: '#c4b5fd',
-                    hairAccent: '#818cf8'
+                    ...base,
+                    aura: 'rgba(168, 85, 247, 0.35)',
+                    auraGlow: '#a855f7'
                 };
             case 'worried':
                 return {
-                    core: '#fb7185',
-                    accent: '#fed7aa',
-                    aura: 'rgba(251, 113, 133, 0.32)',
-                    eyes: '#fda4af',
-                    wingsInner: 'rgba(251, 113, 133, 0.45)',
-                    wingsOuter: 'rgba(254, 215, 170, 0.35)',
-                    dress: 'rgba(251, 113, 133, 0.5)',
-                    hair: '#e2e8f0',
-                    hairAccent: '#cbd5e1'
+                    ...base,
+                    aura: 'rgba(168, 162, 186, 0.22)', // Gentle muted aura
+                    auraGlow: '#94a3b8'
                 };
             case 'curious':
                 return {
-                    core: '#ffd166',
-                    accent: '#70d6ff',
-                    aura: 'rgba(255, 209, 102, 0.38)',
-                    eyes: '#fef08a',
-                    wingsInner: 'rgba(255, 209, 102, 0.52)',
-                    wingsOuter: 'rgba(179, 136, 255, 0.42)',
-                    dress: 'rgba(255, 209, 102, 0.6)',
-                    hair: '#fef08a',
-                    hairAccent: '#f59e0b'
+                    ...base,
+                    aura: 'rgba(253, 224, 71, 0.32)',  // Inquisitive warm star sparkle
+                    auraGlow: '#fde047'
                 };
             case 'magic':
                 return {
-                    core: '#ffd166',
-                    accent: '#f472b6',
-                    aura: 'rgba(255, 209, 102, 0.48)',
-                    eyes: '#ffffff',
-                    wingsInner: 'rgba(255, 209, 102, 0.62)',
-                    wingsOuter: 'rgba(244, 114, 182, 0.52)',
-                    dress: 'rgba(255, 209, 102, 0.65)',
-                    hair: '#fdf4ff',
-                    hairAccent: '#e879f9'
+                    ...base,
+                    aura: 'rgba(250, 204, 21, 0.42)',  // Radiant golden spellcasting aura
+                    auraGlow: '#facc15'
                 };
             case 'sleep':
                 return {
-                    core: '#94a3b8',
-                    accent: '#cbd5e1',
-                    aura: 'rgba(148, 163, 184, 0.2)',
-                    eyes: '#cbd5e1',
-                    wingsInner: 'rgba(148, 163, 184, 0.28)',
-                    wingsOuter: 'rgba(100, 116, 139, 0.22)',
-                    dress: 'rgba(148, 163, 184, 0.32)',
-                    hair: '#94a3b8',
-                    hairAccent: '#64748b'
+                    ...base,
+                    aura: 'rgba(148, 163, 184, 0.16)', // Serene soft moonlight
+                    auraGlow: '#64748b'
+                };
+            case 'surprised':
+                return {
+                    ...base,
+                    aura: 'rgba(254, 240, 138, 0.38)', // Luminous wide-eyed starlight halo
+                    auraGlow: '#fef08a'
                 };
             default: // idle
                 return {
-                    core: '#70d6ff',
-                    accent: '#ffd166',
-                    aura: 'rgba(112, 214, 255, 0.3)',
-                    eyes: '#70d6ff',
-                    wingsInner: 'rgba(112, 214, 255, 0.48)',
-                    wingsOuter: 'rgba(179, 136, 255, 0.42)',
-                    dress: 'rgba(179, 136, 255, 0.55)',
-                    hair: '#c4b5fd',
-                    hairAccent: '#8b5cf6'
+                    ...base,
+                    aura: 'rgba(168, 85, 247, 0.24)', // Serene celestial violet aura
+                    auraGlow: '#a855f7'
                 };
         }
     }
 
     _render(time) {
         if (!this.ctx || !this.canvas) return;
-        const width = this.canvas.width;
-        const height = this.canvas.height;
-        this.ctx.clearRect(0, 0, width, height);
+        const dpr = this.dpr || 1;
+        const logicalW = this.logicalWidth || (this.canvas.width / dpr);
+        const logicalH = this.logicalHeight || (this.canvas.height / dpr);
 
-        const cx = width / 2;
-        const cy = height * 0.52 + this.state.hoverPhase + this.state.transitionOffset;
+        // 1. Reset canvas transform to identity, then scale by DPR exactly once
+        if (typeof this.ctx.setTransform === 'function') {
+            this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        } else if (typeof this.ctx.resetTransform === 'function') {
+            this.ctx.resetTransform();
+            if (typeof this.ctx.scale === 'function' && dpr !== 1) {
+                this.ctx.scale(dpr, dpr);
+            }
+        }
+
+        // 2. Clear entire logical canvas bounds
+        this.ctx.clearRect(0, 0, logicalW, logicalH);
+
+        const cx = logicalW / 2;
+        const cy = logicalH * 0.52 + this.state.hoverPhase + this.state.transitionOffset;
         const palette = this._getColorPalette();
 
-        // Calculate responsive scale factor so character remains compact,
-        // proportionate, and completely within canvas bounds with zero distortion.
-        const baseScale = Math.min(width / 240, height / 220);
+        // Calculate deterministic scale factor based on LOGICAL dimensions
+        // Base coordinate reference is 240x220 as designed for the fairy's vector paths
+        const baseScale = Math.min(logicalW / 240, logicalH / 220);
 
         this.ctx.save();
-        if (this.state.opacity < 1) {
-            this.ctx.globalAlpha = Math.max(0, this.state.opacity);
+        try {
+            if (this.state.opacity < 1) {
+                this.ctx.globalAlpha = Math.max(0, this.state.opacity);
+            }
+
+            // Apply scale & spin transformations during special actions
+            const fx = cx + (this.state.flightOffsetX || 0);
+            this.ctx.translate(fx, cy);
+            this.ctx.scale(baseScale, baseScale * (this.state.scaleY || 1));
+
+            const totalRotation = (this.state.spinAngle || 0) + (this.state.somersaultAngle || 0);
+            if (totalRotation !== 0) {
+                this.ctx.rotate(totalRotation);
+            }
+
+            // 1. Draw Orbiting Star Particles (scaled relative to character)
+            this._renderOrbitParticles(palette, time);
+
+            // 2. Draw Trailing Stardust Ribbon
+            this._renderTrailingParticles();
+
+            // 3. Multi-Layered Gossamer Fairy Wings (Drawn behind body)
+            this._renderFairyWings(palette);
+
+            // 4. Ethereal Soft Outer Aura
+            this._renderSoftAura(palette);
+
+            // 5. Back Hair Volume (Soft feminine silhouette framing head & shoulders)
+            this._renderBackHair(palette);
+
+            // 6. Slender Porcelain Legs & Delicate Fairy Boots (Drawn before skirt)
+            this._renderFairyLegsAndBoots(palette);
+
+            // 7. Petite Fairy Dress / Multi-Layered Petal Skirt
+            this._renderPetalDress(palette);
+
+            // 8. Slender Porcelain Neck & Defined Feminine Shoulders
+            this._renderFairyNeckAndShoulders(palette);
+
+            // 9. Fitted Magical Bodice & Glowing Star Brooch
+            this._renderFairyBodice(palette);
+
+            // 10. Cute Rounded Chibi Head & Luminous Porcelain Face
+            this._renderFairyHead(palette);
+
+            // 11. Pointed Fairy Elf Ears with Soft Blush
+            this._renderFairyEars(palette);
+
+            // 12. Soft Celestial Hair: Layered Bangs & Floating Side Curls
+            this._renderFairyHair(palette);
+
+            // 13. Delicate Starlight Tiara / Circlet with Glowing Star Crystal
+            this._renderFairyTiara(palette);
+
+            // 14. Expressive Chibi/Anime Eyes with Look-At Tracking & Blinking
+            this._renderFairyEyes(palette);
+
+            // 15. Rosy Cheeks, Cute Petite Nose & Animated Speaking Mouth
+            this._renderCheeksAndMouth(palette, time);
+
+            // 16. Slender Humanoid Arms & Clearly Visible Delicate Fairy Hands (Front layer)
+            this._renderFairyArmsAndHands(palette);
+
+            // 17. Draw Burst Particles (Hearts / Sparkles from Pet or Magic)
+            this._renderBurstParticles();
+        } finally {
+            this.ctx.restore();
+            // Deterministic transform reset ensures no transform persists across frames
+            if (typeof this.ctx.setTransform === 'function') {
+                this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+            } else if (typeof this.ctx.resetTransform === 'function') {
+                this.ctx.resetTransform();
+            }
         }
-
-        // Apply scale & spin transformations during special actions
-        const fx = cx + (this.state.flightOffsetX || 0);
-        this.ctx.translate(fx, cy);
-        this.ctx.scale(baseScale, baseScale * (this.state.scaleY || 1));
-
-        if (this.state.spinAngle !== 0) {
-            this.ctx.rotate(this.state.spinAngle);
-        }
-
-        // 1. Draw Orbiting Star Particles (scaled relative to character)
-        this._renderOrbitParticles(palette, time);
-
-        // 2. Draw Trailing Stardust Ribbon
-        this._renderTrailingParticles();
-
-        // 3. Multi-Layered Gossamer Fairy Wings (Drawn behind body)
-        this._renderFairyWings(palette);
-
-        // 4. Ethereal Soft Outer Aura
-        this._renderSoftAura(palette);
-
-        // 5. Back Hair Volume (Soft feminine silhouette framing head & shoulders)
-        this._renderBackHair(palette);
-
-        // 6. Slender Porcelain Legs & Delicate Fairy Boots (Drawn before skirt)
-        this._renderFairyLegsAndBoots(palette);
-
-        // 7. Petite Fairy Dress / Multi-Layered Petal Skirt
-        this._renderPetalDress(palette);
-
-        // 8. Slender Porcelain Neck & Defined Feminine Shoulders
-        this._renderFairyNeckAndShoulders(palette);
-
-        // 9. Fitted Magical Bodice & Glowing Star Brooch
-        this._renderFairyBodice(palette);
-
-        // 10. Slender Arms & Delicate Folded Fairy Hands
-        this._renderFairyArmsAndHands(palette);
-
-        // 11. Cute Rounded Chibi Head & Luminous Porcelain Face
-        this._renderFairyHead(palette);
-
-        // 12. Pointed Fairy Elf Ears with Soft Blush
-        this._renderFairyEars(palette);
-
-        // 13. Soft Celestial Hair: Layered Bangs & Floating Side Curls
-        this._renderFairyHair(palette);
-
-        // 14. Delicate Starlight Tiara / Circlet with Glowing Star Crystal
-        this._renderFairyTiara(palette);
-
-        // 15. Expressive Chibi/Anime Eyes with Look-At Tracking & Blinking
-        this._renderFairyEyes(palette);
-
-        // 16. Rosy Cheeks, Cute Petite Nose & Animated Speaking Mouth
-        this._renderCheeksAndMouth(palette, time);
-
-        // 17. Draw Burst Particles (Hearts / Sparkles from Pet or Magic)
-        this._renderBurstParticles();
-
-        this.ctx.restore();
     }
 
     _renderOrbitParticles(palette, time) {
@@ -949,32 +1144,39 @@ class CelestialFamiliarRenderer {
             this.ctx.fill();
 
             // --- Delicate Fairy Boot / Slipper ---
-            const bootGrad = this.ctx.createLinearGradient(lx, ankleY - 2, lx, bootY);
-            bootGrad.addColorStop(0, palette.core);
-            bootGrad.addColorStop(0.5, palette.dress || '#c084fc');
-            bootGrad.addColorStop(1, '#ffffff');
+            const bootGrad = this.ctx.createLinearGradient(lx, ankleY - 2, lx, bootY + 2);
+            bootGrad.addColorStop(0, '#a855f7');  // Bright celestial lavender cuff
+            bootGrad.addColorStop(0.4, '#7c3aed'); // Royal violet boot body
+            bootGrad.addColorStop(1, '#4c1d95');  // Deep plum violet sole & toe
 
             this.ctx.beginPath();
             // Boot cuff with gentle petal flare
-            this.ctx.moveTo(lx - 3.0, ankleY - 1.5);
-            this.ctx.lineTo(lx + 3.0, ankleY - 1.5);
-            this.ctx.quadraticCurveTo(lx + 3.2, ankleY + 3, lx + 2.2, bootY - 1.5);
+            this.ctx.moveTo(lx - 3.4, ankleY - 1.5);
+            this.ctx.lineTo(lx + 3.4, ankleY - 1.5);
+            this.ctx.quadraticCurveTo(lx + 3.6, ankleY + 3, lx + 2.6, bootY - 1.5);
             // Pointed fairy slipper toe arching slightly forward
-            this.ctx.quadraticCurveTo(lx + side * 1.5, bootY + 2, lx, bootY + 2.2);
-            this.ctx.quadraticCurveTo(lx - side * 1.5, bootY, lx - 2.2, bootY - 1.5);
-            this.ctx.quadraticCurveTo(lx - 3.2, ankleY + 3, lx - 3.0, ankleY - 1.5);
+            this.ctx.quadraticCurveTo(lx + side * 1.8, bootY + 2.2, lx, bootY + 2.4);
+            this.ctx.quadraticCurveTo(lx - side * 1.8, bootY, lx - 2.6, bootY - 1.5);
+            this.ctx.quadraticCurveTo(lx - 3.6, ankleY + 3, lx - 3.4, ankleY - 1.5);
             this.ctx.closePath();
             this.ctx.fillStyle = bootGrad;
-            this.ctx.shadowColor = palette.core;
-            this.ctx.shadowBlur = 4;
             this.ctx.fill();
+            this.ctx.strokeStyle = 'rgba(255, 209, 102, 0.75)'; // Starlight gold rim trim
+            this.ctx.lineWidth = 0.8;
+            this.ctx.stroke();
 
             // Tiny golden star crystal on boot cuff
             this.ctx.beginPath();
-            this.ctx.arc(lx, ankleY - 0.5, 1.2, 0, Math.PI * 2);
-            this.ctx.fillStyle = palette.accent || '#ffd166';
-            this.ctx.shadowColor = palette.accent || '#ffd166';
+            this.ctx.arc(lx, ankleY - 0.5, 1.4, 0, Math.PI * 2);
+            this.ctx.fillStyle = '#ffd166';
+            this.ctx.shadowColor = '#ffd166';
             this.ctx.shadowBlur = 4;
+            this.ctx.fill();
+
+            // Delicate starlight highlight on boot toe
+            this.ctx.beginPath();
+            this.ctx.arc(lx, bootY + 0.8, 0.8, 0, Math.PI * 2);
+            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
             this.ctx.fill();
         });
 
@@ -986,35 +1188,50 @@ class CelestialFamiliarRenderer {
         this.ctx.translate(0, 13);
         const sway = this.state.skirtSway;
 
-        // Flared translucent petal skirt blossoming from slender waist
+        // Outer translucent layered petal skirt in celestial lilac
         const petalGrad = this.ctx.createLinearGradient(0, 0, 0, 18);
-        petalGrad.addColorStop(0, palette.dress || 'rgba(179, 136, 255, 0.6)');
-        petalGrad.addColorStop(0.65, 'rgba(230, 200, 255, 0.55)');
-        petalGrad.addColorStop(1, 'rgba(255, 255, 255, 0.8)');
+        petalGrad.addColorStop(0, palette.dress);
+        petalGrad.addColorStop(0.55, 'rgba(216, 180, 254, 0.65)');
+        petalGrad.addColorStop(1, palette.dressEdge);
 
-        // Back layer petal
-        this.ctx.beginPath();
-        this.ctx.moveTo(-5, 0);
-        this.ctx.quadraticCurveTo(-14 + sway * 0.7, 9, -6 + sway, 17);
-        this.ctx.quadraticCurveTo(0, 13, 6 + sway, 17);
-        this.ctx.quadraticCurveTo(14 + sway * 0.7, 9, 5, 0);
-        this.ctx.closePath();
-        this.ctx.fillStyle = 'rgba(150, 110, 210, 0.45)';
-        this.ctx.fill();
+        // Inner soft petal pink lining
+        const innerPetalGrad = this.ctx.createLinearGradient(0, 0, 0, 16);
+        innerPetalGrad.addColorStop(0, palette.dressInner);
+        innerPetalGrad.addColorStop(1, 'rgba(255, 235, 245, 0.8)');
 
-        // Left Flared Petal
+        // Deep Back Layer Petal
         this.ctx.beginPath();
         this.ctx.moveTo(-6, 0);
-        this.ctx.quadraticCurveTo(-17 + sway * 0.8, 7, -12 + sway, 16);
+        this.ctx.quadraticCurveTo(-15 + sway * 0.7, 9, -7 + sway, 17.5);
+        this.ctx.quadraticCurveTo(0, 14, 7 + sway, 17.5);
+        this.ctx.quadraticCurveTo(15 + sway * 0.7, 9, 6, 0);
+        this.ctx.closePath();
+        this.ctx.fillStyle = 'rgba(126, 34, 206, 0.45)';
+        this.ctx.fill();
+
+        // Inner Rose Petal Flares
+        this.ctx.beginPath();
+        this.ctx.moveTo(-5, 0);
+        this.ctx.quadraticCurveTo(-12 + sway * 0.8, 8, -6 + sway * 0.7, 16);
+        this.ctx.quadraticCurveTo(0, 13, 6 + sway * 0.7, 16);
+        this.ctx.quadraticCurveTo(12 + sway * 0.8, 8, 5, 0);
+        this.ctx.closePath();
+        this.ctx.fillStyle = innerPetalGrad;
+        this.ctx.fill();
+
+        // Left Flared Translucent Lilac Petal
+        this.ctx.beginPath();
+        this.ctx.moveTo(-7, 0);
+        this.ctx.quadraticCurveTo(-18 + sway * 0.8, 7, -13 + sway, 16.5);
         this.ctx.quadraticCurveTo(-6 + sway * 0.5, 14, -1, 0);
         this.ctx.closePath();
         this.ctx.fillStyle = petalGrad;
         this.ctx.fill();
 
-        // Right Flared Petal
+        // Right Flared Translucent Lilac Petal
         this.ctx.beginPath();
-        this.ctx.moveTo(6, 0);
-        this.ctx.quadraticCurveTo(17 + sway * 0.8, 7, 12 + sway, 16);
+        this.ctx.moveTo(7, 0);
+        this.ctx.quadraticCurveTo(18 + sway * 0.8, 7, 13 + sway, 16.5);
         this.ctx.quadraticCurveTo(6 + sway * 0.5, 14, 1, 0);
         this.ctx.closePath();
         this.ctx.fillStyle = petalGrad;
@@ -1022,9 +1239,9 @@ class CelestialFamiliarRenderer {
 
         // Center Front Petal
         this.ctx.beginPath();
-        this.ctx.moveTo(-3, 0);
-        this.ctx.quadraticCurveTo(-8 + sway, 8, 0 + sway * 1.1, 15.5);
-        this.ctx.quadraticCurveTo(8 + sway, 8, 3, 0);
+        this.ctx.moveTo(-4, 0);
+        this.ctx.quadraticCurveTo(-9 + sway, 8, 0 + sway * 1.1, 16);
+        this.ctx.quadraticCurveTo(9 + sway, 8, 4, 0);
         this.ctx.closePath();
         this.ctx.fillStyle = petalGrad;
         this.ctx.fill();
@@ -1035,64 +1252,85 @@ class CelestialFamiliarRenderer {
     _renderFairyNeckAndShoulders(palette) {
         this.ctx.save();
         // Slender porcelain neck connecting head to shoulders
+        const neckGrad = this.ctx.createLinearGradient(0, -8, 0, 1);
+        neckGrad.addColorStop(0, palette.skin);
+        neckGrad.addColorStop(1, palette.skinShade);
+
         this.ctx.beginPath();
         this.ctx.moveTo(-3.5, -8);
-        this.ctx.lineTo(-3.5, 0);
-        this.ctx.lineTo(3.5, 0);
+        this.ctx.lineTo(-3.5, 1);
+        this.ctx.lineTo(3.5, 1);
         this.ctx.lineTo(3.5, -8);
         this.ctx.closePath();
-        this.ctx.fillStyle = '#fff0f5';
+        this.ctx.fillStyle = neckGrad;
         this.ctx.fill();
 
         // Soft neck shadow under chin
         this.ctx.beginPath();
         this.ctx.moveTo(-3.5, -8);
-        this.ctx.quadraticCurveTo(0, -6, 3.5, -8);
-        this.ctx.lineTo(3.5, -5);
-        this.ctx.quadraticCurveTo(0, -3.5, -3.5, -5);
+        this.ctx.quadraticCurveTo(0, -5.5, 3.5, -8);
+        this.ctx.lineTo(3.5, -4.5);
+        this.ctx.quadraticCurveTo(0, -2.5, -3.5, -4.5);
         this.ctx.closePath();
-        this.ctx.fillStyle = 'rgba(230, 180, 210, 0.4)';
+        this.ctx.fillStyle = 'rgba(180, 130, 180, 0.28)';
         this.ctx.fill();
 
-        // Defined feminine shoulders
+        // Defined feminine shoulders spanning gracefully from x = -13.5 to +13.5
         this.ctx.beginPath();
-        this.ctx.ellipse(0, 1, 12.5, 3.2, 0, 0, Math.PI * 2);
-        this.ctx.fillStyle = '#fff5f8';
+        this.ctx.ellipse(0, 1.5, 13.5, 3.5, 0, 0, Math.PI * 2);
+        this.ctx.fillStyle = palette.skin;
         this.ctx.fill();
+
+        // Soft anatomical contour line along shoulders
+        this.ctx.beginPath();
+        this.ctx.ellipse(0, 1.5, 13.5, 3.5, 0, 0, Math.PI * 2);
+        this.ctx.strokeStyle = palette.skinContour;
+        this.ctx.lineWidth = 0.8;
+        this.ctx.stroke();
+
         this.ctx.restore();
     }
 
     _renderFairyBodice(palette) {
         this.ctx.save();
-        // Fitted feminine bodice tapering to slender waist
+        // Fitted feminine bodice tapering to slender fairy waist
         const bodiceGrad = this.ctx.createLinearGradient(0, 0, 0, 13);
         bodiceGrad.addColorStop(0, '#ffffff');
-        bodiceGrad.addColorStop(0.4, palette.core);
-        bodiceGrad.addColorStop(0.9, palette.hairAccent || '#8b5cf6');
-        bodiceGrad.addColorStop(1, 'rgba(50, 25, 75, 0.9)');
+        bodiceGrad.addColorStop(0.2, palette.bodiceHighlight);
+        bodiceGrad.addColorStop(0.65, palette.bodiceMain);
+        bodiceGrad.addColorStop(1, palette.bodiceShade);
 
         this.ctx.beginPath();
         // Sweetheart neckline at top of chest
-        this.ctx.moveTo(-11, 1);
-        this.ctx.quadraticCurveTo(-5, 4, 0, 2.5);
-        this.ctx.quadraticCurveTo(5, 4, 11, 1);
+        this.ctx.moveTo(-11.5, 1.5);
+        this.ctx.quadraticCurveTo(-5.5, 4.5, 0, 3.0);
+        this.ctx.quadraticCurveTo(5.5, 4.5, 11.5, 1.5);
         // Taper gracefully inward to slender fairy waist at y=13
-        this.ctx.quadraticCurveTo(9, 7, 7, 13);
-        this.ctx.lineTo(-7, 13);
-        this.ctx.quadraticCurveTo(-9, 7, -11, 1);
+        this.ctx.quadraticCurveTo(9.5, 7.5, 7.5, 13);
+        this.ctx.lineTo(-7.5, 13);
+        this.ctx.quadraticCurveTo(-9.5, 7.5, -11.5, 1.5);
         this.ctx.closePath();
         this.ctx.fillStyle = bodiceGrad;
         this.ctx.shadowColor = palette.core;
-        this.ctx.shadowBlur = 6;
+        this.ctx.shadowBlur = 4;
         this.ctx.fill();
+
+        // Soft petal pink sweetheart trim along neckline
+        this.ctx.beginPath();
+        this.ctx.moveTo(-11.5, 1.5);
+        this.ctx.quadraticCurveTo(-5.5, 4.5, 0, 3.0);
+        this.ctx.quadraticCurveTo(5.5, 4.5, 11.5, 1.5);
+        this.ctx.strokeStyle = palette.bodiceTrim;
+        this.ctx.lineWidth = 1.4;
+        this.ctx.stroke();
 
         // Delicate golden filigree / corset seam lines
         this.ctx.beginPath();
-        this.ctx.moveTo(0, 3);
+        this.ctx.moveTo(0, 3.5);
         this.ctx.lineTo(0, 13);
-        this.ctx.moveTo(-4, 4);
+        this.ctx.moveTo(-4, 4.5);
         this.ctx.lineTo(-3, 13);
-        this.ctx.moveTo(4, 4);
+        this.ctx.moveTo(4, 4.5);
         this.ctx.lineTo(3, 13);
         this.ctx.strokeStyle = 'rgba(255, 209, 102, 0.65)';
         this.ctx.lineWidth = 0.8;
@@ -1100,17 +1338,17 @@ class CelestialFamiliarRenderer {
 
         // Glowing Star Brooch / Heart Gem at center chest
         this.ctx.beginPath();
-        this.ctx.arc(0, 4, 2.8, 0, Math.PI * 2);
-        this.ctx.fillStyle = palette.accent || '#ffd166';
-        this.ctx.shadowColor = palette.accent || '#ffd166';
-        this.ctx.shadowBlur = 8;
+        this.ctx.arc(0, 4.5, 2.6, 0, Math.PI * 2);
+        this.ctx.fillStyle = palette.accent;
+        this.ctx.shadowColor = palette.accent;
+        this.ctx.shadowBlur = 6;
         this.ctx.fill();
 
-        // Tiny golden waist belt band
+        // Golden waist belt band
         this.ctx.beginPath();
-        this.ctx.moveTo(-7.5, 12.5);
-        this.ctx.lineTo(7.5, 12.5);
-        this.ctx.strokeStyle = palette.accent || '#ffd166';
+        this.ctx.moveTo(-8, 12.5);
+        this.ctx.lineTo(8, 12.5);
+        this.ctx.strokeStyle = palette.accent;
         this.ctx.lineWidth = 1.4;
         this.ctx.stroke();
 
@@ -1118,52 +1356,362 @@ class CelestialFamiliarRenderer {
     }
 
     _renderFairyArmsAndHands(palette) {
-        this.ctx.save();
-        const isRaised = (this.state.emotion === 'pet' || this.state.emotion === 'magic');
-        const armColor = '#fff5f8';
-        this.ctx.strokeStyle = armColor;
-        this.ctx.lineWidth = 2.4;
-        this.ctx.lineCap = 'round';
-        this.ctx.lineJoin = 'round';
+        const isRaised = (this.state.emotion === 'pet' || this.state.emotion === 'magic' || this.state.emotion === 'trick_jump');
+        const isGesturing = (this.state.emotion === 'speaking' || this.state.emotion === 'talking' || this.state.emotion === 'thinking' || this.state.emotion === 'listening' || this.state.emotion === 'curious' || this.state.emotion === 'surprised');
+        const isDancing = (this.state.emotion === 'trick_dance');
 
-        if (isRaised) {
-            // Playfully raised arms celebrating or welcoming
-            this.ctx.beginPath();
-            this.ctx.moveTo(-10, 1);
-            this.ctx.quadraticCurveTo(-16, 4, -13, 9);
-            this.ctx.stroke();
-
-            this.ctx.beginPath();
-            this.ctx.moveTo(10, 1);
-            this.ctx.quadraticCurveTo(16, 4, 13, 9);
-            this.ctx.stroke();
-
-            this.ctx.fillStyle = armColor;
-            this.ctx.beginPath();
-            this.ctx.arc(-13, 9, 2.2, 0, Math.PI * 2);
-            this.ctx.arc(13, 9, 2.2, 0, Math.PI * 2);
-            this.ctx.fill();
+        if (isDancing) {
+            const wave = this.state.danceArmWave || 0;
+            if (wave > 0.2) {
+                this._drawArmAndHand(-1, 'raised', palette);
+                this._drawArmAndHand(1, 'gesturing', palette);
+            } else if (wave < -0.2) {
+                this._drawArmAndHand(-1, 'gesturing', palette);
+                this._drawArmAndHand(1, 'raised', palette);
+            } else {
+                this._drawArmAndHand(-1, 'raised', palette);
+                this._drawArmAndHand(1, 'raised', palette);
+            }
+        } else if (isRaised) {
+            // Both arms joyfully raised celebrating or casting magic
+            this._drawArmAndHand(-1, 'raised', palette);
+            this._drawArmAndHand(1, 'raised', palette);
+        } else if (isGesturing) {
+            // Expressive gesture: left arm resting at waist, right arm gesturing toward chest/chin
+            this._drawArmAndHand(-1, 'resting', palette);
+            this._drawArmAndHand(1, 'gesturing', palette);
         } else {
-            // Natural feminine pose: slender arms gracefully bending inward to waist
-            this.ctx.beginPath();
-            this.ctx.moveTo(-10.5, 1.5);
-            this.ctx.quadraticCurveTo(-13.5, 6, -2.5, 10.5);
-            this.ctx.stroke();
+            // Natural resting pose: both arms curve gracefully to waist, hands softly meeting in front
+            this._drawArmAndHand(-1, 'resting', palette);
+            this._drawArmAndHand(1, 'resting', palette);
+        }
+    }
 
-            this.ctx.beginPath();
-            this.ctx.moveTo(10.5, 1.5);
-            this.ctx.quadraticCurveTo(13.5, 6, 2.5, 10.5);
-            this.ctx.stroke();
+    _drawArmAndHand(side, pose, palette) {
+        this.ctx.save();
+        this.ctx.scale(side, 1);
 
-            // Delicate hands folded softly together
-            this.ctx.fillStyle = armColor;
+        const skinGrad = this.ctx.createLinearGradient(10, 0, 19, 15);
+        skinGrad.addColorStop(0, '#ffffff');
+        skinGrad.addColorStop(0.4, palette.skin);
+        skinGrad.addColorStop(1, palette.skinShade);
+
+        if (pose === 'raised') {
+            // --- Raised Celebration / Pet / Magic Pose ---
+            // 1. Off-shoulder petal puff sleeve at shoulder
+            this._drawSleevePuff(palette);
+
+            // 2. Volumetric Upper arm & Forearm reaching joyfully up and outward
             this.ctx.beginPath();
-            this.ctx.ellipse(-2.2, 10.5, 2.2, 1.6, -Math.PI / 8, 0, Math.PI * 2);
-            this.ctx.ellipse(2.2, 10.5, 2.2, 1.6, Math.PI / 8, 0, Math.PI * 2);
+            // Shoulder connection
+            this.ctx.moveTo(11.2, 1.5);
+            // Inner arm contour
+            this.ctx.quadraticCurveTo(13.8, -2.5, 14.5, -11.0);
+            this.ctx.lineTo(18.0, -11.5);
+            // Outer elbow and shoulder contour (pronounced elbow curve at x = 20.8)
+            this.ctx.quadraticCurveTo(20.8, -3.5, 14.8, 2.5);
+            this.ctx.closePath();
+            this.ctx.fillStyle = skinGrad;
             this.ctx.fill();
+            this.ctx.strokeStyle = palette.skinContour;
+            this.ctx.lineWidth = 0.9;
+            this.ctx.stroke();
+
+            // Elbow blush
+            this.ctx.beginPath();
+            this.ctx.arc(18.5, -3.5, 1.8, 0, Math.PI * 2);
+            this.ctx.fillStyle = palette.skinBlush;
+            this.ctx.fill();
+
+            // Wrist starlight bracelet
+            this.ctx.beginPath();
+            this.ctx.moveTo(14.2, -11.0);
+            this.ctx.lineTo(18.2, -11.5);
+            this.ctx.strokeStyle = palette.accent;
+            this.ctx.lineWidth = 1.4;
+            this.ctx.stroke();
+
+            // 3. Open delicate fairy hand with 5 visible outstretched fingers
+            this._drawOpenHand(16.2, -12.0, palette);
+
+        } else if (pose === 'gesturing') {
+            // --- Conversational Gesture Pose (tilted hand near chest/chin) ---
+            this._drawSleevePuff(palette);
+
+            // Arm curving forward and up toward chest
+            this.ctx.beginPath();
+            this.ctx.moveTo(11.2, 1.5);
+            this.ctx.quadraticCurveTo(18.5, 4.5, 17.5, 8.5); // Elbow outward
+            this.ctx.quadraticCurveTo(13.5, 10.5, 6.8, 7.8);  // Forearm in toward chest
+            this.ctx.lineTo(5.6, 5.0);                       // Wrist
+            this.ctx.quadraticCurveTo(11.2, 6.8, 14.8, 5.2);
+            this.ctx.quadraticCurveTo(15.5, 2.2, 12.8, 1.2);
+            this.ctx.closePath();
+            this.ctx.fillStyle = skinGrad;
+            this.ctx.fill();
+            this.ctx.strokeStyle = palette.skinContour;
+            this.ctx.lineWidth = 0.9;
+            this.ctx.stroke();
+
+            // Elbow blush
+            this.ctx.beginPath();
+            this.ctx.arc(17.5, 8.0, 1.6, 0, Math.PI * 2);
+            this.ctx.fillStyle = palette.skinBlush;
+            this.ctx.fill();
+
+            // Wrist bracelet
+            this.ctx.beginPath();
+            this.ctx.moveTo(5.6, 5.0);
+            this.ctx.lineTo(6.8, 7.8);
+            this.ctx.strokeStyle = palette.accent;
+            this.ctx.lineWidth = 1.3;
+            this.ctx.stroke();
+
+            // Delicate gesturing hand with thumb and articulated fingers
+            this._drawGesturingHand(6.0, 6.2, palette);
+
+        } else {
+            // --- Natural Feminine Resting Pose ---
+            // 1. Off-shoulder petal puff sleeve at shoulder
+            this._drawSleevePuff(palette);
+
+            // 2. Volumetric Upper arm & Forearm curving gracefully from shoulder to waist
+            // Creates wide negative space between torso (x = 7.5) and elbow (x = 19.5)
+            this.ctx.beginPath();
+            // Shoulder attachment (x = 11.5, y = 2.0)
+            this.ctx.moveTo(11.5, 2.0);
+            // Outer upper arm sweeping down and outward to elbow at (x = 19.8, y = 9.5)
+            this.ctx.bezierCurveTo(15.8, 3.5, 19.8, 6.2, 19.8, 9.5);
+            // Outer forearm sweeping inward to wrist at (x = 8.0, y = 16.2)
+            this.ctx.bezierCurveTo(19.2, 12.5, 14.5, 15.5, 8.2, 16.2);
+            // Wrist outer edge
+            this.ctx.lineTo(7.2, 13.5);
+            // Inner forearm sweeping back to inner elbow at (x = 15.2, y = 8.8)
+            this.ctx.bezierCurveTo(11.5, 13.0, 14.8, 11.0, 15.2, 8.8);
+            // Inner upper arm returning to armpit/shoulder at (x = 10.2, y = 3.0)
+            this.ctx.bezierCurveTo(15.2, 6.0, 12.8, 3.8, 10.2, 3.0);
+            this.ctx.closePath();
+            this.ctx.fillStyle = skinGrad;
+            this.ctx.fill();
+            this.ctx.strokeStyle = palette.skinContour;
+            this.ctx.lineWidth = 0.9;
+            this.ctx.stroke();
+
+            // Delicate rosy blush on outer elbow curve
+            this.ctx.beginPath();
+            this.ctx.arc(19.2, 9.5, 2.0, 0, Math.PI * 2);
+            this.ctx.fillStyle = palette.skinBlush;
+            this.ctx.fill();
+
+            // Wrist gold bracelet accent
+            this.ctx.beginPath();
+            this.ctx.moveTo(8.2, 16.2);
+            this.ctx.lineTo(7.2, 13.5);
+            this.ctx.strokeStyle = palette.accent;
+            this.ctx.lineWidth = 1.3;
+            this.ctx.stroke();
+
+            // 3. Sculpted humanoid hand with thumb and 4 distinct fingers resting on skirt
+            this._drawRestingHand(7.8, 15.0, palette);
         }
 
         this.ctx.restore();
+    }
+
+    _drawSleevePuff(palette) {
+        // Delicate translucent petal puff sleeve at shoulder joint
+        this.ctx.save();
+        const puffGrad = this.ctx.createRadialGradient(11.8, 2.2, 1, 11.8, 2.2, 5.0);
+        puffGrad.addColorStop(0, '#ffffff');
+        puffGrad.addColorStop(0.5, 'rgba(216, 180, 254, 0.75)');
+        puffGrad.addColorStop(1, 'rgba(244, 114, 182, 0.55)');
+
+        this.ctx.beginPath();
+        this.ctx.ellipse(11.8, 2.4, 4.4, 3.0, Math.PI / 6, 0, Math.PI * 2);
+        this.ctx.fillStyle = puffGrad;
+        this.ctx.fill();
+        this.ctx.strokeStyle = 'rgba(255, 209, 102, 0.65)';
+        this.ctx.lineWidth = 0.8;
+        this.ctx.stroke();
+        this.ctx.restore();
+    }
+
+    _drawRestingHand(wx, wy, palette) {
+        this.ctx.save();
+        this.ctx.translate(wx, wy);
+
+        // 1. Palm volume gently angling inward toward center
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, -1.2);
+        this.ctx.quadraticCurveTo(-2.2, -1.8, -4.2, -0.6); // Thumb base
+        this.ctx.quadraticCurveTo(-4.8, 1.2, -3.8, 2.8);   // Knuckle ridge
+        this.ctx.quadraticCurveTo(-2.0, 3.2, -0.4, 2.2);   // Lower palm
+        this.ctx.quadraticCurveTo(0.2, 1.2, 0, -1.2);
+        this.ctx.closePath();
+        this.ctx.fillStyle = palette.skin;
+        this.ctx.fill();
+        this.ctx.strokeStyle = palette.skinContour;
+        this.ctx.lineWidth = 0.8;
+        this.ctx.stroke();
+
+        // 2. Distinct opposing thumb branching along upper edge with cute nail highlight
+        this.ctx.beginPath();
+        this.ctx.moveTo(-1.6, -1.0);
+        this.ctx.quadraticCurveTo(-3.2, -2.6, -4.8, -1.8);
+        this.ctx.quadraticCurveTo(-5.4, -1.0, -4.2, -0.2);
+        this.ctx.lineTo(-2.2, 0.0);
+        this.ctx.closePath();
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fill();
+        this.ctx.strokeStyle = palette.skinContour;
+        this.ctx.lineWidth = 0.7;
+        this.ctx.stroke();
+
+        // Thumb rosy tip
+        this.ctx.beginPath();
+        this.ctx.arc(-4.6, -1.4, 0.9, 0, Math.PI * 2);
+        this.ctx.fillStyle = palette.skinBlush;
+        this.ctx.fill();
+
+        // 3. Four clearly sculpted individual fingers (Index, Middle, Ring, Pinky)
+        // Index Finger
+        this._drawArticulatedFinger(-3.6, -0.2, -6.8, -0.2, 1.3, palette);
+        // Middle Finger (slightly longer)
+        this._drawArticulatedFinger(-3.4, 0.9, -7.4, 0.9, 1.3, palette);
+        // Ring Finger
+        this._drawArticulatedFinger(-3.0, 2.0, -6.8, 2.1, 1.2, palette);
+        // Pinky Finger (cute petite outer finger)
+        this._drawArticulatedFinger(-2.4, 2.9, -5.6, 3.1, 1.1, palette);
+
+        // Subtle catchlight on knuckles
+        this.ctx.beginPath();
+        this.ctx.arc(-2.4, 0.8, 0.7, 0, Math.PI * 2);
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+        this.ctx.fill();
+
+        this.ctx.restore();
+    }
+
+    _drawArticulatedFinger(x1, y1, x2, y2, width, palette) {
+        // Finger base to tip with rounded cap
+        this.ctx.beginPath();
+        this.ctx.moveTo(x1, y1);
+        this.ctx.lineTo(x2, y2);
+        this.ctx.strokeStyle = palette.skin;
+        this.ctx.lineWidth = width * 1.5;
+        this.ctx.lineCap = 'round';
+        this.ctx.stroke();
+
+        // Contour outline
+        this.ctx.beginPath();
+        this.ctx.moveTo(x1, y1);
+        this.ctx.lineTo(x2, y2);
+        this.ctx.strokeStyle = palette.skinContour;
+        this.ctx.lineWidth = 0.65;
+        this.ctx.lineCap = 'round';
+        this.ctx.stroke();
+
+        // Rosy blush on fingertip
+        this.ctx.beginPath();
+        this.ctx.arc(x2, y2, width * 0.75, 0, Math.PI * 2);
+        this.ctx.fillStyle = palette.skinBlush;
+        this.ctx.fill();
+
+        // Delicate white nail highlight
+        this.ctx.beginPath();
+        this.ctx.arc(x2 - 0.2, y2 - 0.2, width * 0.35, 0, Math.PI * 2);
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+        this.ctx.fill();
+    }
+
+    _drawOpenHand(wx, wy, palette) {
+        this.ctx.save();
+        this.ctx.translate(wx, wy);
+
+        // Palm
+        this.ctx.beginPath();
+        this.ctx.ellipse(0, -2.5, 3.0, 2.5, 0, 0, Math.PI * 2);
+        this.ctx.fillStyle = palette.skin;
+        this.ctx.fill();
+        this.ctx.strokeStyle = palette.skinContour;
+        this.ctx.lineWidth = 0.8;
+        this.ctx.stroke();
+
+        // Palm blush
+        this.ctx.beginPath();
+        this.ctx.arc(0, -2.5, 1.4, 0, Math.PI * 2);
+        this.ctx.fillStyle = palette.skinBlush;
+        this.ctx.fill();
+
+        // 5 Outstretched delicate fairy fingers pointing up and outward
+        // Thumb (inner side)
+        this._drawArticulatedFinger(-2.2, -1.8, -4.8, -4.2, 1.3, palette);
+        // Index finger
+        this._drawArticulatedFinger(-1.6, -3.6, -3.2, -9.0, 1.2, palette);
+        // Middle finger (longest)
+        this._drawArticulatedFinger(0.0, -4.2, 0.0, -10.5, 1.2, palette);
+        // Ring finger
+        this._drawArticulatedFinger(1.6, -3.8, 2.8, -9.2, 1.1, palette);
+        // Pinky (outer)
+        this._drawArticulatedFinger(2.6, -2.4, 4.6, -6.6, 1.0, palette);
+
+        // Luminous magic starlight spark at middle fingertip
+        this.ctx.beginPath();
+        this.ctx.arc(0, -11.0, 1.4, 0, Math.PI * 2);
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.shadowColor = palette.accent;
+        this.ctx.shadowBlur = 5;
+        this.ctx.fill();
+
+        this.ctx.restore();
+    }
+
+    _drawGesturingHand(wx, wy, palette) {
+        this.ctx.save();
+        this.ctx.translate(wx, wy);
+
+        // Palm tilted upward gracefully toward chest
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, 0);
+        this.ctx.quadraticCurveTo(-2.4, -1.8, -3.8, -1.2);
+        this.ctx.quadraticCurveTo(-4.8, -3.2, -3.8, -4.8);
+        this.ctx.quadraticCurveTo(-1.8, -4.0, 0, -1.5);
+        this.ctx.closePath();
+        this.ctx.fillStyle = palette.skin;
+        this.ctx.fill();
+        this.ctx.strokeStyle = palette.skinContour;
+        this.ctx.lineWidth = 0.8;
+        this.ctx.stroke();
+
+        // Opposing thumb
+        this.ctx.beginPath();
+        this.ctx.moveTo(-1.4, -0.6);
+        this.ctx.quadraticCurveTo(-3.0, -0.8, -3.8, 0.4);
+        this.ctx.lineTo(-2.4, 0.8);
+        this.ctx.closePath();
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fill();
+        this.ctx.strokeStyle = palette.skinContour;
+        this.ctx.lineWidth = 0.65;
+        this.ctx.stroke();
+
+        // Articulated gesturing fingers pointing up toward chin
+        this._drawArticulatedFinger(-2.8, -2.0, -4.2, -6.5, 1.2, palette);
+        this._drawArticulatedFinger(-1.8, -2.0, -2.8, -5.8, 1.2, palette);
+        this._drawArticulatedFinger(-1.0, -1.6, -1.8, -4.2, 1.1, palette);
+
+        // Rosy blush on palm
+        this.ctx.beginPath();
+        this.ctx.arc(-2.5, -2.5, 1.4, 0, Math.PI * 2);
+        this.ctx.fillStyle = palette.skinBlush;
+        this.ctx.fill();
+
+        this.ctx.restore();
+    }
+
+    _drawFinger(x1, y1, x2, y2, width, palette) {
+        // Compatibility alias pointing to _drawArticulatedFinger
+        this._drawArticulatedFinger(x1, y1, x2, y2, width, palette);
     }
 
     _renderFairyTorso(palette) {
@@ -1343,7 +1891,10 @@ class CelestialFamiliarRenderer {
         const eyeLookY = this.state.currentEyeY * 2.2;
 
         const isHappySmile = (this.state.emotion === 'happy' || this.state.emotion === 'pet');
-        const blinkFactor = (this.state.emotion === 'sleep') ? 0.05 : Math.max(0.08, 1 - Math.abs(this.state.blinkProgress));
+        let blinkFactor = (this.state.emotion === 'sleep') ? 0.05 : Math.max(0.08, 1 - Math.abs(this.state.blinkProgress));
+        if (this.state.emotion === 'surprised') {
+            blinkFactor = 1.25; // Wide open surprised anime eyes
+        }
 
         if (isHappySmile && this.state.emotion === 'pet') {
             // Joyful curved happy anime eyes (^‿^) during petting
@@ -1464,6 +2015,12 @@ class CelestialFamiliarRenderer {
             // Joyful open smile
             this.ctx.beginPath();
             this.ctx.arc(0, headY + 9, 3.8, 0.15 * Math.PI, 0.85 * Math.PI);
+            this.ctx.stroke();
+        } else if (this.state.emotion === 'surprised') {
+            // Surprised cute rounded 'o' mouth
+            this.ctx.beginPath();
+            this.ctx.ellipse(0, headY + 11, 2.4, 3.2, 0, 0, Math.PI * 2);
+            this.ctx.fill();
             this.ctx.stroke();
         } else if (this.state.emotion === 'worried') {
             // Concerned soft pout

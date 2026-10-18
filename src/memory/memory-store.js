@@ -10,7 +10,9 @@ const { MemoryMigrator } = require('./memory-migrator.js');
 const {
     MEMORY_CATEGORIES,
     MEMORY_TYPES,
+    PROJECT_STAGES,
     MEMORY_SOURCES,
+    normalizeProjectKey,
     redactSecrets,
     hasSecretLikeContent,
     assertStorageIsolation
@@ -25,6 +27,9 @@ class MemoryStore {
         this.sqliteActive = Boolean(this.sqliteAdapter && this.sqliteAdapter.initialized);
         this.migrationReport = null;
         this.memories = [];
+        this.projectSnapshots = new Map();
+        this.corruptBackupPath = null;
+        this.loadFailed = false;
         this.loaded = false;
 
         this._ensureDir();
@@ -57,7 +62,21 @@ class MemoryStore {
             if (Array.isArray(all)) {
                 this.memories = all;
             }
+
+            // Sync project snapshots from SQLite
+            try {
+                const snapshots = this.sqliteAdapter.listProjectSnapshots();
+                if (Array.isArray(snapshots)) {
+                    for (const s of snapshots) {
+                        if (s && s.projectId) {
+                            this.projectSnapshots.set(s.projectId, s);
+                        }
+                    }
+                }
+            } catch {}
+
             this.sqliteActive = true;
+            this._cleanupOrphanedTempFiles();
             return true;
         } catch (err) {
             console.warn('[MemoryStore] SQLite initialization failed, falling back to JSON store:', err.message);
@@ -75,16 +94,41 @@ class MemoryStore {
     load() {
         try {
             if (fs.existsSync(this.filePath)) {
-                const data = JSON.parse(fs.readFileSync(this.filePath, 'utf8'));
+                const raw = fs.readFileSync(this.filePath, 'utf8');
+                let data = null;
+                try {
+                    data = JSON.parse(raw);
+                } catch (parseErr) {
+                    console.error('Failed to parse memory store JSON, backing up corrupted file to preserve data:', parseErr.message);
+                    const corruptBackup = `${this.filePath}.corrupt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+                    try {
+                        fs.copyFileSync(this.filePath, corruptBackup);
+                        this.corruptBackupPath = corruptBackup;
+                    } catch {}
+                    this.loadFailed = true;
+                    this.memories = [];
+                    this.loaded = true;
+                    return;
+                }
+
                 this.memories = Array.isArray(data.memories) ? data.memories : [];
+                if (Array.isArray(data.projectSnapshots)) {
+                    for (const s of data.projectSnapshots) {
+                        if (s && s.projectId) {
+                            this.projectSnapshots.set(s.projectId, s);
+                        }
+                    }
+                }
                 if (typeof data.longTermEnabled === 'boolean') {
                     this.longTermEnabled = data.longTermEnabled;
                 }
+                this.loadFailed = false;
             } else {
                 this.memories = [];
             }
             this.loaded = true;
             this.purgeExpired();
+            this._cleanupOrphanedTempFiles();
         } catch (err) {
             console.error('Failed to load memory store from disk:', err.message);
             this.memories = [];
@@ -93,6 +137,10 @@ class MemoryStore {
     }
 
     save() {
+        if (this.loadFailed) {
+            console.warn('[MemoryStore] Skipping save to prevent overwriting corrupted store that has not been recovered.');
+            return false;
+        }
         let tempPath = null;
         let success = false;
         try {
@@ -101,7 +149,8 @@ class MemoryStore {
                 version: 2,
                 updatedAt: new Date().toISOString(),
                 longTermEnabled: this.longTermEnabled,
-                memories: this.memories
+                memories: this.memories,
+                projectSnapshots: Array.from(this.projectSnapshots.values())
             };
             tempPath = `${this.filePath}.tmp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
             fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), 'utf8');
@@ -116,6 +165,31 @@ class MemoryStore {
                 try { fs.unlinkSync(tempPath); } catch {}
             }
         }
+    }
+
+    /**
+     * Safely sweep orphaned .tmp_* files left behind by prior crashes or aborted test writes
+     */
+    _cleanupOrphanedTempFiles() {
+        try {
+            const dir = this.memoryDir || path.dirname(this.filePath);
+            if (!fs.existsSync(dir)) return;
+            const base = path.basename(this.filePath);
+            const prefix = `${base}.tmp_`;
+            const files = fs.readdirSync(dir);
+            const now = Date.now();
+            for (const file of files) {
+                if (file.startsWith(prefix)) {
+                    const fullPath = path.join(dir, file);
+                    try {
+                        const stat = fs.statSync(fullPath);
+                        if (now - stat.mtimeMs > 60000) {
+                            fs.unlinkSync(fullPath);
+                        }
+                    } catch (_) {}
+                }
+            }
+        } catch (_) {}
     }
 
     isLongTermMemoryEnabled() {
@@ -169,12 +243,53 @@ class MemoryStore {
 
         // Secret protection: Redact API keys / credentials before storage
         const cleanContent = redactSecrets(content.trim());
+        const cleanKey = key ? key.trim().toLowerCase() : '';
+        const reqProjectId = (metadata && metadata.projectId) ? String(metadata.projectId).trim().toLowerCase() : '';
 
-        // Check for conflicting memory with same key in user_approved
+        // Deduplication Check (Section 4 & Acceptance Criterion 6)
+        // If an active memory with identical content already exists in the same category (and same key/projectId),
+        // update its timestamp and observation frequency rather than creating redundant duplicates.
+        const duplicate = this.memories.find((m) => {
+            if (m.status !== 'active') return false;
+            if (m.category !== category) return false;
+            if (m.content !== cleanContent) return false;
+
+            const mProj = (m.metadata && m.metadata.projectId) ? String(m.metadata.projectId).trim().toLowerCase() : '';
+            if (reqProjectId !== mProj) return false;
+
+            if (cleanKey && m.key && cleanKey !== m.key) return false;
+            return true;
+        });
+
+        if (duplicate) {
+            const now = new Date().toISOString();
+            duplicate.updatedAt = now;
+            duplicate.importance = Math.max(duplicate.importance, Math.max(1, Math.min(5, Number(importance) || 1)));
+            if (!duplicate.metadata) duplicate.metadata = {};
+            duplicate.metadata.occurrenceCount = (duplicate.metadata.occurrenceCount || 1) + 1;
+            duplicate.metadata.lastObservedAt = now;
+            if (metadata && typeof metadata === 'object') {
+                duplicate.metadata = { ...duplicate.metadata, ...metadata };
+            }
+            this.save();
+            if (this.sqliteActive && this.sqliteAdapter) {
+                try {
+                    this.sqliteAdapter.updateMemory(duplicate.id, {
+                        importance: duplicate.importance,
+                        metadata: duplicate.metadata
+                    });
+                } catch (err) {
+                    console.warn('[MemoryStore] Failed to update deduplicated memory in SQLite:', err.message);
+                }
+            }
+            return { ...duplicate, deduplicated: true };
+        }
+
+        // Check for conflicting memory with same key in user_approved or project
         let conflictDetected = false;
         let existingId = null;
-        if (key && (category === MEMORY_CATEGORIES.USER_APPROVED || category === MEMORY_CATEGORIES.PROJECT)) {
-            const existing = this.memories.find((m) => m.category === category && m.key === key && m.status !== 'deleted');
+        if (cleanKey && (category === MEMORY_CATEGORIES.USER_APPROVED || category === MEMORY_CATEGORIES.PROJECT)) {
+            const existing = this.memories.find((m) => m.category === category && m.key === cleanKey && m.status !== 'deleted' && m.status !== 'superseded');
             if (existing) {
                 if (existing.content !== cleanContent) {
                     conflictDetected = true;
@@ -189,7 +304,7 @@ class MemoryStore {
         const memoryRecord = {
             id: `mem_${randomUUID().slice(0, 8)}`,
             category,
-            key: key.trim().toLowerCase(),
+            key: cleanKey,
             content: cleanContent,
             type,
             source,
@@ -201,7 +316,7 @@ class MemoryStore {
             expiresAt: (category === MEMORY_CATEGORIES.WORKING_DATA && ttlMs)
                 ? new Date(Date.now() + Number(ttlMs)).toISOString()
                 : null,
-            metadata: { ...metadata, conflictDetected, previousId: existingId }
+            metadata: { ...metadata, conflictDetected, previousId: existingId, occurrenceCount: 1 }
         };
 
         this.memories.push(memoryRecord);
@@ -227,14 +342,32 @@ class MemoryStore {
             query = '',
             limit = 20,
             includeExpired = false,
-            status = 'active'
+            status = 'active',
+            includeSuperseded = false,
+            projectId = null,
+            includePreferences = false
         } = opts;
 
         let pool = this.memories.filter((m) => {
-            if (status && m.status !== status && m.status !== 'conflict') return false;
+            if (!includeSuperseded && (m.status === 'superseded' || m.type === MEMORY_TYPES.SUPERSEDED)) return false;
+            if (status && m.status !== status && m.status !== 'conflict' && (!includeSuperseded || m.status !== 'superseded')) return false;
             if (category && m.category !== category) return false;
             // Respect disabled long-term memory
             if (!this.longTermEnabled && m.category === MEMORY_CATEGORIES.USER_APPROVED) return false;
+
+            if (projectId) {
+                const norm = String(projectId).trim().toLowerCase();
+                const matchesProject = (m.metadata && m.metadata.projectId && String(m.metadata.projectId).toLowerCase() === norm) ||
+                    (m.key && m.key.toLowerCase().includes(norm)) ||
+                    (m.tags && Array.isArray(m.tags) && m.tags.some((t) => String(t).toLowerCase() === norm));
+                if (!matchesProject) {
+                    if (includePreferences && (m.category === MEMORY_CATEGORIES.USER_APPROVED || m.type === MEMORY_TYPES.CONFIRMED_FACT)) {
+                        return true;
+                    }
+                    return false;
+                }
+            }
+
             return true;
         });
 
@@ -293,6 +426,12 @@ class MemoryStore {
         }
         if (updateObj.key) {
             memory.key = updateObj.key.trim().toLowerCase();
+        }
+        if (updateObj.importance !== undefined && updateObj.importance !== null) {
+            memory.importance = Math.max(1, Math.min(5, Number(updateObj.importance) || 1));
+        }
+        if (updateObj.metadata && typeof updateObj.metadata === 'object') {
+            memory.metadata = { ...(memory.metadata || {}), ...updateObj.metadata };
         }
 
         memory.updatedAt = new Date().toISOString();
@@ -431,6 +570,348 @@ class MemoryStore {
         }
     }
 
+    /**
+     * Mark an existing memory (e.g. prior architecture decision or preference)
+     * as superseded by a new decision, preserving historical record without active retrieval pollution.
+     * @param {string} oldIdOrKey 
+     * @param {Object} newEntry 
+     * @returns {{ ok: boolean, oldRecord: Object, newRecord: Object }}
+     */
+    supersedeMemory(oldIdOrKey, newEntry = {}) {
+        if (!oldIdOrKey || typeof oldIdOrKey !== 'string') {
+            throw new Error('Valid oldIdOrKey required to supersede a memory');
+        }
+        const lookup = oldIdOrKey.trim().toLowerCase();
+        const oldMemory = this.memories.find((m) => m.id === oldIdOrKey || (m.key && m.key.toLowerCase() === lookup));
+        if (!oldMemory) {
+            throw new Error(`Target memory record to supersede '${oldIdOrKey}' not found`);
+        }
+
+        const now = new Date().toISOString();
+
+        // 1. Add the new superseding memory
+        const newRecord = this.addMemory({
+            category: newEntry.category || oldMemory.category,
+            key: newEntry.key || oldMemory.key,
+            content: newEntry.content || '',
+            type: newEntry.type || MEMORY_TYPES.PROJECT_DECISION,
+            source: newEntry.source || MEMORY_SOURCES.USER_EXPLICIT,
+            tags: newEntry.tags || oldMemory.tags,
+            importance: newEntry.importance || oldMemory.importance,
+            metadata: {
+                ...(newEntry.metadata || {}),
+                supersedes: oldMemory.id,
+                projectId: newEntry.projectId || oldMemory.metadata?.projectId || ''
+            }
+        });
+
+        // 2. Mark the old memory as superseded
+        oldMemory.status = 'superseded';
+        oldMemory.type = MEMORY_TYPES.SUPERSEDED;
+        oldMemory.updatedAt = now;
+        if (!oldMemory.metadata) oldMemory.metadata = {};
+        oldMemory.metadata.supersededAt = now;
+        oldMemory.metadata.supersededBy = newRecord.id;
+
+        this.save();
+
+        if (this.sqliteActive && this.sqliteAdapter) {
+            try {
+                this.sqliteAdapter.updateMemory(oldMemory.id, {
+                    status: 'superseded',
+                    type: MEMORY_TYPES.SUPERSEDED,
+                    metadata: oldMemory.metadata
+                });
+            } catch (err) {
+                console.warn('[MemoryStore] Failed to update superseded memory in SQLite:', err.message);
+            }
+        }
+
+        return {
+            ok: true,
+            oldRecord: oldMemory,
+            newRecord
+        };
+    }
+
+    /**
+     * Save a structured project snapshot for project continuity
+     * @param {string} projectId 
+     * @param {Object} snapshot 
+     */
+    saveProjectSnapshot(projectId, snapshot = {}) {
+        if (!projectId || typeof projectId !== 'string' || !projectId.trim()) {
+            throw new Error('Valid projectId is required to save a project snapshot');
+        }
+        const cleanProjectId = normalizeProjectKey(projectId);
+        const now = new Date().toISOString();
+
+        const fullSnapshot = {
+            projectId: cleanProjectId,
+            objective: snapshot.objective || '',
+            architecture: snapshot.architecture || '',
+            techStack: snapshot.techStack || '',
+            stage: Object.values(PROJECT_STAGES).includes(snapshot.stage) ? snapshot.stage : PROJECT_STAGES.PROPOSED,
+            acceptedDecisions: Array.isArray(snapshot.acceptedDecisions) ? snapshot.acceptedDecisions : [],
+            rejectedDecisions: Array.isArray(snapshot.rejectedDecisions) ? snapshot.rejectedDecisions : [],
+            lastProgress: snapshot.lastProgress || '',
+            outstandingTasks: Array.isArray(snapshot.outstandingTasks) ? snapshot.outstandingTasks : [],
+            blockers: Array.isArray(snapshot.blockers) ? snapshot.blockers : [],
+            docReferences: Array.isArray(snapshot.docReferences) ? snapshot.docReferences : [],
+            verifiedStatus: snapshot.verifiedStatus || 'unverified',
+            createdAt: snapshot.createdAt || now,
+            updatedAt: now
+        };
+
+        this.projectSnapshots.set(cleanProjectId, fullSnapshot);
+
+        // Also ensure a corresponding project memory record exists for lexical search
+        const contentSummary = `Project [${cleanProjectId}] Objective: ${fullSnapshot.objective}. Architecture: ${fullSnapshot.architecture}. Tech Stack: ${fullSnapshot.techStack}. Stage: ${fullSnapshot.stage}. Decisions: ${fullSnapshot.acceptedDecisions.join('; ')}. Tasks: ${fullSnapshot.outstandingTasks.join('; ')}`;
+
+        const existingMem = this.memories.find((m) => m.category === MEMORY_CATEGORIES.PROJECT && m.key === `snapshot_${cleanProjectId}`);
+        if (existingMem) {
+            this.updateMemory(existingMem.id, {
+                content: contentSummary,
+                type: MEMORY_TYPES.PROJECT_SNAPSHOT,
+                metadata: { projectId: cleanProjectId, snapshot: fullSnapshot }
+            });
+        } else {
+            this.addMemory({
+                category: MEMORY_CATEGORIES.PROJECT,
+                key: `snapshot_${cleanProjectId}`,
+                content: contentSummary,
+                type: MEMORY_TYPES.PROJECT_SNAPSHOT,
+                source: MEMORY_SOURCES.USER_EXPLICIT,
+                metadata: { projectId: cleanProjectId, snapshot: fullSnapshot }
+            });
+        }
+
+        this.save();
+
+        if (this.sqliteActive && this.sqliteAdapter) {
+            try {
+                this.sqliteAdapter.saveProjectSnapshot(fullSnapshot);
+            } catch (err) {
+                console.warn('[MemoryStore] Failed to save project snapshot in SQLite:', err.message);
+            }
+        }
+
+        return fullSnapshot;
+    }
+
+    /**
+     * Retrieve a project snapshot by project ID
+     * @param {string} projectId 
+     */
+    getProjectSnapshot(projectId) {
+        if (!projectId || typeof projectId !== 'string') return null;
+        const cleanProjectId = normalizeProjectKey(projectId);
+
+        if (this.sqliteActive && this.sqliteAdapter) {
+            try {
+                const snap = this.sqliteAdapter.getProjectSnapshot(cleanProjectId);
+                if (snap) return snap;
+            } catch {}
+        }
+
+        if (this.projectSnapshots.has(cleanProjectId)) {
+            return this.projectSnapshots.get(cleanProjectId);
+        }
+
+        // Fallback to checking memory metadata
+        const mem = this.memories.find((m) => m.category === MEMORY_CATEGORIES.PROJECT && m.key === `snapshot_${cleanProjectId}`);
+        if (mem && mem.metadata && mem.metadata.snapshot) {
+            return mem.metadata.snapshot;
+        }
+
+        return null;
+    }
+
+    /**
+     * List all known projects
+     */
+    listProjects() {
+        const set = new Set();
+        for (const pid of this.projectSnapshots.keys()) {
+            set.add(pid);
+        }
+        for (const m of this.memories) {
+            if (m.metadata && m.metadata.projectId) {
+                set.add(String(m.metadata.projectId).toLowerCase().trim());
+            }
+            if (m.key && m.key.startsWith('snapshot_')) {
+                set.add(m.key.replace(/^snapshot_/, ''));
+            }
+        }
+        if (this.sqliteActive && this.sqliteAdapter) {
+            try {
+                const list = this.sqliteAdapter.listProjectSnapshots();
+                for (const s of list) {
+                    if (s.projectId) set.add(String(s.projectId).toLowerCase().trim());
+                }
+            } catch {}
+        }
+        return Array.from(set).filter(Boolean);
+    }
+
+    /**
+     * Delete a project snapshot
+     * @param {string} projectId 
+     */
+    deleteProjectSnapshot(projectId) {
+        if (!projectId) return false;
+        const clean = normalizeProjectKey(projectId);
+        this.projectSnapshots.delete(clean);
+        this.deleteMemory(`snapshot_${clean}`);
+        if (this.sqliteActive && this.sqliteAdapter) {
+            try {
+                this.sqliteAdapter.deleteProjectSnapshot(clean);
+            } catch {}
+        }
+        this.save();
+        return true;
+    }
+
+    /**
+     * Export memory store into a versioned JSON payload
+     */
+    exportData() {
+        const cleanMemories = this.memories.map((m) => ({
+            ...m,
+            content: redactSecrets(m.content)
+        }));
+
+        const snapshots = [];
+        for (const s of this.projectSnapshots.values()) {
+            snapshots.push(s);
+        }
+
+        return {
+            schemaVersion: 2,
+            exportedAt: new Date().toISOString(),
+            longTermEnabled: this.longTermEnabled,
+            summary: this.getSummary(),
+            memories: cleanMemories,
+            projectSnapshots: snapshots
+        };
+    }
+
+    /**
+     * Import memory data from JSON payload
+     * @param {Object} payload 
+     * @param {{ merge?: boolean }} options 
+     */
+    importData(payload = {}, options = {}) {
+        if (!payload || typeof payload !== 'object') {
+            throw new Error('Invalid import payload: must be an object');
+        }
+        if (!Array.isArray(payload.memories)) {
+            throw new Error('Invalid import payload: missing memories array');
+        }
+
+        const merge = Boolean(options.merge);
+        const imported = [];
+
+        if (!merge) {
+            // Replace completely
+            this.memories = [];
+            this.projectSnapshots.clear();
+            if (this.sqliteActive && this.sqliteAdapter) {
+                try {
+                    for (const cat of Object.values(MEMORY_CATEGORIES)) {
+                        this.sqliteAdapter.clearCategory(cat);
+                    }
+                } catch {}
+            }
+        }
+
+        // Import project snapshots if present
+        if (Array.isArray(payload.projectSnapshots)) {
+            for (const s of payload.projectSnapshots) {
+                if (s && s.projectId) {
+                    this.saveProjectSnapshot(s.projectId, s);
+                }
+            }
+        }
+
+        for (const item of payload.memories) {
+            if (!item || !item.content) continue;
+            try {
+                const added = this.addMemory({
+                    category: item.category || MEMORY_CATEGORIES.WORKING_DATA,
+                    key: item.key || '',
+                    content: item.content,
+                    type: item.type || MEMORY_TYPES.CONFIRMED_FACT,
+                    source: item.source || MEMORY_SOURCES.USER_EXPLICIT,
+                    tags: item.tags || [],
+                    importance: item.importance || 1,
+                    metadata: item.metadata || {}
+                });
+                imported.push(added);
+            } catch (err) {
+                console.warn('[MemoryStore] Skipped invalid item during import:', err.message);
+            }
+        }
+
+        if (typeof payload.longTermEnabled === 'boolean') {
+            this.longTermEnabled = payload.longTermEnabled;
+        }
+
+        this.save();
+        return {
+            ok: true,
+            merge,
+            importedCount: imported.length,
+            totalCount: this.memories.length
+        };
+    }
+
+    /**
+     * Create an atomic filesystem backup of memory store
+     */
+    createBackup() {
+        this._ensureDir();
+        const backupDir = path.join(this.memoryDir, 'backups');
+        if (!fs.existsSync(backupDir)) {
+            fs.mkdirSync(backupDir, { recursive: true });
+        }
+
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const backupJsonPath = path.join(backupDir, `memory-backup-${timestamp}.json`);
+
+        const exportPayload = this.exportData();
+        fs.writeFileSync(backupJsonPath, JSON.stringify(exportPayload, null, 2), 'utf8');
+
+        let backupSqlitePath = null;
+        if (this.sqliteActive && this.sqliteAdapter && fs.existsSync(this.sqliteAdapter.dbPath)) {
+            backupSqlitePath = path.join(backupDir, `memory-db-${timestamp}.sqlite`);
+            try {
+                fs.copyFileSync(this.sqliteAdapter.dbPath, backupSqlitePath);
+            } catch {}
+        }
+
+        return {
+            ok: true,
+            backupPath: backupJsonPath,
+            sqliteBackupPath: backupSqlitePath,
+            timestamp
+        };
+    }
+
+    /**
+     * Restore from a backup file
+     * @param {string} backupFilePath 
+     */
+    restoreBackup(backupFilePath) {
+        if (!backupFilePath || typeof backupFilePath !== 'string' || !fs.existsSync(backupFilePath)) {
+            throw new Error(`Backup file not found: ${backupFilePath}`);
+        }
+
+        const raw = fs.readFileSync(backupFilePath, 'utf8');
+        const payload = JSON.parse(raw);
+        return this.importData(payload, { merge: false });
+    }
+
     getSummary() {
         const counts = {};
         for (const cat of Object.values(MEMORY_CATEGORIES)) {
@@ -444,6 +925,7 @@ class MemoryStore {
             totalCount: this.memories.length,
             longTermEnabled: this.longTermEnabled,
             categories: counts,
+            projectSnapshotsCount: this.projectSnapshots.size,
             sqliteActive: this.sqliteActive
         };
     }
@@ -464,7 +946,9 @@ class MemoryStore {
 module.exports = {
     MEMORY_CATEGORIES,
     MEMORY_TYPES,
+    PROJECT_STAGES,
     MEMORY_SOURCES,
+    normalizeProjectKey,
     MemoryStore,
     redactSecrets,
     hasSecretLikeContent

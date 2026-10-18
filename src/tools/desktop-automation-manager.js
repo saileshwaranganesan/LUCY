@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { ensureWorkerBuilt, exeFile, resolveExeFile } = require('./native-uia/build-worker.js');
+const { AUTOMATION_TIERS, INTERACTION_MODES, getActionCapability } = require('./automation-tier-policy.js');
 
 /**
  * Standard safe executable allowlist for desktop automation.
@@ -150,6 +151,17 @@ class DesktopAutomationManager {
         this.readyPromise = null;
         this.trackedApps = new Map(); // appId -> { pid, exe, windowTitle, launchedAt }
         this.isDestroyed = false;
+        this.interactionMode = options.interactionMode || INTERACTION_MODES.NON_INTRUSIVE;
+    }
+
+    setInteractionMode(mode) {
+        if (Object.values(INTERACTION_MODES).includes(mode)) {
+            this.interactionMode = mode;
+        }
+    }
+
+    getInteractionMode() {
+        return this.interactionMode;
     }
 
     /**
@@ -448,12 +460,139 @@ class DesktopAutomationManager {
     }
 
     /**
+     * Look up an explicitly tracked application by target specifier (appId, PID, window handle, or unique name).
+     * @param {string|number|Object} target
+     * @returns {Object|null|{ambiguous: boolean, matches: Array}}
+     */
+    getTrackedApp(target) {
+        if (!target) return null;
+
+        // Direct appId match in Map
+        if (typeof target === 'string' && this.trackedApps.has(target)) {
+            const app = this.trackedApps.get(target);
+            return app.lifecycleState === 'active' ? app : null;
+        }
+
+        // Numeric PID match
+        if (typeof target === 'number') {
+            for (const app of this.trackedApps.values()) {
+                if (app.pid === target && app.lifecycleState === 'active') {
+                    return app;
+                }
+            }
+            return null;
+        }
+
+        // Object target with appId, pid, or windowHandle
+        if (typeof target === 'object') {
+            if (target.appId && this.trackedApps.has(target.appId)) {
+                const app = this.trackedApps.get(target.appId);
+                return app.lifecycleState === 'active' ? app : null;
+            }
+            if (target.pid) {
+                for (const app of this.trackedApps.values()) {
+                    if (app.pid === target.pid && app.lifecycleState === 'active') {
+                        return app;
+                    }
+                }
+            }
+            if (target.windowHandle) {
+                for (const app of this.trackedApps.values()) {
+                    if (app.windowHandle === target.windowHandle && app.lifecycleState === 'active') {
+                        return app;
+                    }
+                }
+            }
+            return null;
+        }
+
+        // String name, executable, or window title match
+        if (typeof target === 'string') {
+            const clean = target.toLowerCase().trim();
+            const matching = [];
+            for (const app of this.trackedApps.values()) {
+                if (app.lifecycleState !== 'active') continue;
+                const exeBase = path.basename(app.exe || '').toLowerCase();
+                const title = (app.windowTitle || '').toLowerCase();
+                if (app.appId.toLowerCase() === clean ||
+                    exeBase.replace(/\.exe$/, '') === clean.replace(/\.exe$/, '') ||
+                    exeBase === clean ||
+                    title.includes(clean)) {
+                    matching.push(app);
+                }
+            }
+            if (matching.length === 1) {
+                return matching[0];
+            }
+            if (matching.length > 1) {
+                return { ambiguous: true, matches: matching };
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Determine if an application was launched by Lucy and is owned by the current task/session.
+     * @param {string|number|Object} target
+     * @param {string} [taskId]
+     * @returns {boolean}
+     */
+    isOwnedByLucy(target, taskId = null) {
+        const app = this.getTrackedApp(target);
+        if (!app || app.ambiguous || !app.launchedByLucy || app.lifecycleState !== 'active') {
+            return false;
+        }
+        if (taskId && app.taskId && app.taskId !== taskId) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Assert that Lucy owns the specified application before authorizing destructive or state-modifying actions.
+     * @param {string|number|Object} target
+     * @param {Object} [options]
+     * @param {string} [options.taskId]
+     * @param {string} [options.action]
+     * @returns {Object} Verified tracked application record
+     */
+    assertOwnership(target, options = {}) {
+        const app = this.getTrackedApp(target);
+        if (app && app.ambiguous) {
+            const err = new Error(`Ambiguous application target '${JSON.stringify(target)}': Multiple active instances match. Specify exact appId or PID.`);
+            err.code = 'AMBIGUOUS_APPLICATION_OWNERSHIP';
+            throw err;
+        }
+        if (!app || !app.launchedByLucy || app.lifecycleState !== 'active') {
+            const err = new Error(`Application ownership verification failed: Lucy did not launch '${JSON.stringify(target)}'. Cannot perform destructive or state-modifying action on unowned user application.`);
+            err.code = 'UNAUTHORIZED_RESOURCE_ACCESS';
+            throw err;
+        }
+        if (options.taskId && app.taskId && app.taskId !== options.taskId) {
+            const err = new Error(`Task isolation violation: Application '${app.appId}' belongs to task '${app.taskId}', not current task '${options.taskId}'.`);
+            err.code = 'TASK_BOUNDARY_VIOLATION';
+            throw err;
+        }
+        return app;
+    }
+
+    /**
      * Launch an authorized Windows application with strict validation and outcome verification.
      * @param {string} exeTarget - Application identifier or executable path
      * @param {string|Array<string>} rawArgs - Optional application arguments
+     * @param {Object} [options]
+     * @param {string} [options.taskId] - Task or execution ID owning this application
+     * @param {AbortSignal} [options.signal] - Optional cancellation signal
      * @returns {Promise<Object>} Process and window launch result
      */
-    async launchApp(exeTarget, rawArgs = '') {
+    async launchApp(exeTarget, rawArgs = '', options = {}) {
+        if (options.signal && options.signal.aborted) {
+            const err = new Error('Application launch cancelled before process creation.');
+            err.code = 'CANCELLED';
+            throw err;
+        }
+
         const validation = this.validateExecutable(exeTarget);
         const validatedArgs = this.validateArguments(validation.resolvedPath, rawArgs);
 
@@ -478,12 +617,23 @@ class DesktopAutomationManager {
             throw launchErr;
         }
 
-        this.trackedApps.set(result.appId, {
+        const trackedRecord = {
+            resourceId: `res_${result.pid}_${Date.now()}`,
+            appId: result.appId,
             pid: result.pid,
+            processStartTime: result.processStartTime || null,
+            windowHandle: result.windowHandle || 0,
             exe: validation.resolvedPath,
             windowTitle: result.windowTitle || '',
-            launchedAt: new Date().toISOString()
-        });
+            launchedByLucy: true,
+            ownershipState: 'OWNED',
+            taskId: options.taskId || null,
+            canCleanup: true,
+            launchedAt: new Date().toISOString(),
+            lifecycleState: 'active'
+        };
+
+        this.trackedApps.set(result.appId, trackedRecord);
 
         return {
             ok: true,
@@ -492,6 +642,10 @@ class DesktopAutomationManager {
             pid: result.pid,
             exe: validation.resolvedPath,
             windowTitle: result.windowTitle || '',
+            windowHandle: result.windowHandle || 0,
+            processStartTime: result.processStartTime || null,
+            taskId: trackedRecord.taskId,
+            ownership: 'OWNED',
             verification: {
                 verified: true,
                 method: 'process_and_window_verification'
@@ -500,9 +654,27 @@ class DesktopAutomationManager {
     }
 
     /**
+     * Bring an existing application window into focus and restore it to foreground.
+     */
+    async focusWindow(target, options = {}) {
+        if (options.signal && options.signal.aborted) {
+            const err = new Error('Window focus operation cancelled.');
+            err.code = 'CANCELLED';
+            throw err;
+        }
+        const payload = this._resolveTargetPayload(target);
+        return await this.sendCommand('focus_window', payload);
+    }
+
+    /**
      * Inspect the UI Automation accessibility tree of an application.
      */
     async inspectUI(target, options = {}) {
+        if (options.signal && options.signal.aborted) {
+            const err = new Error('UI inspection cancelled.');
+            err.code = 'CANCELLED';
+            throw err;
+        }
         const payload = this._resolveTargetPayload(target);
         payload.maxDepth = options.maxDepth || 3;
 
@@ -512,7 +684,12 @@ class DesktopAutomationManager {
     /**
      * Find a specific UI control by accessible name, automationId, or controlType.
      */
-    async findElement(target, query = {}) {
+    async findElement(target, query = {}, options = {}) {
+        if (options.signal && options.signal.aborted) {
+            const err = new Error('Element search cancelled.');
+            err.code = 'CANCELLED';
+            throw err;
+        }
         const payload = this._resolveTargetPayload(target);
         if (query.name) payload.name = query.name;
         if (query.automationId) payload.automationId = query.automationId;
@@ -522,61 +699,151 @@ class DesktopAutomationManager {
     }
 
     /**
-     * Type text into an editable Document or Edit control, verifying result.
+     * Type text into an editable Document or Edit control, verifying result and preventing focus hijacking.
      */
     async typeText(target, text, options = {}) {
+        if (options.signal && options.signal.aborted) {
+            const err = new Error('Text input cancelled before execution.');
+            err.code = 'CANCELLED';
+            throw err;
+        }
+
         if (typeof text !== 'string') {
             throw new Error('Text parameter must be a string');
         }
 
         const payload = this._resolveTargetPayload(target);
         payload.text = text;
+        payload.preferBackground = options.preferBackground !== false;
+        payload.allowPhysicalFallback = options.allowPhysicalFallback !== undefined
+            ? Boolean(options.allowPhysicalFallback)
+            : (this.interactionMode === INTERACTION_MODES.FOREGROUND_REQUIRED);
 
-        const result = await this.sendCommand('type_text', payload);
-        return {
-            success: Boolean(result && result.verified),
-            verified: Boolean(result && result.verified),
-            readText: result?.readText || '',
-            controlName: result?.controlName || '',
-            controlType: result?.controlType || '',
-            method: result?.method || 'ValuePattern'
-        };
+        try {
+            const result = await this.sendCommand('type_text', payload);
+            return {
+                success: Boolean(result && result.verified),
+                verified: Boolean(result && result.verified),
+                readText: result?.readText || '',
+                controlName: result?.controlName || '',
+                controlType: result?.controlType || '',
+                method: result?.method || 'ValuePattern',
+                tier: result?.tier || 3,
+                tierName: result?.tierName || (result?.tier === 4 ? 'Tier 4 — Physical mouse/keyboard fallback' : 'Tier 3 — Windows UI Automation'),
+                physicalInputUsed: Boolean(result?.physicalInputUsed),
+                background: Boolean(result?.background)
+            };
+        } catch (err) {
+            if (err.message && err.message.includes('FOCUS_VERIFICATION_FAILED')) {
+                return {
+                    success: false,
+                    verified: false,
+                    error: err.message,
+                    reason: 'TARGET_FOCUS_LOST',
+                    tier: 4,
+                    tierName: 'Tier 4 — Physical mouse/keyboard fallback',
+                    physicalInputUsed: false
+                };
+            }
+            if (err.message && err.message.includes('TIER3_UIA_UNSUPPORTED')) {
+                return {
+                    success: false,
+                    verified: false,
+                    error: err.message,
+                    reason: 'TIER3_UIA_UNSUPPORTED',
+                    tier: 3,
+                    tierName: 'Tier 3 — Windows UI Automation',
+                    physicalInputUsed: false
+                };
+            }
+            throw err;
+        }
     }
 
     /**
      * Click or invoke an accessible UI control.
      */
     async clickElement(target, query = {}, options = {}) {
+        if (options.signal && options.signal.aborted) {
+            const err = new Error('Element click cancelled before execution.');
+            err.code = 'CANCELLED';
+            throw err;
+        }
+
         const payload = this._resolveTargetPayload(target);
         if (query.name) payload.name = query.name;
         if (query.automationId) payload.automationId = query.automationId;
+        payload.allowPhysicalFallback = (options.allowPhysicalFallback !== undefined)
+            ? Boolean(options.allowPhysicalFallback)
+            : (query.allowPhysicalFallback !== undefined
+                ? Boolean(query.allowPhysicalFallback)
+                : (this.interactionMode === INTERACTION_MODES.FOREGROUND_REQUIRED));
 
-        const result = await this.sendCommand('click_element', payload);
-        return {
-            success: Boolean(result && result.verified),
-            verified: Boolean(result && result.verified),
-            action: result?.action || 'invoked',
-            name: result?.name || '',
-            controlType: result?.controlType || ''
-        };
+        try {
+            const result = await this.sendCommand('click_element', payload);
+            return {
+                success: Boolean(result && result.verified),
+                verified: Boolean(result && result.verified),
+                action: result?.action || 'invoked',
+                name: result?.name || '',
+                controlType: result?.controlType || '',
+                tier: result?.tier || 3,
+                tierName: result?.tierName || (result?.tier === 4 ? 'Tier 4 — Physical mouse/keyboard fallback' : 'Tier 3 — Windows UI Automation'),
+                physicalInputUsed: Boolean(result?.physicalInputUsed),
+                method: result?.method || 'InvokePattern'
+            };
+        } catch (err) {
+            if (err.message && err.message.includes('TIER3_UIA_UNSUPPORTED')) {
+                return {
+                    success: false,
+                    verified: false,
+                    error: err.message,
+                    reason: 'TIER3_UIA_UNSUPPORTED',
+                    tier: 3,
+                    tierName: 'Tier 3 — Windows UI Automation',
+                    physicalInputUsed: false
+                };
+            }
+            throw err;
+        }
     }
 
     /**
      * Take a screenshot of the target application window.
      */
     async takeScreenshot(target, options = {}) {
+        if (options.signal && options.signal.aborted) {
+            const err = new Error('Screenshot cancelled.');
+            err.code = 'CANCELLED';
+            throw err;
+        }
         const payload = this._resolveTargetPayload(target);
         return await this.sendCommand('take_screenshot', payload);
     }
 
     /**
-     * Gracefully close a target application with optional modal save dialog resolution.
+     * Gracefully close a target application with explicit ownership verification and modal save dialog resolution.
      * @param {string|number|Object} target - App identifier, PID, or title
      * @param {Object} [options]
      * @param {'dont_save'|'save'|'cancel'|'ask'} [options.savePolicy] - Policy for handling unsaved confirmation dialogs
+     * @param {string} [options.taskId] - Task ID authorizing close
+     * @param {AbortSignal} [options.signal] - Cancellation signal
      */
     async closeApp(target, options = {}) {
-        const payload = this._resolveTargetPayload(target);
+        if (options.signal && options.signal.aborted) {
+            const err = new Error('Application close operation cancelled.');
+            err.code = 'CANCELLED';
+            throw err;
+        }
+
+        const isDiscarding = options.savePolicy === 'dont_save' || options.dialogAction === 'dont_save' || options.force === true;
+
+        if (isDiscarding) {
+            // STRICT SAFETY: Discarding unsaved changes is ONLY allowed on Lucy-owned applications!
+            this.assertOwnership(target, { taskId: options.taskId, action: 'close_app_discard' });
+        }
+
+        const payload = this._resolveTargetPayload(target, { requireOwnership: isDiscarding });
         if (options.savePolicy) {
             payload.savePolicy = options.savePolicy;
         } else if (options.dialogAction) {
@@ -585,8 +852,12 @@ class DesktopAutomationManager {
 
         const result = await this.sendCommand('close_app', payload);
 
-        if (result && result.closed && payload.appId) {
-            this.trackedApps.delete(payload.appId);
+        if (result && result.closed) {
+            const tracked = this.getTrackedApp(target);
+            if (tracked && tracked.appId) {
+                tracked.lifecycleState = 'closed';
+                this.trackedApps.delete(tracked.appId);
+            }
         }
 
         return result;
@@ -595,25 +866,49 @@ class DesktopAutomationManager {
     /**
      * Detect if a modal confirmation dialog is currently active for an application.
      */
-    async detectDialog(target) {
+    async detectDialog(target, options = {}) {
+        if (options.signal && options.signal.aborted) {
+            const err = new Error('Dialog detection cancelled.');
+            err.code = 'CANCELLED';
+            throw err;
+        }
         const payload = this._resolveTargetPayload(target);
         return await this.sendCommand('detect_dialog', payload);
     }
 
     /**
-     * Handle an active modal dialog by invoking the specified action.
+     * Handle an active modal dialog by invoking the specified action with ownership verification.
      * @param {string|number|Object} target
      * @param {'save'|'dont_save'|'cancel'} action
+     * @param {Object} [options]
      */
     async handleDialog(target, action, options = {}) {
+        if (options.signal && options.signal.aborted) {
+            const err = new Error('Dialog handling cancelled.');
+            err.code = 'CANCELLED';
+            throw err;
+        }
+
         if (!action || !['save', 'dont_save', 'cancel'].includes(action.toLowerCase())) {
             throw new Error(`Invalid dialog action: '${action}'. Must be one of: save, dont_save, cancel`);
         }
-        const payload = this._resolveTargetPayload(target);
-        payload.action = action.toLowerCase();
+
+        const lowerAction = action.toLowerCase();
+        if (lowerAction === 'dont_save') {
+            // Require Lucy ownership before discarding dialog changes
+            this.assertOwnership(target, { taskId: options.taskId, action: 'dialog_discard' });
+        }
+
+        const payload = this._resolveTargetPayload(target, { requireOwnership: lowerAction === 'dont_save' });
+        payload.action = lowerAction;
+
         const result = await this.sendCommand('handle_dialog', payload);
-        if (result && result.processExited && payload.appId) {
-            this.trackedApps.delete(payload.appId);
+        if (result && result.processExited) {
+            const tracked = this.getTrackedApp(target);
+            if (tracked && tracked.appId) {
+                tracked.lifecycleState = 'closed';
+                this.trackedApps.delete(tracked.appId);
+            }
         }
         return result;
     }
@@ -621,9 +916,36 @@ class DesktopAutomationManager {
     /**
      * Close the currently active tab in an application (via Ctrl+W shortcut).
      */
-    async closeTab(target) {
+    async closeTab(target, options = {}) {
+        if (options.signal && options.signal.aborted) {
+            const err = new Error('Close tab cancelled.');
+            err.code = 'CANCELLED';
+            throw err;
+        }
         const payload = this._resolveTargetPayload(target);
         return await this.sendCommand('close_tab', payload);
+    }
+
+    /**
+     * Safely terminate or close only applications launched for a specific task.
+     * Leaves user applications and other tasks untouched.
+     * @param {string} taskId
+     * @returns {Promise<Array>} Array of cleanup results
+     */
+    async cleanupTaskResources(taskId) {
+        if (!taskId) return [];
+        const results = [];
+        for (const [appId, app] of this.trackedApps.entries()) {
+            if (app.taskId === taskId && app.lifecycleState === 'active') {
+                try {
+                    const res = await this.closeApp(appId, { savePolicy: 'dont_save', taskId });
+                    results.push({ appId, pid: app.pid, closed: true, res });
+                } catch (err) {
+                    results.push({ appId, pid: app.pid, closed: false, error: err.message });
+                }
+            }
+        }
+        return results;
     }
 
     /**
@@ -631,21 +953,52 @@ class DesktopAutomationManager {
      */
     cleanup() {
         this.isDestroyed = true;
+        this.isReady = false;
         if (this.proc) {
             try {
                 this.proc.stdin.write(JSON.stringify({ id: 9999, cmd: 'exit' }) + '\n');
             } catch (_) {}
+            const procToKill = this.proc;
+            this.proc = null;
             setTimeout(() => {
-                if (this.proc && !this.proc.killed) {
-                    try { this.proc.kill(); } catch (_) {}
+                if (procToKill && !procToKill.killed) {
+                    try { procToKill.kill(); } catch (_) {}
                 }
             }, 300);
         }
     }
 
-    _resolveTargetPayload(target) {
+    _resolveTargetPayload(target, options = {}) {
         if (!target) {
             throw new Error('A target appId, processId, or window title must be specified');
+        }
+
+        const tracked = this.getTrackedApp(target);
+        if (tracked && tracked.ambiguous) {
+            const err = new Error(`Ambiguous application target '${JSON.stringify(target)}': Multiple tracked instances match.`);
+            err.code = 'AMBIGUOUS_APPLICATION_OWNERSHIP';
+            throw err;
+        }
+
+        if (options.requireOwnership && !tracked) {
+            const err = new Error(`Ownership verification failed: Target '${JSON.stringify(target)}' is not owned by Lucy.`);
+            err.code = 'UNAUTHORIZED_RESOURCE_ACCESS';
+            throw err;
+        }
+
+        if (tracked) {
+            const out = {
+                appId: tracked.appId,
+                pid: tracked.pid,
+                expectedStartTime: tracked.processStartTime || null
+            };
+            if (tracked.windowHandle) {
+                out.windowHandle = tracked.windowHandle;
+            }
+            if (typeof target === 'string' && !target.startsWith('app_')) {
+                out.title = target;
+            }
+            return out;
         }
 
         if (typeof target === 'number') {
@@ -654,13 +1007,10 @@ class DesktopAutomationManager {
 
         if (typeof target === 'string') {
             if (target.startsWith('app_')) {
-                return { appId: target };
+                let pidVal = 0;
+                try { pidVal = parseInt(target.replace('app_', ''), 10); } catch (_) {}
+                return { appId: target, pid: pidVal || undefined };
             }
-            // Check if it matches a tracked appId
-            if (this.trackedApps.has(target)) {
-                return { appId: target };
-            }
-            // Treat as window title match
             return { title: target };
         }
 
@@ -670,6 +1020,7 @@ class DesktopAutomationManager {
             if (target.pid) out.pid = target.pid;
             if (target.title) out.title = target.title;
             if (target.windowHandle) out.windowHandle = target.windowHandle;
+            if (target.expectedStartTime) out.expectedStartTime = target.expectedStartTime;
             return out;
         }
 

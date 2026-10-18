@@ -50,7 +50,7 @@ function registerDesktopTools(registry, desktopManager) {
                 filter: { type: 'string', description: 'Optional process name or title filter' }
             }
         },
-        handler: async (params) => {
+        handler: async (params, context = {}) => {
             const apps = await desktopManager.listApps();
             if (params.filter) {
                 const f = params.filter.toLowerCase();
@@ -81,8 +81,11 @@ function registerDesktopTools(registry, desktopManager) {
             },
             required: ['executable']
         },
-        handler: async (params) => {
-            return await desktopManager.launchApp(params.executable, params.arguments);
+        handler: async (params, context = {}) => {
+            return await desktopManager.launchApp(params.executable, params.arguments, {
+                taskId: context?.taskId,
+                signal: context?.signal
+            });
         },
         dryRunSimulate: async (params) => {
             const validation = desktopManager.validateExecutable(params.executable);
@@ -113,8 +116,12 @@ function registerDesktopTools(registry, desktopManager) {
             },
             required: ['target']
         },
-        handler: async (params) => {
-            return await desktopManager.inspectUI(params.target, { maxDepth: params.maxDepth || 3 });
+        handler: async (params, context = {}) => {
+            return await desktopManager.inspectUI(params.target, {
+                maxDepth: params.maxDepth || 3,
+                taskId: context?.taskId,
+                signal: context?.signal
+            });
         },
         dryRunSimulate: async (params) => {
             return {
@@ -142,11 +149,13 @@ function registerDesktopTools(registry, desktopManager) {
             },
             required: ['target']
         },
-        handler: async (params) => {
+        handler: async (params, context = {}) => {
             return await desktopManager.findElement(params.target, {
                 name: params.name,
                 automationId: params.automationId,
-                controlType: params.controlType
+                controlType: params.controlType,
+                taskId: context?.taskId,
+                signal: context?.signal
             });
         },
         dryRunSimulate: async (params) => {
@@ -170,12 +179,23 @@ function registerDesktopTools(registry, desktopManager) {
             type: 'object',
             properties: {
                 target: { type: 'string', description: 'AppId or window title' },
-                text: { type: 'string', description: 'Text to enter into the focused/editable control' }
+                text: { type: 'string', description: 'Text to enter into the focused/editable control' },
+                preferBackground: { type: 'boolean', description: 'Prefer non-intrusive background UI Automation text entry (default true)' },
+                allowPhysicalFallback: { type: 'boolean', description: 'Allow physical foreground typing fallback if UIA is unsupported (default false)' }
             },
             required: ['target', 'text']
         },
-        handler: async (params) => {
-            return await desktopManager.typeText(params.target, params.text);
+        handler: async (params, context = {}) => {
+            const res = await desktopManager.typeText(params.target, params.text, {
+                preferBackground: params.preferBackground !== false,
+                allowPhysicalFallback: Boolean(params.allowPhysicalFallback || context?.allowPhysicalFallback),
+                taskId: context?.taskId,
+                signal: context?.signal
+            });
+            return {
+                ok: res.success !== false,
+                ...res
+            };
         },
         dryRunSimulate: async (params) => {
             return {
@@ -183,7 +203,10 @@ function registerDesktopTools(registry, desktopManager) {
                 target: params.target,
                 textLength: params.text.length,
                 preview: params.text.slice(0, 30),
-                effect: `Would enter ${params.text.length} characters of text into application '${params.target}'`
+                tier: 3,
+                tierName: 'Tier 3 — Windows UI Automation',
+                physicalInputUsed: false,
+                effect: `Would enter ${params.text.length} characters of text into application '${params.target}' non-intrusively`
             };
         }
     });
@@ -199,15 +222,25 @@ function registerDesktopTools(registry, desktopManager) {
             properties: {
                 target: { type: 'string', description: 'AppId or window title' },
                 name: { type: 'string', description: 'Accessible name of the control to click' },
-                automationId: { type: 'string', description: 'AutomationId of the control' }
+                automationId: { type: 'string', description: 'AutomationId of the control' },
+                allowPhysicalFallback: { type: 'boolean', description: 'Allow physical mouse click fallback if UIA is unsupported (default false)' }
             },
             required: ['target']
         },
-        handler: async (params) => {
-            return await desktopManager.clickElement(params.target, {
+        handler: async (params, context = {}) => {
+            const res = await desktopManager.clickElement(params.target, {
                 name: params.name,
-                automationId: params.automationId
+                automationId: params.automationId,
+                allowPhysicalFallback: Boolean(params.allowPhysicalFallback || context?.allowPhysicalFallback)
+            }, {
+                allowPhysicalFallback: Boolean(params.allowPhysicalFallback || context?.allowPhysicalFallback),
+                taskId: context?.taskId,
+                signal: context?.signal
             });
+            return {
+                ok: res.success !== false,
+                ...res
+            };
         },
         dryRunSimulate: async (params) => {
             const consequential = isConsequentialClick(params.name, params.automationId);
@@ -217,7 +250,10 @@ function registerDesktopTools(registry, desktopManager) {
                 name: params.name || null,
                 automationId: params.automationId || null,
                 isConsequential: consequential,
-                effect: `Would invoke UI control '${params.name || params.automationId}' in '${params.target}'`
+                tier: 3,
+                tierName: 'Tier 3 — Windows UI Automation',
+                physicalInputUsed: false,
+                effect: `Would invoke UI control '${params.name || params.automationId}' in '${params.target}' non-intrusively`
             };
         }
     });
@@ -235,8 +271,11 @@ function registerDesktopTools(registry, desktopManager) {
             },
             required: ['target']
         },
-        handler: async (params) => {
-            const shot = await desktopManager.takeScreenshot(params.target);
+        handler: async (params, context = {}) => {
+            const shot = await desktopManager.takeScreenshot(params.target, {
+                taskId: context?.taskId,
+                signal: context?.signal
+            });
             const base64 = shot?.base64 || (typeof shot === 'string' ? shot : null);
             const format = shot?.format || 'png';
             return {
@@ -282,8 +321,12 @@ function registerDesktopTools(registry, desktopManager) {
             },
             required: ['target']
         },
-        handler: async (params) => {
-            return await desktopManager.closeApp(params.target, { savePolicy: params.savePolicy });
+        handler: async (params, context = {}) => {
+            return await desktopManager.closeApp(params.target, {
+                savePolicy: params.savePolicy,
+                taskId: context?.taskId,
+                signal: context?.signal
+            });
         },
         dryRunSimulate: async (params) => {
             return {
@@ -313,8 +356,11 @@ function registerDesktopTools(registry, desktopManager) {
             },
             required: ['target', 'action']
         },
-        handler: async (params) => {
-            return await desktopManager.handleDialog(params.target, params.action);
+        handler: async (params, context = {}) => {
+            return await desktopManager.handleDialog(params.target, params.action, {
+                taskId: context?.taskId,
+                signal: context?.signal
+            });
         },
         dryRunSimulate: async (params) => {
             return {
@@ -322,6 +368,34 @@ function registerDesktopTools(registry, desktopManager) {
                 target: params.target,
                 action: params.action,
                 effect: `Would invoke action '${params.action}' on confirmation dialog for '${params.target}'`
+            };
+        }
+    });
+
+    // 10. desktop_focus_window
+    registry.registerTool({
+        id: 'desktop_focus_window',
+        name: 'Desktop Window Focus',
+        description: 'Bring an existing application window into focus and foreground',
+        riskTier: RISK_TIERS.SAFE_READ,
+        schema: {
+            type: 'object',
+            properties: {
+                target: { type: 'string', description: 'AppId, PID, process name, or window title' }
+            },
+            required: ['target']
+        },
+        handler: async (params, context = {}) => {
+            return await desktopManager.focusWindow(params.target, {
+                taskId: context?.taskId,
+                signal: context?.signal
+            });
+        },
+        dryRunSimulate: async (params) => {
+            return {
+                simulatedAction: 'focus_window',
+                target: params.target,
+                effect: `Would bring window '${params.target}' to foreground without side effects`
             };
         }
     });

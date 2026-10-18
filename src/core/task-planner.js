@@ -37,11 +37,13 @@ const UNSUPPORTED_DOMAINS = [
 const { classifyTextIntent } = require('./content-discriminator.js');
 const { validateToolArguments } = require('../tools/schema-validator.js');
 const { RISK_TIERS } = require('../security/permission-authority.js');
+const { AUTOMATION_TIERS, getActionCapability } = require('../tools/automation-tier-policy.js');
 
 class TaskPlanner {
     constructor(options = {}) {
         this.providerAdapter = options.providerAdapter;
         this.toolRegistry = options.toolRegistry;
+        this.skillRegistry = options.skillRegistry || null;
     }
 
     /**
@@ -51,7 +53,11 @@ class TaskPlanner {
      * @returns {Promise<Object>} Structured plan with steps and limitations
      */
     async plan(userRequest, context = {}) {
-        const availableTools = this.toolRegistry ? this.toolRegistry.listTools() : [];
+        const availableTools = this.toolRegistry
+            ? (typeof this.toolRegistry.getToolsForTask === 'function'
+                ? this.toolRegistry.getToolsForTask(userRequest, context)
+                : this.toolRegistry.listTools())
+            : [];
         const trimmedRequest = String(userRequest || '').trim();
 
         if (!trimmedRequest) {
@@ -100,14 +106,63 @@ class TaskPlanner {
             };
         }
 
+        const normalizedRequest = trimmedRequest.replace(/^(?:lucy|l\.u\.c\.y\.?)[,\s]+/i, '').replace(/[.!?]+$/, '').trim();
+
         // 4. Missing Parameter Clarification
-        const missingParamClarification = this._checkMissingParameters(trimmedRequest);
+        const missingParamClarification = this._checkMissingParameters(trimmedRequest) || this._checkMissingParameters(normalizedRequest);
         if (missingParamClarification) {
             return missingParamClarification;
         }
 
+        // 4b. Multi-Step Composed Skill Recognition
+        if (this.skillRegistry) {
+            const matchedSkills = this.skillRegistry.findSkillsForTask(trimmedRequest);
+            if (matchedSkills.length > 0) {
+                const targetSkill = matchedSkills[0];
+                if (targetSkill.id === 'skill_research_topic' && /\b(?:research|investigate|look\s+up\s+and\s+synthesize)\b/i.test(trimmedRequest)) {
+                    const query = trimmedRequest.replace(/^(?:lucy[,\s]+)?(?:research|investigate|find\s+info\s+on)\s+/i, '').replace(/[.!?]+$/, '').trim();
+                    return {
+                        objective: trimmedRequest,
+                        type: 'plan',
+                        replyText: `Executing research skill for topic: "${query}".`,
+                        skillId: targetSkill.id,
+                        steps: [
+                            {
+                                index: 1,
+                                title: `Execute Skill: ${targetSkill.name}`,
+                                toolId: targetSkill.id,
+                                isSkill: true,
+                                params: { query, saveReport: true },
+                                expectedOutcome: `Completed ${targetSkill.name}`
+                            }
+                        ]
+                    };
+                }
+                if (targetSkill.id === 'skill_create_document' && /\b(?:create|draft|write)\s+(?:a\s+)?(?:document|notes|report|markdown)\b/i.test(trimmedRequest)) {
+                    const titleMatch = trimmedRequest.match(/(?:titled|named|called|about|for)\s+["']?([^"']+)["']?/i);
+                    const title = titleMatch ? titleMatch[1].trim() : 'Project Document';
+                    return {
+                        objective: trimmedRequest,
+                        type: 'plan',
+                        replyText: `Executing document authoring skill for: "${title}".`,
+                        skillId: targetSkill.id,
+                        steps: [
+                            {
+                                index: 1,
+                                title: `Execute Skill: ${targetSkill.name}`,
+                                toolId: targetSkill.id,
+                                isSkill: true,
+                                params: { title },
+                                expectedOutcome: `Completed ${targetSkill.name}`
+                            }
+                        ]
+                    };
+                }
+            }
+        }
+
         // 5. Multi-Step Compound Intent Recognition
-        const compoundPlan = this._detectCompoundIntent(trimmedRequest, availableTools);
+        const compoundPlan = this._detectCompoundIntent(trimmedRequest, availableTools) || this._detectCompoundIntent(normalizedRequest, availableTools);
         if (compoundPlan) {
             if (compoundPlan.isGenerativeIntent) {
                 return await this._planGenerativeCompoundTask(compoundPlan, context, availableTools);
@@ -116,20 +171,19 @@ class TaskPlanner {
         }
 
         // 6. Direct Single-Intent Recognition
-        const directPlan = this._detectDirectIntent(trimmedRequest, availableTools);
+        const directPlan = this._detectDirectIntent(trimmedRequest, availableTools) || this._detectDirectIntent(normalizedRequest, availableTools);
         if (directPlan) {
             return this._validatePlanSteps(directPlan, availableTools);
         }
 
         // 7. LLM Reasoning for complex or conversational requests
-        if (this.providerAdapter && this.providerAdapter.resolveApiKey()) {
+        const hasKey = this.providerAdapter ? (this.providerAdapter.resolveApiKey() || (typeof this.providerAdapter.hasUsableRoute === 'function' && this.providerAdapter.hasUsableRoute())) : false;
+        if (this.providerAdapter && hasKey) {
             try {
-                // If it looks like a pure conversational query (e.g. "What is...", "Explain...", "Hi", "Who are you"),
-                // allow the provider to stream directly if onChunk is provided.
-                const isInformational = this._isInformationalQuery(trimmedRequest);
-
-                if (isInformational && typeof context.onChunk === 'function') {
-                    const res = await this.providerAdapter.complete({
+                // If the user request is a clear informational/conversational query (e.g. greetings, basic Q&A),
+                // execute text-generation directly without requiring structured tool execution.
+                if (this._isInformationalQuery(trimmedRequest)) {
+                    const infoRes = await this.providerAdapter.complete({
                         messages: [
                             {
                                 role: 'system',
@@ -138,15 +192,19 @@ class TaskPlanner {
                             { role: 'user', content: trimmedRequest }
                         ],
                         signal: context.signal,
-                        onChunk: context.onChunk
+                        onChunk: context.onChunk,
+                        taskCategory: 'general',
+                        isBasicText: true,
+                        requiresToolCalling: false
                     });
 
-                    if (!res.ok) {
+                    if (!infoRes.ok) {
                         return {
                             objective: trimmedRequest,
-                            type: res.cancelled ? 'cancelled' : 'provider_error',
-                            replyText: res.error || `AI Provider (${this.providerAdapter.provider}) request failed.`,
-                            providerError: res.error,
+                            type: infoRes.cancelled ? 'cancelled' : 'provider_error',
+                            replyText: infoRes.error || `AI Provider (${this.providerAdapter.provider}) request failed.`,
+                            providerError: infoRes.error,
+                            code: infoRes.code,
                             steps: []
                         };
                     }
@@ -154,7 +212,7 @@ class TaskPlanner {
                     return {
                         objective: trimmedRequest,
                         type: 'conversation',
-                        replyText: res.content,
+                        replyText: infoRes.content,
                         steps: []
                     };
                 }
@@ -186,15 +244,45 @@ Respond strictly in JSON if tool execution is required:
                         { role: 'user', content: trimmedRequest }
                     ],
                     tools: availableTools,
+                    requiresToolCalling: true,
                     signal: context.signal
                 });
 
                 if (!res.ok) {
+                    // If no model supports tool calling, but this request is an ordinary conversational query where structured tools are unnecessary,
+                    // preserve the conversational request on a supported text-generation route
+                    if (res.code === 'no_tool_route' && this._isConversationalRequest(trimmedRequest)) {
+                        const textRes = await this.providerAdapter.complete({
+                            messages: [
+                                {
+                                    role: 'system',
+                                    content: 'You are L.U.C.Y., an intelligent, concise personal desktop assistant and celestial familiar on Windows. Answer the user helpfully and concisely.'
+                                },
+                                { role: 'user', content: trimmedRequest }
+                            ],
+                            signal: context.signal,
+                            onChunk: context.onChunk,
+                            taskCategory: 'general',
+                            isBasicText: true,
+                            requiresToolCalling: false
+                        });
+
+                        if (textRes.ok) {
+                            return {
+                                objective: trimmedRequest,
+                                type: 'conversation',
+                                replyText: textRes.content,
+                                steps: []
+                            };
+                        }
+                    }
+
                     return {
                         objective: trimmedRequest,
                         type: res.cancelled ? 'cancelled' : 'provider_error',
                         replyText: `AI Provider (${this.providerAdapter.provider}) request failed: ${res.error}. Paid provider fallback is disabled.`,
                         providerError: res.error,
+                        code: res.code,
                         steps: []
                     };
                 }
@@ -250,12 +338,19 @@ Respond strictly in JSON if tool execution is required:
         }
 
         // 8. Fallback when no provider is configured
-        const hasKey = this.providerAdapter ? Boolean(this.providerAdapter.resolveApiKey()) : false;
-        if (!hasKey) {
+        const hasUsable = this.providerAdapter ? (Boolean(this.providerAdapter.resolveApiKey()) || (typeof this.providerAdapter.hasUsableRoute === 'function' && this.providerAdapter.hasUsableRoute())) : false;
+        if (!hasUsable) {
+            let errorDetail = 'No AI provider is currently configured with an API key. I can perform verified offline commands (such as "inspect system status", "list files", or desktop app commands), but natural language reasoning requires an AI provider. You can configure one in Provider Settings (Google Gemini, OpenRouter, local Ollama, or Hugging Face).';
+            if (this.providerAdapter?.modelRouter?._buildNoRouteError) {
+                const noRouteErr = this.providerAdapter.modelRouter._buildNoRouteError();
+                if (noRouteErr?.error) {
+                    errorDetail = noRouteErr.error;
+                }
+            }
             return {
                 objective: trimmedRequest,
                 type: 'unconfigured_provider',
-                replyText: `No AI provider is currently configured with an API key. I can perform verified offline commands (such as "inspect system status", "list files", or desktop app commands), but natural language reasoning requires an AI provider. You can configure one in Provider Settings (Google Gemini, OpenRouter, local Ollama, or Hugging Face).`,
+                replyText: errorDetail,
                 needsConfig: true,
                 steps: []
             };
@@ -371,24 +466,95 @@ Respond strictly in JSON if tool execution is required:
             };
         }
 
+        // Unspecified meeting notes content (Scenario B)
+        if (
+            (lower.includes('meeting-notes') || lower.includes('meeting notes')) &&
+            (lower.includes('create') || lower.includes('write') || lower.includes('save')) &&
+            !lower.includes('content:') && !lower.includes('with content "') && !lower.includes("with content '") &&
+            !lower.includes('blank template') && !lower.includes('template')
+        ) {
+            return {
+                objective: request,
+                type: 'clarification',
+                replyText: "I noticed you requested to create a file for meeting notes, but no notes content was provided. Would you like to provide the meeting notes, or should I create a blank template file?",
+                missingParameters: ['notes_content'],
+                steps: []
+            };
+        }
+
+        // Scenario E: Save document in project folder when source or filename unspecified
+        if (/^(?:save|put)\s+(?:this\s+)?(?:document|file)\s+in\s+(?:my\s+)?project\s*(?:folder|directory)?\s*$/i.test(lower)) {
+            return {
+                objective: request,
+                type: 'clarification',
+                replyText: "Which document would you like me to save in your project folder, and what filename should it have?",
+                missingParameters: ['document', 'filename'],
+                steps: []
+            };
+        }
+
+        // Scenario D: Form filling clarification
+        if (/^fill\s+(?:in\s+)?(?:this\s+)?form(?:\s+using\s+.*)?$/i.test(lower)) {
+            return {
+                objective: request,
+                type: 'clarification',
+                replyText: "Please provide the form URL or confirm which web form is currently open, and specify the fields you would like filled. Consequential actions will require your approval before submission.",
+                missingParameters: ['form_url_or_fields'],
+                steps: []
+            };
+        }
+
         return null;
     }
 
     _isInformationalQuery(request) {
-        const lower = request.toLowerCase();
+        const lower = String(request || '').trim().toLowerCase().replace(/[.,!?;:]+$/, '').trim();
         return (
             lower.startsWith('what is') ||
             lower.startsWith('what are') ||
             lower.startsWith('who is') ||
             lower.startsWith('why is') ||
             lower.startsWith('how do') ||
+            lower.startsWith('how to') ||
+            lower.startsWith('how can') ||
             lower.startsWith('explain') ||
             lower.startsWith('tell me about') ||
+            lower.startsWith('can you explain') ||
             lower === 'hello' ||
             lower === 'hi' ||
             lower === 'hey' ||
-            lower === 'who are you'
+            lower === 'good morning' ||
+            lower === 'good afternoon' ||
+            lower === 'good evening' ||
+            lower === 'who are you' ||
+            lower === 'what can you do' ||
+            lower === 'help'
         );
+    }
+
+    _isConversationalRequest(request) {
+        if (this._isInformationalQuery(request)) return true;
+        const lower = String(request || '').trim().toLowerCase();
+
+        // If the request contains file paths, extensions, executable names, or commands, it is not conversational
+        if (/\.[a-z0-9]{2,4}\b/i.test(lower)) return false; // has file extension like .txt, .exe, .json
+        if (/[\/\\]/.test(lower)) return false; // has path separators
+        if (/\b(?:registry|regkey|cmd|powershell|terminal|system32|process|window|desktop|button|selector)\b/i.test(lower)) return false;
+
+        // If request has clear system action verbs with targets
+        if (/\b(?:launch|open|close|kill|delete|remove|modify|install|download|click|type\s+into)\b/i.test(lower)) return false;
+
+        // Creative writing, conversation, math, reasoning, or generic text generation
+        if (/\b(?:poem|story|joke|essay|draft|compose|translate|summarize|calculate|solve|chat|opinion|think|advice)\b/i.test(lower)) {
+            return true;
+        }
+
+        // Questions or generic inquiries
+        if (lower.endsWith('?') || /^(?:why|what|who|when|where|how|can you|could you|tell me)\b/i.test(lower)) {
+            return true;
+        }
+
+        return false;
     }
 
     _detectCompoundIntent(request, tools) {
@@ -600,6 +766,92 @@ Respond strictly in JSON if tool execution is required:
                 type: 'plan',
                 steps
             };
+        }
+
+        // 6. Compound Platform / Web Search (Scenario C: "Open YouTube and search for Java tutorials")
+        const webSearchCompound = request.match(/(?:open|navigate\s+to|go\s+to)\s+(youtube|google|duckduckgo|bing)\s+(?:and|then)\s+(?:search\s+(?:for\s+)?|look\s+up\s+|find\s+)['"]?([^'"]+?)['"]?$/i);
+        if (webSearchCompound) {
+            const engine = webSearchCompound[1].toLowerCase();
+            const query = webSearchCompound[2].replace(/[.!?]+$/, '').trim();
+            return {
+                objective: `Open ${webSearchCompound[1]} and search for "${query}"`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        title: `Search ${webSearchCompound[1]} for "${query}"`,
+                        toolId: 'browser_search',
+                        params: { engine, query },
+                        expectedOutcome: `Search results for "${query}" displayed on ${webSearchCompound[1]}`
+                    }
+                ]
+            };
+        }
+
+        // 7. Multi-step: Find file in directory and open it (Scenario F: "Open my project folder, find the README, and open it")
+        const findAndOpenMatch = request.match(/(?:open|in)\s+(?:my\s+)?([a-zA-Z0-9_.\-\/\\]+)\s*(?:folder|directory)?,\s*(?:find|locate)\s+(?:the\s+)?([a-zA-Z0-9_.\-]+)(?:,\s*(?:and|then)|\s+(?:and|then))\s*open\s+(?:it|the\s+file)/i);
+        if (findAndOpenMatch) {
+            const rawFolder = findAndOpenMatch[1].trim();
+            const filename = findAndOpenMatch[2].trim();
+            const folder = rawFolder.toLowerCase().includes('project') ? 'project' : rawFolder;
+            const targetFilePath = folder === '.' ? filename : `${folder}/${filename}`;
+            return {
+                objective: `Locate '${filename}' in folder '${folder}' and open it`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        title: `Search for '${filename}' in '${folder}'`,
+                        toolId: 'file_search',
+                        params: { query: filename, path: folder },
+                        expectedOutcome: `Locate '${filename}' within '${folder}'`
+                    },
+                    {
+                        index: 2,
+                        title: `Open '${filename}' with registered application`,
+                        toolId: 'file_open_external',
+                        params: { path: targetFilePath },
+                        expectedOutcome: `File '${filename}' opened successfully`
+                    }
+                ]
+            };
+        }
+
+        // 8. Scenario B: Create meeting notes file with specified content or blank template
+        if (lower.includes('meeting-notes') || lower.includes('meeting notes')) {
+            const isTemplate = lower.includes('blank template') || lower.includes('template');
+            const contentMatch = request.match(/with\s+content:\s*([\s\S]+)$/i);
+            const explicitContent = contentMatch ? contentMatch[1].trim() : null;
+
+            if (isTemplate || explicitContent) {
+                const filenameMatch = request.match(/(?:called|named)\s+['"]?([a-zA-Z0-9_.\-\/\\]+)['"]?/i);
+                const rawFilename = filenameMatch ? filenameMatch[1].trim() : 'meeting-notes.txt';
+                const hasDesktop = lower.includes('desktop');
+                const targetPath = hasDesktop ? `Desktop/${rawFilename}` : rawFilename;
+
+                const content = explicitContent || '# Meeting Notes\n\nDate: {{DATE}}\nAttendees:\n- \n\nAgenda:\n- \n\nDiscussion & Notes:\n- \n\nAction Items:\n- [ ] \n';
+
+                return {
+                    objective: `Create document '${targetPath}' and verify saved contents`,
+                    type: 'plan',
+                    steps: [
+                        {
+                            index: 1,
+                            title: `Write file: ${targetPath}`,
+                            toolId: 'file_write',
+                            params: { path: targetPath, content },
+                            expectedOutcome: 'File created and verified within workspace'
+                        },
+                        {
+                            index: 2,
+                            title: `Read file: ${targetPath}`,
+                            toolId: 'file_read',
+                            params: { path: targetPath },
+                            expectedOutcome: 'File content read and verified matching written content'
+                        }
+                    ]
+                };
+            }
         }
 
         return null;
@@ -851,6 +1103,114 @@ Respond strictly in JSON if tool execution is required:
             }
         }
 
+        // File search intent
+        if (lower.startsWith('find file') || lower.startsWith('search file') || lower.startsWith('search for file') || lower.startsWith('locate file')) {
+            const match = request.match(/(?:find|search(?:\s+for)?|locate)\s+files?\s+(?:named\s+|called\s+)?['"]?([^'"]+?)['"]?(?:\s+(?:in|under)\s+['"]?([a-zA-Z0-9_.\-\/\\]+)['"]?)?$/i);
+            if (match) {
+                const query = match[1].trim();
+                const searchPath = match[2] ? match[2].trim() : '.';
+                return {
+                    objective: `Search for files matching '${query}' in '${searchPath}'`,
+                    type: 'plan',
+                    steps: [
+                        {
+                            index: 1,
+                            title: `Search files for "${query}"`,
+                            toolId: 'file_search',
+                            params: { query, path: searchPath },
+                            expectedOutcome: `Find matching files in '${searchPath}'`
+                        }
+                    ]
+                };
+            }
+        }
+
+        // Create directory / folder intent
+        if (lower.startsWith('create folder') || lower.startsWith('create directory') || lower.startsWith('make directory') || lower.startsWith('mkdir')) {
+            const match = request.match(/(?:create\s+(?:folder|directory)|make\s+directory|mkdir)\s+['"]?([a-zA-Z0-9_.\-\/\\]+)['"]?/i);
+            if (match) {
+                const dirPath = match[1].trim();
+                return {
+                    objective: `Create directory '${dirPath}'`,
+                    type: 'plan',
+                    steps: [
+                        {
+                            index: 1,
+                            title: `Create folder: ${dirPath}`,
+                            toolId: 'file_mkdir',
+                            params: { path: dirPath },
+                            expectedOutcome: `Directory '${dirPath}' created and verified`
+                        }
+                    ]
+                };
+            }
+        }
+
+        // Copy file intent
+        if (lower.startsWith('copy file') || lower.startsWith('copy ')) {
+            const match = request.match(/copy(?:\s+file)?\s+['"]?([a-zA-Z0-9_.\-\/\\]+)['"]?\s+(?:to|into)\s+['"]?([a-zA-Z0-9_.\-\/\\]+)['"]?/i);
+            if (match) {
+                const source = match[1].trim();
+                const destination = match[2].trim();
+                return {
+                    objective: `Copy file '${source}' to '${destination}'`,
+                    type: 'plan',
+                    steps: [
+                        {
+                            index: 1,
+                            title: `Copy '${source}' to '${destination}'`,
+                            toolId: 'file_copy',
+                            params: { source, destination },
+                            expectedOutcome: `File copied to '${destination}' and verified`
+                        }
+                    ]
+                };
+            }
+        }
+
+        // Move / rename file intent
+        if (lower.startsWith('move file') || lower.startsWith('move ') || lower.startsWith('rename file') || lower.startsWith('rename ')) {
+            const match = request.match(/(?:move|rename)(?:\s+file)?\s+['"]?([a-zA-Z0-9_.\-\/\\]+)['"]?\s+(?:to|into)\s+['"]?([a-zA-Z0-9_.\-\/\\]+)['"]?/i);
+            if (match) {
+                const source = match[1].trim();
+                const destination = match[2].trim();
+                return {
+                    objective: `Move file '${source}' to '${destination}'`,
+                    type: 'plan',
+                    steps: [
+                        {
+                            index: 1,
+                            title: `Move '${source}' to '${destination}'`,
+                            toolId: 'file_move',
+                            params: { source, destination },
+                            expectedOutcome: `File moved to '${destination}' and verified`
+                        }
+                    ]
+                };
+            }
+        }
+
+        // Open file / folder with registered external application
+        if ((lower.startsWith('open file ') || lower.startsWith('open folder ') || lower.startsWith('open document ')) && !lower.includes('in notepad')) {
+            const match = request.match(/open\s+(?:file|folder|document)\s+['"]?([a-zA-Z0-9_.\-\/\\]+)['"]?/i);
+            if (match) {
+                const targetPath = match[1].trim();
+                return {
+                    objective: `Open '${targetPath}' with default registered application`,
+                    type: 'plan',
+                    steps: [
+                        {
+                            index: 1,
+                            title: `Open '${targetPath}'`,
+                            toolId: 'file_open_external',
+                            params: { path: targetPath },
+                            expectedOutcome: `File opened in registered application`
+                        }
+                    ]
+                };
+            }
+        }
+
         // Browser navigation intent
         if (lower.startsWith('navigate to') || lower.startsWith('open website') || lower.startsWith('browse ') || lower.startsWith('open url')) {
             const match = request.match(/(?:navigate\s+to|open\s+website|browse|open\s+url)\s+['"]?([a-zA-Z0-9_.:\/\-]+)['"]?/i);
@@ -937,6 +1297,76 @@ Respond strictly in JSON if tool execution is required:
                             toolId: 'browser_fill',
                             params: { selector, value },
                             expectedOutcome: 'Input field filled and verified'
+                        }
+                    ]
+                };
+            }
+        }
+
+        // Web / platform search intent
+        if (lower.startsWith('search youtube') || lower.startsWith('search google') || lower.startsWith('search duckduckgo') || lower.startsWith('search bing') || lower.startsWith('search the web')) {
+            const match = request.match(/search\s+(?:the\s+web\s+(?:for\s+)?|(youtube|google|duckduckgo|bing)\s+(?:for\s+)?)\s*['"]?([^'"]+?)['"]?$/i);
+            if (match) {
+                const engine = (match[1] || 'duckduckgo').toLowerCase();
+                const query = match[2].trim();
+                return {
+                    objective: `Search ${engine} for "${query}"`,
+                    type: 'plan',
+                    steps: [
+                        {
+                            index: 1,
+                            title: `Search ${engine} for "${query}"`,
+                            toolId: 'browser_search',
+                            params: { engine, query },
+                            expectedOutcome: `Search results for "${query}" displayed on ${engine}`
+                        }
+                    ]
+                };
+            }
+        }
+
+        // Browser scroll intent
+        if (lower.startsWith('scroll down') || lower.startsWith('scroll up') || lower.startsWith('scroll page') || lower.startsWith('scroll to')) {
+            let direction = 'down';
+            let amount = 500;
+            if (lower.includes('up')) direction = 'up';
+            else if (lower.includes('top')) direction = 'top';
+            else if (lower.includes('bottom')) direction = 'bottom';
+
+            const amtMatch = request.match(/(\d+)\s*(?:px|pixels)/i);
+            if (amtMatch) amount = parseInt(amtMatch[1], 10);
+
+            return {
+                objective: `Scroll active page ${direction}`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        title: `Scroll page ${direction}`,
+                        toolId: 'browser_scroll',
+                        params: { direction, amount },
+                        expectedOutcome: `Page scrolled ${direction} and position verified`
+                    }
+                ]
+            };
+        }
+
+        // Browser select option intent
+        if (lower.startsWith('select option') || lower.startsWith('choose option') || lower.includes('in dropdown')) {
+            const match = request.match(/(?:select|choose)\s+(?:option\s+)?['"]?([^'"]+?)['"]?\s+(?:in|from)\s+(?:dropdown\s+)?['"]?([^'"]+)['"]?/i);
+            if (match) {
+                const value = match[1].trim();
+                const selector = match[2].trim();
+                return {
+                    objective: `Select option "${value}" in dropdown "${selector}"`,
+                    type: 'plan',
+                    steps: [
+                        {
+                            index: 1,
+                            title: `Select option "${value}"`,
+                            toolId: 'browser_select_option',
+                            params: { selector, value },
+                            expectedOutcome: `Option "${value}" selected and verified`
                         }
                     ]
                 };
@@ -1157,7 +1587,7 @@ Respond strictly in JSON if tool execution is required:
         // --- Native Desktop Application Intents ---
 
         // List running desktop applications
-        if (lower === 'list running apps' || lower === 'list apps' || lower === 'list desktop apps' || lower === 'running applications' || lower === 'list windows') {
+        if (lower === 'list running apps' || lower === 'list apps' || lower === 'list desktop apps' || lower === 'running applications' || lower === 'list running applications' || lower === 'list windows') {
             return {
                 objective: 'Discover and list currently running desktop applications',
                 type: 'plan',
@@ -1188,7 +1618,8 @@ Respond strictly in JSON if tool execution is required:
         )) {
 
             let targetExe = 'notepad.exe';
-            if (lower.includes('calc')) targetExe = 'calc.exe';
+            if (lower.includes('notepad')) targetExe = 'notepad.exe';
+            else if (lower.includes('calc')) targetExe = 'calc.exe';
             else if (lower.includes('paint')) targetExe = 'mspaint.exe';
             else if (lower.includes('wordpad') || lower.includes('write')) targetExe = 'wordpad.exe';
             else if (lower.includes('chrome')) targetExe = 'chrome.exe';
@@ -1205,11 +1636,12 @@ Respond strictly in JSON if tool execution is required:
             else if (lower.includes('cmd') || lower.includes('command prompt')) targetExe = 'cmd.exe';
             else {
                 const match = request.match(/(?:open|launch|start)(?:\s+app|\s+application)?\s+['"]?([a-zA-Z0-9_.\-]+)['"]?/i);
-                if (match) targetExe = match[1];
+                if (match) targetExe = match[1].toLowerCase();
             }
             if (!targetExe.toLowerCase().endsWith('.exe')) {
                 targetExe += '.exe';
             }
+            targetExe = targetExe.toLowerCase();
 
             return {
                 objective: `Launch desktop application '${targetExe}'`,
@@ -1224,6 +1656,27 @@ Respond strictly in JSON if tool execution is required:
                     }
                 ]
             };
+        }
+
+        // Bring window to front / focus intent
+        if (lower.startsWith('bring ') || lower.startsWith('focus ') || lower.startsWith('switch to window')) {
+            const match = request.match(/(?:bring\s+['"]?([^'"]+?)['"]?\s+(?:to\s+(?:front|foreground))|focus\s+(?:on\s+)?['"]?([^'"]+?)['"]?(?:\s+window)?$|switch\s+to\s+(?:window\s+)?['"]?([^'"]+?)['"]?$)/i);
+            if (match && !lower.includes('tab')) {
+                const target = (match[1] || match[2] || match[3]).trim();
+                return {
+                    objective: `Bring '${target}' window to foreground`,
+                    type: 'plan',
+                    steps: [
+                        {
+                            index: 1,
+                            title: `Focus '${target}' window`,
+                            toolId: 'desktop_focus_window',
+                            params: { target },
+                            expectedOutcome: `Window '${target}' brought to foreground and verified`
+                        }
+                    ]
+                };
+            }
         }
 
         // Type text into desktop application
@@ -1515,6 +1968,8 @@ Respond strictly in JSON if tool execution is required:
             else verificationStrategy = 'tool_receipt';
         }
 
+        const capability = getActionCapability(step.toolId, step.params);
+
         return {
             id: stepId,
             index: index + 1,
@@ -1527,7 +1982,16 @@ Respond strictly in JSON if tool execution is required:
             outputs: Array.isArray(step.outputs) ? step.outputs : ['result'],
             isConsequential,
             requiresAuthorization,
-            verificationStrategy
+            verificationStrategy,
+            automationTier: capability.tier,
+            tierName: capability.tierName,
+            requiresForegroundFocus: capability.requiresForegroundFocus,
+            requiresPhysicalInput: capability.requiresPhysicalInput,
+            canExecuteInBackground: capability.canExecuteInBackground,
+            requiresVisibleWindow: capability.requiresVisibleWindow,
+            targetApp: capability.targetApp,
+            targetControl: capability.targetControl,
+            capability
         };
     }
 
