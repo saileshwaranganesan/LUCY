@@ -40,19 +40,39 @@ class CompanionBridge extends EventEmitter {
                 this.setEmotion('focused', 'Formulating the best action plan...');
                 break;
             case TASK_STATES.WAITING_PERMISSION:
-                this.setEmotion('curious', 'Awaiting your approval to proceed.');
+            case TASK_STATES.AWAITING_AUTHORIZATION:
+                this.setEmotion('curious', description || 'Awaiting your approval to proceed.');
                 break;
+            case TASK_STATES.READY:
+                this.setEmotion('focused', 'Ready to execute.');
+                break;
+            case TASK_STATES.RUNNING:
             case TASK_STATES.EXECUTING_TOOL:
-                this.setEmotion('working', `Working: executing ${currentTool || 'action'}...`);
+                this.setEmotion('working', description || `Working: executing ${currentTool || 'action'}...`);
                 break;
             case TASK_STATES.VERIFYING:
                 this.setEmotion('focused', 'Verifying outcomes for accuracy...');
                 break;
+            case TASK_STATES.RECOVERING:
+                this.setEmotion('thinking', description || 'Recovering from error...');
+                break;
+            case TASK_STATES.AWAITING_RECONCILIATION:
+                this.setEmotion('curious', description || 'Awaiting guidance to reconcile task state.');
+                break;
             case TASK_STATES.COMPLETED:
                 this.setEmotion('happy', result?.summary || 'Task completed successfully!');
                 break;
+            case TASK_STATES.PARTIALLY_COMPLETED:
+                this.setEmotion('focused', result?.summary || 'Task partially completed.');
+                break;
             case TASK_STATES.FAILED:
                 this.setEmotion('worried', error || 'Encountered an obstacle.');
+                break;
+            case TASK_STATES.CANCELLED:
+                this.setEmotion('idle', 'Task cancelled.');
+                break;
+            case TASK_STATES.INTERRUPTED:
+                this.setEmotion('worried', description || 'Task execution interrupted.');
                 break;
             default:
                 this.setEmotion('idle');

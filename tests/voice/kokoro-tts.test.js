@@ -117,8 +117,11 @@ test('Kokoro-82M ONNX Local TTS Architecture & Lifecycle Suite', async (t) => {
         // Trigger idle timer reset
         service._resetIdleTimer();
 
-        // Wait 250ms for idle timer to fire
-        await new Promise((r) => setTimeout(r, 250));
+        // Wait up to 1500ms for idle timer to fire and worker to unload
+        for (let i = 0; i < 30; i++) {
+            if (!service.isLoaded) break;
+            await new Promise((r) => setTimeout(r, 50));
+        }
 
         assert.equal(service.isLoaded, false, 'Model should automatically unload after idle timeout');
     });

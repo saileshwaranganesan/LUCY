@@ -491,22 +491,24 @@ class SqliteMemoryAdapter {
 
     /**
      * Delete a memory record by ID or key.
-     * Prioritizes exact ID matching; only falls back to non-empty key matching.
+     * Prioritizes exact ID matching; only falls back to non-empty key matching when target is not an explicit ID.
      */
-    deleteMemory(idOrKey) {
+    deleteMemory(idOrKey, options = {}) {
         if (!this.initialized) throw new Error('Database not initialized');
         if (!idOrKey || typeof idOrKey !== 'string' || !idOrKey.trim()) {
             return false;
         }
         const target = idOrKey.trim();
+        const isExplicitId = target.startsWith('mem_') || options.exactIdOnly === true;
+
         // 1. Prioritize exact ID match
         let stmt = this.db.prepare('DELETE FROM memories WHERE id = ?');
         stmt.run([target]);
         let deleted = this.db.getRowsModified() > 0;
         stmt.free();
 
-        // 2. Only if not matched by ID and lookup key is non-empty, match by key (never delete empty keys)
-        if (!deleted && target.length > 0) {
+        // 2. Only if not matched by ID, target is NOT an explicit ID, and lookup key is non-empty, match by key (never delete empty keys)
+        if (!deleted && !isExplicitId && target.length > 0) {
             stmt = this.db.prepare('DELETE FROM memories WHERE key = ? AND key != ""');
             stmt.run([target.toLowerCase()]);
             deleted = this.db.getRowsModified() > 0;

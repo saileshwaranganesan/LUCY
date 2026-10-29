@@ -15,13 +15,16 @@ test('Smoke Test: Electron Main Process & Desktop Shell Startup', async () => {
         let settled = false;
         let stderr = '';
 
+        const cleanEnv = {
+            ...process.env,
+            ELECTRON_ENABLE_LOGGING: '1',
+            LUCY_SMOKE_TEST: 'true'
+        };
+        delete cleanEnv.ELECTRON_RUN_AS_NODE;
+
         const child = spawn(electronBinary, ['.'], {
             cwd: path.resolve(__dirname, '../../'),
-            env: {
-                ...process.env,
-                ELECTRON_ENABLE_LOGGING: '1',
-                LUCY_SMOKE_TEST: 'true'
-            },
+            env: cleanEnv,
             windowsHide: true
         });
 

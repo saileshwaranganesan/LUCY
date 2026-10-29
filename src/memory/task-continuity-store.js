@@ -4,10 +4,12 @@ const fs = require('fs');
 const path = require('path');
 
 const { assertStorageIsolation } = require('./memory-constants.js');
+const { UncertainOutcomeError } = require('../core/task-status.js');
 
 const TASK_STATUSES = Object.freeze({
     IN_PROGRESS: 'in_progress',
     INTERRUPTED: 'interrupted',
+    AWAITING_RECONCILIATION: 'awaiting_reconciliation',
     COMPLETED: 'completed',
     PARTIALLY_COMPLETED: 'partially_completed',
     FAILED: 'failed',
@@ -15,12 +17,58 @@ const TASK_STATUSES = Object.freeze({
     DISCARDED: 'discarded'
 });
 
+function sanitizeSecrets(val, seen = new WeakSet(), parentIsSensitive = false) {
+    if (val === null || val === undefined) return val;
+    if (typeof val === 'boolean' || typeof val === 'number') return val;
+    if (typeof val === 'string') {
+        let sanitized = val
+            .replace(/sk-[a-zA-Z0-9_\-]{8,}/gi, '[REDACTED]')
+            .replace(/bearer\s+[a-zA-Z0-9_\.\-]+/gi, 'Bearer [REDACTED]')
+            .replace(/AIza[0-9A-Za-z\-_]{35}/g, '[REDACTED]')
+            .replace(/ghp_[a-zA-Z0-9]{36}/gi, '[REDACTED]')
+            .replace(/glpat-[a-zA-Z0-9\-]{20,}/gi, '[REDACTED]')
+            .replace(/xox[baprs]-[0-9a-zA-Z]{10,}/gi, '[REDACTED]');
+        return sanitized;
+    }
+    if (Array.isArray(val)) {
+        if (seen.has(val)) return '[CIRCULAR]';
+        seen.add(val);
+        return val.map((item) => sanitizeSecrets(item, seen, parentIsSensitive));
+    }
+    if (typeof val === 'object') {
+        if (seen.has(val)) return '[CIRCULAR]';
+        seen.add(val);
+        const isSensitiveContext = Boolean(
+            parentIsSensitive ||
+            val.isSecret ||
+            val.secret ||
+            /password|passwd|pwd|pin|secret|credential|token|auth/i.test(
+                val.automationId || val.name || val.controlName || val.targetControl || val.className || (typeof val.target === 'string' ? val.target : '')
+            )
+        );
+        const sanitized = {};
+        for (const [k, v] of Object.entries(val)) {
+            const isNonSecretIdentifier = /^(sha|sha1|sha256|sha512|md5|hash|checksum|commit|gitCommit|id|taskId|stepId|uuid|file|path|url|href|version|title|name|status|strategy|tierName)/i.test(k);
+            if (!isNonSecretIdentifier && (/token|secret|key|password|credential|auth/i.test(k) || (isSensitiveContext && (k === 'text' || k === 'readText')))) {
+                sanitized[k] = '[REDACTED]';
+            } else {
+                sanitized[k] = sanitizeSecrets(v, seen, isSensitiveContext);
+            }
+        }
+        return sanitized;
+    }
+    return val;
+}
+
 class TaskContinuityStore {
     constructor(options = {}) {
         this.storeDir = assertStorageIsolation('TaskContinuityStore', options, ['storeDir', 'memoryDir']);
         this.filePath = options.filePath || path.join(this.storeDir, 'task-checkpoints.json');
         this.tasks = new Map();
         this.sqliteAdapter = options.sqliteAdapter || null;
+        this.loadFailed = false;
+        this.corruptBackupPath = null;
+        this.recoveredFromSqlite = false;
 
         this._ensureDir();
         this.load();
@@ -42,40 +90,198 @@ class TaskContinuityStore {
     load() {
         try {
             if (fs.existsSync(this.filePath)) {
-                const data = JSON.parse(fs.readFileSync(this.filePath, 'utf8'));
+                let data;
+                try {
+                    const raw = fs.readFileSync(this.filePath, 'utf8');
+                    data = JSON.parse(raw);
+                } catch (parseErr) {
+                    console.error('[TaskContinuityStore] Failed to parse task checkpoints JSON, backing up corrupted file:', parseErr.message);
+                    const corruptBackup = `${this.filePath}.corrupt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+                    try {
+                        fs.copyFileSync(this.filePath, corruptBackup);
+                        this.corruptBackupPath = corruptBackup;
+                    } catch {}
+                    this.loadFailed = true;
+                    this.tasks = new Map();
+
+                    // Fallback to SQLite if available
+                    if (this.sqliteAdapter && this.sqliteAdapter.initialized) {
+                        this.syncFromSqlite();
+                        if (this.tasks.size > 0) {
+                            this.recoveredFromSqlite = true;
+                        }
+                    }
+                    this.reconcileStartupTasks();
+                    return;
+                }
                 this.tasks = new Map(Object.entries(data.tasks || {}));
+                this.loadFailed = false;
             } else {
                 this.tasks = new Map();
+                this.loadFailed = false;
             }
         } catch (err) {
             console.error('Failed to load task checkpoints:', err.message);
             this.tasks = new Map();
         }
-        if (this.tasks.size === 0 && this.sqliteAdapter && this.sqliteAdapter.initialized) {
+        if (this.sqliteAdapter && this.sqliteAdapter.initialized) {
             this.syncFromSqlite();
         }
+        this.reconcileStartupTasks();
+    }
+
+    /**
+     * Sweep tasks left in progress/running across application restarts.
+     * Transitions them to INTERRUPTED (or AWAITING_RECONCILIATION if uncertain).
+     * @returns {boolean} Whether any tasks were reconciled
+     */
+    reconcileStartupTasks() {
+        let stateMutated = false;
+        const now = new Date().toISOString();
+
+        for (const [taskId, task] of this.tasks.entries()) {
+            if (task.status === TASK_STATUSES.IN_PROGRESS || task.status === 'running') {
+                const isUncertain = Boolean(task.uncertainStep && !task.uncertainStep.resolved);
+                task.status = isUncertain ? TASK_STATUSES.AWAITING_RECONCILIATION : TASK_STATUSES.INTERRUPTED;
+                task.interruptedAt = now;
+                task.updatedAt = now;
+                if (!task.error) {
+                    task.error = isUncertain
+                        ? 'Task execution outcome uncertain across application restart; awaiting reconciliation'
+                        : 'Task interrupted by application restart';
+                }
+                stateMutated = true;
+
+                if (this.sqliteAdapter && this.sqliteAdapter.initialized) {
+                    try {
+                        this.sqliteAdapter.saveTaskCheckpoint({
+                            taskId: task.taskId,
+                            objective: task.userRequest,
+                            totalSteps: task.totalSteps,
+                            currentStepIndex: task.currentStepIndex,
+                            steps: task.plan?.steps || [],
+                            status: task.status,
+                            resumptionState: {
+                                completedSteps: task.completedSteps || [],
+                                uncertainStep: task.uncertainStep || null,
+                                resolutions: task.resolutions || [],
+                                dryRun: task.dryRun,
+                                error: task.error
+                            }
+                        });
+                    } catch (err) {
+                        console.warn('[TaskContinuityStore] Failed to sync reconciled startup task to SQLite:', err.message);
+                    }
+                }
+            }
+        }
+
+        if (stateMutated && !this.loadFailed) {
+            this.save();
+        }
+        return stateMutated;
     }
 
     syncFromSqlite() {
         if (!this.sqliteAdapter || !this.sqliteAdapter.initialized) return;
         try {
             const list = this.sqliteAdapter.getTaskCheckpoints();
+            let stateMutated = false;
+
             for (const cp of list) {
-                if (!this.tasks.has(cp.taskId)) {
+                const existing = this.tasks.get(cp.taskId);
+                const sqliteUncertain = cp.resumptionState?.uncertainStep || null;
+                const sqliteUnresolved = Boolean(sqliteUncertain && !sqliteUncertain.resolved);
+                const sqliteCompleted = cp.resumptionState?.completedSteps || [];
+                const sqliteResolutions = cp.resumptionState?.resolutions || [];
+
+                if (!existing) {
                     this.tasks.set(cp.taskId, {
                         taskId: cp.taskId,
                         userRequest: cp.objective,
                         plan: { steps: cp.steps || [] },
                         totalSteps: cp.totalSteps,
                         currentStepIndex: cp.currentStepIndex,
-                        completedSteps: cp.resumptionState?.completedSteps || [],
+                        completedSteps: sqliteCompleted,
                         status: cp.status,
                         dryRun: Boolean(cp.resumptionState?.dryRun),
                         error: cp.resumptionState?.error || null,
+                        uncertainStep: sqliteUncertain,
+                        resolutions: sqliteResolutions,
                         createdAt: cp.createdAt,
                         updatedAt: cp.updatedAt
                     });
+                    stateMutated = true;
+                    continue;
                 }
+
+                // Crash consistency reconciliation rule:
+                // If EITHER store recorded an unresolved uncertain step, preserve it fail-closed
+                const jsonUncertain = existing.uncertainStep || null;
+                const jsonUnresolved = Boolean(jsonUncertain && !jsonUncertain.resolved);
+
+                let mergedUncertainStep;
+                let mergedStatus = existing.status;
+
+                if (sqliteUnresolved && !jsonUnresolved) {
+                    // SQLite recorded newer or uncommitted uncertainty
+                    mergedUncertainStep = sqliteUncertain;
+                    mergedStatus = TASK_STATUSES.AWAITING_RECONCILIATION;
+                } else if (jsonUnresolved && !sqliteUnresolved) {
+                    // JSON recorded uncertainty
+                    mergedUncertainStep = jsonUncertain;
+                    mergedStatus = TASK_STATUSES.AWAITING_RECONCILIATION;
+                } else {
+                    // Both unresolved or both resolved: prefer newer timestamp
+                    const sqliteTime = new Date(cp.updatedAt || 0).getTime();
+                    const jsonTime = new Date(existing.updatedAt || 0).getTime();
+                    if (sqliteTime > jsonTime) {
+                        mergedUncertainStep = sqliteUncertain;
+                        mergedStatus = cp.status;
+                    } else {
+                        mergedUncertainStep = jsonUncertain;
+                    }
+                }
+
+                // Merge completed steps and resolutions without losing progress
+                const completedMap = new Map();
+                (existing.completedSteps || []).forEach((s, idx) => {
+                    const key = s?.id || s?.stepId || (s?.stepIndex !== undefined ? `idx_${s.stepIndex}` : (s?.index !== undefined ? `idx_${s.index}` : `step_${idx}`));
+                    completedMap.set(key, s);
+                });
+                sqliteCompleted.forEach((s, idx) => {
+                    const key = s?.id || s?.stepId || (s?.stepIndex !== undefined ? `idx_${s.stepIndex}` : (s?.index !== undefined ? `idx_${s.index}` : `step_${idx}`));
+                    if (!completedMap.has(key) || s?.verified) {
+                        completedMap.set(key, s);
+                    }
+                });
+
+                const resolutionMap = new Map();
+                for (const r of (existing.resolutions || [])) {
+                    if (r?.stepId) resolutionMap.set(`${r.stepId}_${r.attempt || 1}`, r);
+                }
+                for (const r of sqliteResolutions) {
+                    if (r?.stepId) resolutionMap.set(`${r.stepId}_${r.attempt || 1}`, r);
+                }
+
+                const merged = {
+                    ...existing,
+                    status: mergedStatus,
+                    uncertainStep: mergedUncertainStep,
+                    completedSteps: Array.from(completedMap.values()),
+                    resolutions: Array.from(resolutionMap.values()),
+                    updatedAt: new Date(Math.max(
+                        new Date(existing.updatedAt || 0).getTime(),
+                        new Date(cp.updatedAt || 0).getTime()
+                    )).toISOString()
+                };
+
+                this.tasks.set(cp.taskId, merged);
+                stateMutated = true;
+            }
+
+            if (stateMutated && !this.loadFailed) {
+                this.save();
             }
         } catch (err) {
             console.warn('[TaskContinuityStore] Failed to sync checkpoints from SQLite:', err.message);
@@ -83,6 +289,10 @@ class TaskContinuityStore {
     }
 
     save() {
+        if (this.loadFailed) {
+            console.warn('[TaskContinuityStore] Skipping save to prevent overwriting corrupted task continuity store that has not been recovered.');
+            return false;
+        }
         let tempPath = null;
         let success = false;
         try {
@@ -118,23 +328,89 @@ class TaskContinuityStore {
         completedSteps = [],
         status = TASK_STATUSES.IN_PROGRESS,
         dryRun = false,
-        error = null
+        error = null,
+        uncertainStep = undefined,
+        resolutions = undefined,
+        replanHistory = undefined
     }) {
         if (!taskId) throw new Error('taskId is required for checkpoint');
 
         const now = new Date().toISOString();
         const existing = this.tasks.get(taskId) || {};
 
+        // Guard against stale write regressing resolved uncertainty to unresolved
+        let effectiveUncertainStep;
+        if (existing.uncertainStep && existing.uncertainStep.resolved) {
+            if (uncertainStep && !uncertainStep.resolved && uncertainStep.stepId === existing.uncertainStep.stepId) {
+                // Stale write attempting to regress a resolved step: preserve resolved state
+                effectiveUncertainStep = existing.uncertainStep;
+            } else {
+                effectiveUncertainStep = uncertainStep !== undefined ? uncertainStep : existing.uncertainStep;
+            }
+        } else {
+            effectiveUncertainStep = uncertainStep !== undefined
+                ? uncertainStep
+                : (existing.uncertainStep || null);
+        }
+
+        // Guard against stale write dropping verified completed steps
+        let effectiveCompletedSteps;
+        const incomingSteps = Array.isArray(completedSteps) ? completedSteps : [];
+        const existingSteps = Array.isArray(existing.completedSteps) ? existing.completedSteps : [];
+        if (incomingSteps.length === 0 && existingSteps.length > 0) {
+            effectiveCompletedSteps = existingSteps;
+        } else if (existingSteps.length > incomingSteps.length) {
+            const stepMap = new Map();
+            existingSteps.forEach((s, idx) => {
+                const key = s?.id || s?.stepId || (s?.stepIndex !== undefined ? `idx_${s.stepIndex}` : (s?.index !== undefined ? `idx_${s.index}` : `step_${idx}`));
+                stepMap.set(key, s);
+            });
+            incomingSteps.forEach((s, idx) => {
+                const key = s?.id || s?.stepId || (s?.stepIndex !== undefined ? `idx_${s.stepIndex}` : (s?.index !== undefined ? `idx_${s.index}` : `step_${idx}`));
+                stepMap.set(key, s);
+            });
+            effectiveCompletedSteps = Array.from(stepMap.values());
+        } else {
+            effectiveCompletedSteps = incomingSteps.length ? incomingSteps : existingSteps;
+        }
+
+        // Merge resolutions monotonically
+        const resMap = new Map();
+        for (const r of (existing.resolutions || [])) {
+            if (r?.stepId) resMap.set(`${r.stepId}_${r.attempt || 1}`, r);
+        }
+        for (const r of (Array.isArray(resolutions) ? resolutions : [])) {
+            if (r?.stepId) resMap.set(`${r.stepId}_${r.attempt || 1}`, r);
+        }
+        const effectiveResolutions = Array.from(resMap.values());
+
+        const effectiveReplanHistory = Array.isArray(replanHistory)
+            ? replanHistory
+            : (existing.replanHistory || []);
+
+        let effectiveStatus = status;
+        if (existing.status === TASK_STATUSES.CANCELLED && status !== TASK_STATUSES.CANCELLED) {
+            effectiveStatus = TASK_STATUSES.CANCELLED;
+        } else if (existing.status === TASK_STATUSES.DISCARDED && status !== TASK_STATUSES.DISCARDED) {
+            effectiveStatus = TASK_STATUSES.DISCARDED;
+        } else if (existing.status === TASK_STATUSES.COMPLETED && status === TASK_STATUSES.IN_PROGRESS) {
+            effectiveStatus = TASK_STATUSES.COMPLETED;
+        }
+
         const checkpoint = {
             taskId,
             userRequest: userRequest || existing.userRequest || '',
-            plan: plan.steps ? plan : (existing.plan || { steps: [] }),
+            plan: sanitizeSecrets(plan.steps ? plan : (existing.plan || { steps: [] })),
             totalSteps: (plan.steps || existing.plan?.steps || []).length,
             currentStepIndex,
-            completedSteps: completedSteps.length ? completedSteps : (existing.completedSteps || []),
-            status,
+            completedSteps: sanitizeSecrets(effectiveCompletedSteps),
+            status: effectiveStatus,
             dryRun: Boolean(dryRun),
-            error: error || null,
+            error: sanitizeSecrets(error || null),
+            uncertainStep: sanitizeSecrets(effectiveUncertainStep),
+            resolutions: sanitizeSecrets(effectiveResolutions),
+            replanHistory: sanitizeSecrets(effectiveReplanHistory),
+            version: (existing.version || 0) + 1,
             createdAt: existing.createdAt || now,
             updatedAt: now
         };
@@ -154,7 +430,10 @@ class TaskContinuityStore {
                     resumptionState: {
                         completedSteps: checkpoint.completedSteps,
                         dryRun: checkpoint.dryRun,
-                        error: checkpoint.error
+                        error: checkpoint.error,
+                        uncertainStep: checkpoint.uncertainStep,
+                        resolutions: checkpoint.resolutions,
+                        replanHistory: checkpoint.replanHistory
                     },
                     createdAt: checkpoint.createdAt
                 });
@@ -172,12 +451,31 @@ class TaskContinuityStore {
     markInterrupted(taskId, reason = 'Application session interrupted') {
         const task = this.tasks.get(taskId);
         if (!task) return null;
-        if (task.status === TASK_STATUSES.IN_PROGRESS) {
+        if (task.status === TASK_STATUSES.IN_PROGRESS || task.status === TASK_STATUSES.AWAITING_RECONCILIATION) {
             task.status = TASK_STATUSES.INTERRUPTED;
             task.error = reason;
             task.updatedAt = new Date().toISOString();
             this.save();
         }
+        return task;
+    }
+
+    /**
+     * Record an auditable resolution receipt for an uncertain step in this store.
+     */
+    recordResolution(taskId, resolutionReceipt) {
+        const task = this.tasks.get(taskId);
+        if (!task) return null;
+        if (!task.resolutions) task.resolutions = [];
+        task.resolutions.push(resolutionReceipt);
+        if (task.uncertainStep && task.uncertainStep.stepId === resolutionReceipt.stepId) {
+            task.uncertainStep.resolved = true;
+            task.uncertainStep.resolvedAt = resolutionReceipt.timestamp;
+            task.uncertainStep.resolution = resolutionReceipt.resolution;
+            task.uncertainStep.evidence = resolutionReceipt.evidence;
+        }
+        task.updatedAt = new Date().toISOString();
+        this.save();
         return task;
     }
 
@@ -191,12 +489,16 @@ class TaskContinuityStore {
     }
 
     /**
-     * Get list of interrupted tasks that can be resumed.
+     * Get list of interrupted or awaiting reconciliation tasks that can be inspected or resumed.
      */
     getInterruptedTasks() {
         const interrupted = [];
         for (const task of this.tasks.values()) {
-            if (task.status === TASK_STATUSES.INTERRUPTED || task.status === TASK_STATUSES.IN_PROGRESS) {
+            if (
+                task.status === TASK_STATUSES.INTERRUPTED ||
+                task.status === TASK_STATUSES.IN_PROGRESS ||
+                task.status === TASK_STATUSES.AWAITING_RECONCILIATION
+            ) {
                 interrupted.push(task);
             }
         }
@@ -206,7 +508,7 @@ class TaskContinuityStore {
 
     /**
      * Inspect task state before resuming.
-     * Evaluates verification receipts and identifies any consequential pending steps.
+     * Evaluates verification receipts, identifies uncertain step outcomes, and blocks replay fail-closed.
      */
     inspectTaskForResume(taskId) {
         const task = this.tasks.get(taskId);
@@ -215,7 +517,8 @@ class TaskContinuityStore {
         }
 
         const allSteps = task.plan?.steps || [];
-        const completed = task.completedSteps || [];
+        // Only verified, successful steps count as completed
+        const completed = (task.completedSteps || []).filter((s) => s.verified && s.result?.ok !== false);
         const completedIndices = new Set(completed.map((s) => {
             if (s.stepIndex !== undefined) return s.stepIndex;
             if (s.index !== undefined) return s.index - 1;
@@ -242,6 +545,11 @@ class TaskContinuityStore {
                    toolId.includes('execute');
         });
 
+        const hasUnresolvedUncertain = Boolean(task.uncertainStep && !task.uncertainStep.resolved);
+        const blockingReason = hasUnresolvedUncertain
+            ? `Task has an unresolved uncertain step outcome (${task.uncertainStep.reason || 'timeout / in-flight side-effect'}). Automatic replay is strictly blocked.`
+            : null;
+
         return {
             taskId: task.taskId,
             userRequest: task.userRequest,
@@ -256,7 +564,10 @@ class TaskContinuityStore {
             lastCompletedStep: lastCompleted,
             hasConsequentialPending: consequentialPending.length > 0,
             consequentialPendingSteps: consequentialPending,
-            isResumable: pendingSteps.length > 0 && task.status !== TASK_STATUSES.COMPLETED
+            hasUncertainStep: hasUnresolvedUncertain,
+            uncertainStep: hasUnresolvedUncertain ? task.uncertainStep : null,
+            blockingReason,
+            isResumable: !hasUnresolvedUncertain && pendingSteps.length > 0 && task.status !== TASK_STATUSES.COMPLETED
         };
     }
 
@@ -265,7 +576,14 @@ class TaskContinuityStore {
      * Re-executes only the remaining pending steps.
      */
     async resumeTask(taskId, coordinator, options = {}) {
+        if (coordinator && typeof coordinator._resumeTaskInternal === 'function') {
+            return await coordinator._resumeTaskInternal(taskId, options);
+        }
+
         const inspection = this.inspectTaskForResume(taskId);
+        if (inspection.hasUncertainStep) {
+            throw new UncertainOutcomeError(taskId, inspection.uncertainStep?.stepId, inspection.blockingReason);
+        }
         if (!inspection.isResumable) {
             throw new Error(`Task ${taskId} has no pending steps to resume`);
         }

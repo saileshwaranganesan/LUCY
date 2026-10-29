@@ -154,7 +154,7 @@ function normalizeAudioBuffer(input) {
         for (let i = 0; i < input.length; i++) {
             floatSamples[i] = input[i] / 32768.0;
         }
-    } else if (Buffer.isBuffer(input) || input instanceof Uint8Array) {
+    } else if ((typeof Buffer !== 'undefined' && Buffer.isBuffer(input)) || input instanceof Uint8Array) {
         // Check if WAV header (first 4 bytes RIFF)
         let byteOffset = 0;
         let isPcm16 = true;
@@ -177,17 +177,19 @@ function normalizeAudioBuffer(input) {
         return new Float32Array(0);
     }
 
-    // Remove DC offset only on long buffers (>= 1600 samples = 100ms)
-    // Subtracting mean on short micro-chunks (32ms) distorts speech vowel formants!
+    // Standard IIR DC-blocking filter (y[n] = x[n] - x[n-1] + R * y[n-1], R = 0.995)
+    // Eliminates hardware DC bias without shifting pure silence or distorting vowel formants.
+    // Applied to complete phrase / evaluation windows (>= 4800 samples) to avoid boundary glitches on streaming chunks.
     const len = floatSamples.length;
-    if (len >= 1600) {
-        let sum = 0;
+    if (len >= 4800) {
+        let yPrev = 0;
+        let xPrev = floatSamples[0] || 0;
         for (let i = 0; i < len; i++) {
-            sum += floatSamples[i];
-        }
-        const dcMean = sum / len;
-        for (let i = 0; i < len; i++) {
-            floatSamples[i] -= dcMean;
+            const x = floatSamples[i];
+            const y = x - xPrev + 0.995 * yPrev;
+            floatSamples[i] = y;
+            xPrev = x;
+            yPrev = y;
         }
     }
 

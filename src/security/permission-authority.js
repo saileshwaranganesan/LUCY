@@ -187,13 +187,17 @@ class PermissionAuthority {
                     action: request.action,
                     riskTier: request.riskTier,
                     params: request.params,
+                    target: request.params?.target,
                     promptReason,
                     timeoutMs
                 });
                 const isApproved = (userApproved && typeof userApproved === 'object')
                     ? Boolean(userApproved.confirmed ?? userApproved.approved)
                     : Boolean(userApproved);
-                resolve({ approved: isApproved });
+                const userAuthorizedDiscard = (userApproved && typeof userApproved === 'object' && userApproved.userAuthorizedDiscard !== undefined)
+                    ? Boolean(userApproved.userAuthorizedDiscard)
+                    : Boolean(isApproved && (request.action === 'dont_save' || request.params?.action === 'dont_save' || request.params?.savePolicy === 'dont_save'));
+                resolve({ approved: isApproved, userAuthorizedDiscard });
             } catch (err) {
                 reject(err);
             }
@@ -234,7 +238,11 @@ class PermissionAuthority {
                 reason: userApproved ? 'User explicitly granted confirmation' : 'User declined permission',
                 requiresConfirmation: true,
                 auditId,
-                timedOut: false
+                timedOut: false,
+                toolId: request.toolId,
+                action: request.action,
+                target: request.params?.target,
+                userAuthorizedDiscard: Boolean(userApproved && outcome.userAuthorizedDiscard)
             };
             this._logAudit({ auditId, timestamp, request, decision });
             return decision;

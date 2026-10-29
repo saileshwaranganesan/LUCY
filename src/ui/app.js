@@ -253,11 +253,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function handleWakeWordToggle(isEnabled) {
         syncWakeWordUI(isEnabled);
+        let actualSuccess = isEnabled;
         if (voiceController) {
-            voiceController.setWakeWordEnabled(isEnabled);
+            actualSuccess = voiceController.setWakeWordEnabled(isEnabled);
+            if (isEnabled && !actualSuccess) {
+                syncWakeWordUI(false);
+                showBubble('Could not start wake-word: microphone is unavailable.');
+                return;
+            }
         }
         if (window.lucyIpc && typeof window.lucyIpc.setVoiceConfig === 'function') {
-            await window.lucyIpc.setVoiceConfig({ wakeWordEnabled: isEnabled });
+            await window.lucyIpc.setVoiceConfig({ wakeWordEnabled: isEnabled && actualSuccess });
         }
         showBubble(isEnabled ? 'Wake-word detection active: say "Hey Lucy".' : 'Wake-word detection disabled.');
     }
@@ -292,16 +298,31 @@ document.addEventListener('DOMContentLoaded', () => {
                     renderer.setVisualState({ emotion: 'listening' });
                     emotionLabel.textContent = 'Listening';
                     showBubble('Listening... Speak now!');
-                } else if (voiceState === 'processing') {
+                } else if (voiceState === 'transcribing' || voiceState === 'processing') {
                     if (micBtn) {
                         micBtn.classList.remove('listening');
                         micBtn.classList.add('processing');
-                        micBtn.textContent = '⏳ Processing...';
+                        micBtn.textContent = '⏳ Transcribing...';
                     }
-                    statusLabel.textContent = 'PROCESSING';
+                    statusLabel.textContent = 'TRANSCRIBING';
                     statusDot.style.background = 'var(--accent-amber)';
                     renderer.setVisualState({ emotion: 'thinking' });
                     emotionLabel.textContent = 'Thinking';
+                } else if (voiceState === 'understanding') {
+                    statusLabel.textContent = 'UNDERSTANDING';
+                    statusDot.style.background = 'var(--accent-purple)';
+                    renderer.setVisualState({ emotion: 'thinking' });
+                    emotionLabel.textContent = 'Thinking';
+                } else if (voiceState === 'awaiting_confirmation') {
+                    statusLabel.textContent = 'AWAITING APPROVAL';
+                    statusDot.style.background = 'var(--accent-amber)';
+                    renderer.setVisualState({ emotion: 'curious' });
+                    emotionLabel.textContent = 'Awaiting Confirmation';
+                } else if (voiceState === 'executing') {
+                    statusLabel.textContent = 'EXECUTING';
+                    statusDot.style.background = 'var(--accent-purple)';
+                    renderer.setVisualState({ emotion: 'thinking' });
+                    emotionLabel.textContent = 'Executing';
                 } else if (voiceState === 'speaking') {
                     if (stopVoiceBtn) stopVoiceBtn.style.display = 'inline-block';
                     statusLabel.textContent = 'SPEAKING';
@@ -310,13 +331,23 @@ document.addEventListener('DOMContentLoaded', () => {
                         renderer.setVisualState({ emotion: 'speaking' });
                     }
                     emotionLabel.textContent = 'Speaking';
+                } else if (voiceState === 'cancelled') {
+                    statusLabel.textContent = 'CANCELLED';
+                    statusDot.style.background = 'var(--accent-amber)';
+                    renderer.setVisualState({ emotion: 'idle' });
+                    emotionLabel.textContent = 'Cancelled';
+                } else if (voiceState === 'error') {
+                    statusLabel.textContent = 'ERROR';
+                    statusDot.style.background = 'var(--accent-red)';
+                    renderer.setVisualState({ emotion: 'worried' });
+                    emotionLabel.textContent = 'Error';
                 } else if (voiceState === 'idle') {
                     if (micBtn) {
                         micBtn.classList.remove('listening', 'processing');
                         micBtn.textContent = '🎙️ Mic';
                     }
                     if (stopVoiceBtn) stopVoiceBtn.style.display = 'none';
-                    if (['SPEAKING', 'LISTENING', 'PROCESSING'].includes(statusLabel.textContent)) {
+                    if (['SPEAKING', 'LISTENING', 'PROCESSING', 'TRANSCRIBING', 'UNDERSTANDING', 'EXECUTING'].includes(statusLabel.textContent)) {
                         statusLabel.textContent = 'READY';
                         statusDot.style.background = 'var(--accent-cyan)';
                         if (renderer.state.emotion !== 'pet' && !String(renderer.state.emotion).startsWith('trick_')) {
@@ -336,13 +367,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 showBubble(`"${interimText}"`);
             },
             onFinalTranscript: (finalText) => {
-                commandInput.value = finalText;
+                const cleaned = (finalText || '').trim();
+                commandInput.value = cleaned;
                 if (micBtn) {
                     micBtn.classList.remove('listening', 'processing');
                     micBtn.textContent = '🎙️ Mic';
                 }
-                if (finalText && finalText.trim()) {
+                if (cleaned) {
                     handleCommand();
+                } else {
+                    const clarifyMsg = "I didn't catch that. Could you please repeat?";
+                    showBubble(clarifyMsg);
+                    appendFeedEntry('Voice Input', 'No speech detected or recording was unintelligible.', 'normal', 'Voice Prompt');
+                    renderer.setVisualState({ emotion: 'curious' });
+                    statusLabel.textContent = 'READY';
+                    statusDot.style.background = 'var(--accent-cyan)';
+                    if (voiceController && voiceController.ttsEnabled) {
+                        voiceController.speak(clarifyMsg).catch(() => {});
+                    }
                 }
             },
             onError: (err) => {
@@ -363,6 +405,32 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
         window.voiceController = voiceController;
+        if (window.lucyIpc && typeof window.lucyIpc.getVoiceConfig === 'function') {
+            window.lucyIpc.getVoiceConfig().then((res) => {
+                if (res && res.config) {
+                    if (voiceController) {
+                        voiceController.setVoiceConfig(res.config);
+                        if (res.config.wakeWordEnabled) {
+                            voiceController.setWakeWordEnabled(true);
+                        }
+                    }
+                    // Immediately synchronize DOM controls on startup so defaults do not overwrite saved state
+                    const engine = res.config.ttsEngine || 'kokoro';
+                    const selectEngine = document.getElementById('settingsTtsEngineSelect');
+                    if (selectEngine) selectEngine.value = engine;
+                    if (typeof updateEngineUiVisibility === 'function') {
+                        updateEngineUiVisibility(engine);
+                    }
+                    const selectKokoroVoice = document.getElementById('settingsKokoroVoiceSelect');
+                    if (selectKokoroVoice && res.config.kokoroVoice) {
+                        selectKokoroVoice.value = res.config.kokoroVoice;
+                    }
+                    if (typeof refreshVoiceSettingsUI === 'function') {
+                        refreshVoiceSettingsUI();
+                    }
+                }
+            }).catch(() => {});
+        }
     }
 
     // Voice UI listeners
@@ -490,6 +558,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // Listen for pet interactions originating from desktop floating companion
     if (window.lucyIpc && window.lucyIpc.onPetInteraction) {
         window.lucyIpc.onPetInteraction((data) => {
+            // Guard: Never interrupt active safety confirmation prompts or permission dialogues
+            const isAwaitingConfirmation = (permissionModal && permissionModal.classList.contains('active')) ||
+                                           (voiceController && (voiceController.state === 'awaiting_confirmation' || voiceController.state === 'awaiting-confirmation')) ||
+                                           (statusLabel && statusLabel.textContent === 'AWAITING APPROVAL');
+            if (isAwaitingConfirmation) {
+                return;
+            }
             const phrase = data?.phrase || (petManager ? petManager.getNextAffectionPhrase() : "Aww, that tickles! ✨");
             if (voiceController && voiceController.ttsEnabled) {
                 voiceController.stopSpeaking();
@@ -900,8 +975,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         appendFeedEntry('User Request', text, 'normal', 'Instruction');
         renderer.setVisualState({ emotion: 'thinking' });
-        statusLabel.textContent = 'PLANNING';
+        statusLabel.textContent = 'UNDERSTANDING';
         statusDot.style.background = 'var(--accent-purple)';
+        if (window.lucyIpc && window.lucyIpc.sendVoiceState) {
+            window.lucyIpc.sendVoiceState({ voiceState: 'understanding', text });
+        }
 
         const taskId = 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
         currentActiveTaskId = taskId;
@@ -928,6 +1006,9 @@ document.addEventListener('DOMContentLoaded', () => {
             renderer.setVisualState({ emotion: 'worried' });
             statusLabel.textContent = 'FAILED';
             statusDot.style.background = 'var(--accent-red)';
+            if (window.lucyIpc && window.lucyIpc.sendVoiceState) {
+                window.lucyIpc.sendVoiceState({ voiceState: 'error', text: err.message });
+            }
             const errMsg = `I encountered an issue executing that command: ${err.message || 'Execution halted.'}`;
             showBubble(errMsg);
             if (voiceController && voiceController.ttsEnabled) {
@@ -960,10 +1041,15 @@ document.addEventListener('DOMContentLoaded', () => {
             renderer.setVisualState({ emotion: 'curious' });
             statusLabel.textContent = 'CANCELLED';
             statusDot.style.background = 'var(--accent-amber)';
+            if (window.lucyIpc && window.lucyIpc.sendVoiceState) {
+                window.lucyIpc.sendVoiceState({ voiceState: 'cancelled' });
+            }
             const cancelMsg = 'Response was cancelled.';
             showBubble(cancelMsg);
             if (voiceController && voiceController.ttsEnabled) {
                 voiceController.speak(cancelMsg).catch(() => {});
+            } else if (voiceController) {
+                voiceController.setVoiceState('idle');
             }
             return;
         }
@@ -983,6 +1069,8 @@ document.addEventListener('DOMContentLoaded', () => {
             showBubble(failSpeech);
             if (voiceController && voiceController.ttsEnabled) {
                 voiceController.speakResponse(failSpeech).catch(() => {});
+            } else if (voiceController) {
+                voiceController.setVoiceState('idle');
             }
             loadRoutingDiagnostics();
             return;
@@ -1004,8 +1092,11 @@ document.addEventListener('DOMContentLoaded', () => {
             statusLabel.textContent = 'READY';
             statusDot.style.background = 'var(--accent-cyan)';
             showBubble('Configure a provider in Settings to enable reasoning.');
-            if (response.replyText && voiceController && voiceController.ttsEnabled) {
-                voiceController.speakResponse(response.replyText);
+            const spokenNotice = response.spokenText || 'No AI provider is configured. Running in offline tool mode. You can configure a provider in Settings.';
+            if (spokenNotice && voiceController && voiceController.ttsEnabled) {
+                voiceController.speakResponse(spokenNotice);
+            } else if (voiceController) {
+                voiceController.setVoiceState('idle');
             }
             return;
         }
@@ -1048,6 +1139,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (completedReply && voiceController && voiceController.ttsEnabled) {
             voiceController.speakResponse(completedReply).catch(() => {});
+        } else if (voiceController) {
+            voiceController.setVoiceState('idle');
         }
 
         await refreshStatus();
@@ -1072,6 +1165,11 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             permissionModal.classList.add('active');
             renderer.setVisualState({ emotion: 'curious' });
+            statusLabel.textContent = 'AWAITING APPROVAL';
+            statusDot.style.background = 'var(--accent-amber)';
+            if (window.lucyIpc && window.lucyIpc.sendVoiceState) {
+                window.lucyIpc.sendVoiceState({ voiceState: 'awaiting_confirmation' });
+            }
         });
     }
 
@@ -1084,6 +1182,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     approvePermissionBtn.addEventListener('click', () => {
         permissionModal.classList.remove('active');
+        if (window.lucyIpc && window.lucyIpc.sendVoiceState) {
+            window.lucyIpc.sendVoiceState({ voiceState: 'executing' });
+        }
         if (pendingPermissionResolve) {
             pendingPermissionResolve(true);
             pendingPermissionResolve = null;
@@ -1092,6 +1193,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     denyPermissionBtn.addEventListener('click', () => {
         permissionModal.classList.remove('active');
+        if (window.lucyIpc && window.lucyIpc.sendVoiceState) {
+            window.lucyIpc.sendVoiceState({ voiceState: 'idle' });
+        }
         if (pendingPermissionResolve) {
             pendingPermissionResolve(false);
             pendingPermissionResolve = null;
@@ -1678,8 +1782,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function persistVoiceSettings() {
         if (!window.lucyIpc || typeof window.lucyIpc.setVoiceConfig !== 'function') return;
+        const selectEngineElem = document.getElementById('settingsTtsEngineSelect');
+        const selectKokoroVoiceElem = document.getElementById('settingsKokoroVoiceSelect');
+        const activeEngine = (selectEngineElem && selectEngineElem.value) ? selectEngineElem.value : (voiceController?.ttsEngine || 'kokoro');
+        const activeKokoroVoice = (selectKokoroVoiceElem && selectKokoroVoiceElem.value) ? selectKokoroVoiceElem.value : (voiceController?.kokoroVoice || 'af_bella');
         const config = {
             voiceName: settingVoiceSelect ? settingVoiceSelect.value : '',
+            ttsEngine: activeEngine,
+            kokoroVoice: activeKokoroVoice,
             pitch: settingVoicePitch ? parseFloat(settingVoicePitch.value) : 1.05,
             rate: settingVoiceRate ? parseFloat(settingVoiceRate.value) : 1.02,
             volume: settingVoiceVolume ? parseFloat(settingVoiceVolume.value) : 1.0,
@@ -1912,6 +2022,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (checkWakeWord) checkWakeWord.checked = wakeActive;
                 if (settingWakeWordEnabled) settingWakeWordEnabled.checked = wakeActive;
                 syncWakeWordUI(wakeActive);
+                if (voiceController) {
+                    voiceController.setVoiceConfig(vc);
+                    if (wakeActive !== voiceController.wakeWordEngine?.enabled) {
+                        voiceController.setWakeWordEnabled(wakeActive);
+                    }
+                }
 
                 const wakeSens = vc.wakeWordSensitivity ?? 0.5;
                 if (settingWakeWordSensitivity) settingWakeWordSensitivity.value = wakeSens;

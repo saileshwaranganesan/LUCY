@@ -126,6 +126,14 @@ test('Repair 9: Non-Intrusive Desktop Automation & Cursor Independence', async (
             return { verified: true, action: 'clicked', tier: 4, physicalInputUsed: true };
         };
 
+        manager.trackedApps.set('app_1234', {
+            appId: 'app_1234',
+            pid: 1234,
+            exe: 'calc.exe',
+            launchedByLucy: true,
+            lifecycleState: 'active'
+        });
+
         const res = await manager.clickElement('app_1234', { name: 'CustomControl' });
         assert.equal(res.success, false);
         assert.equal(res.reason, 'TIER3_UIA_UNSUPPORTED');
@@ -144,6 +152,14 @@ test('Repair 9: Non-Intrusive Desktop Automation & Cursor Independence', async (
             }
         };
 
+        manager.trackedApps.set('non_existent_app', {
+            appId: 'non_existent_app',
+            pid: 7777,
+            exe: 'notepad.exe',
+            launchedByLucy: true,
+            lifecycleState: 'active'
+        });
+
         await assert.rejects(
             async () => await manager.typeText('non_existent_app', 'hello'),
             /Application window not found/
@@ -161,6 +177,14 @@ test('Repair 9: Non-Intrusive Desktop Automation & Cursor Independence', async (
                 throw err;
             }
         };
+
+        manager.trackedApps.set('app_1234', {
+            appId: 'app_1234',
+            pid: 1234,
+            exe: 'notepad.exe',
+            launchedByLucy: true,
+            lifecycleState: 'active'
+        });
 
         const res = await manager.typeText('app_1234', 'sensitive data');
         assert.equal(res.success, false);
@@ -315,6 +339,14 @@ test('Repair 9: Non-Intrusive Desktop Automation & Cursor Independence', async (
                 method: 'PhysicalMouseEvent'
             };
         };
+
+        manager.trackedApps.set('app_1234', {
+            appId: 'app_1234',
+            pid: 1234,
+            exe: 'notepad.exe',
+            launchedByLucy: true,
+            lifecycleState: 'active'
+        });
 
         const res = await manager.clickElement('app_1234', { name: 'LegacyBtn' });
         assert.equal(res.success, true);

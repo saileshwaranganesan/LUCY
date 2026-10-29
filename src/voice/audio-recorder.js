@@ -155,7 +155,8 @@ class AudioRecorder {
                         channelCount: 1,
                         sampleRate: this.sampleRate,
                         echoCancellation: true,
-                        noiseSuppression: true
+                        noiseSuppression: true,
+                        autoGainControl: true
                     }
                 });
 
@@ -216,7 +217,15 @@ class AudioRecorder {
                 };
 
                 this.sourceNode.connect(this.processorNode);
-                this.processorNode.connect(this.audioContext.destination);
+                // Keep ScriptProcessor alive without leaking microphone output to system speakers
+                if (typeof this.audioContext.createGain === 'function') {
+                    this._muteGain = this.audioContext.createGain();
+                    this._muteGain.gain.value = 0;
+                    this.processorNode.connect(this._muteGain);
+                    this._muteGain.connect(this.audioContext.destination);
+                } else {
+                    this.processorNode.connect(this.audioContext.destination);
+                }
 
                 return true;
             } finally {
@@ -346,6 +355,10 @@ class AudioRecorder {
         this.audioChunks = [];
         this.totalSamples = 0;
 
+        if (this._muteGain) {
+            try { this._muteGain.disconnect(); } catch (_) {}
+            this._muteGain = null;
+        }
         if (this.processorNode) {
             try { this.processorNode.disconnect(); } catch (_) {}
             this.processorNode = null;

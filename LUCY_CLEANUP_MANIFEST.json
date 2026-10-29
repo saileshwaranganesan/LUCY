@@ -1,0 +1,192 @@
+[
+  {
+    "path": "dist-release-backup",
+    "action": "deleted",
+    "category": "Build & Release Backups",
+    "reason": "Obsolete 1.5 GB directory backup of packaged release from earlier prompt runs.",
+    "evidence": "dist-release is the active release directory verified by release-manifest.json; dist-release-backup was an unreferenced copy.",
+    "validation": "Removed safely; npm run test:packaging and npm run test:flow pass 100%.",
+    "risk": "Low — purely disposable generated build artifact.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "dist-release-prompt4-backup",
+    "action": "deleted",
+    "category": "Build & Release Backups",
+    "reason": "Obsolete 1.0 GB directory backup of packaged release from Prompt 4.",
+    "evidence": "Unreferenced duplicate build output; dist-release contains the active production build.",
+    "validation": "Removed safely; zero references in package.json or tests.",
+    "risk": "Low — purely disposable generated build artifact.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "dist-audit-test",
+    "action": "deleted",
+    "category": "Build & Release Backups",
+    "reason": "Obsolete 519 MB unpacked build directory from forensic audit test.",
+    "evidence": "Unreferenced temporary unpack directory.",
+    "validation": "Removed safely; npm run test:packaging passes 100%.",
+    "risk": "Low — purely disposable generated build artifact.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": ".test-scratch",
+    "action": "deleted",
+    "category": "Temporary Test Artifacts",
+    "reason": "Stale temporary scratch files and test output from October 17.",
+    "evidence": "Directory is gitignored; contained old temporary runs.",
+    "validation": "Removed safely; test suites create fresh temporary fixtures in os.tmpdir().",
+    "risk": "Low — temporary test cache.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "scratch/portable-extracted",
+    "action": "deleted",
+    "category": "Temporary Unpack Directories",
+    "reason": "Obsolete 520 MB NSIS portable extraction folder from previous test run.",
+    "evidence": "Scratch extraction directory gitignored; active portable test extracts into dynamic temp folders.",
+    "validation": "Removed safely without affecting scratch test scripts.",
+    "risk": "Low — temporary extraction directory.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "scratch/extracted_asar",
+    "action": "deleted",
+    "category": "Temporary Unpack Directories",
+    "reason": "Obsolete 43 MB ASAR inspection unpack from October 14.",
+    "evidence": "Temporary inspection folder; unreferenced.",
+    "validation": "Removed safely; scratch scripts intact.",
+    "risk": "Low — temporary ASAR extraction.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "scratch/extracted_new_asar",
+    "action": "deleted",
+    "category": "Temporary Unpack Directories",
+    "reason": "Obsolete 65 MB ASAR inspection unpack from October 14.",
+    "evidence": "Temporary inspection folder; unreferenced.",
+    "validation": "Removed safely; scratch scripts intact.",
+    "risk": "Low — temporary ASAR extraction.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "scratch/asar_unpacked",
+    "action": "deleted",
+    "category": "Temporary Unpack Directories",
+    "reason": "Obsolete 65 MB ASAR inspection unpack from October 16.",
+    "evidence": "Temporary inspection folder; unreferenced.",
+    "validation": "Removed safely; scratch scripts intact.",
+    "risk": "Low — temporary ASAR extraction.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "PHASE0_*.md, PHASE3_*.md - PHASE10_*.md, FINAL_DESKTOP_SAFETY_EVIDENCE_REPORT.md, WAKE_WORD_*.md, ANTIGRAVITY_ENVIRONMENT_UPGRADE_REPORT.md, COMPREHENSIVE_REPAIR_FORENSIC_AUDIT.md",
+    "action": "consolidated",
+    "category": "Historical Documentation Archive",
+    "reason": "Root directory was cluttered with 21 historical audit and phase report files.",
+    "evidence": "All reports contain valuable historical evidence but cluttered the root folder.",
+    "validation": "Relocated to docs/audit/phase-reports/ preserving 100% of historical text and evidence.",
+    "risk": "Low — historical documents preserved and organized.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "tests/flow/single-instance.test.js",
+    "action": "updated",
+    "category": "Test Harness Hygiene",
+    "reason": "Fixed ELECTRON_RUN_AS_NODE environment variable leakage causing false test failure when run from IDE terminals.",
+    "evidence": "Test failed with code 1 in IDE shell; deleting ELECTRON_RUN_AS_NODE before spawn allowed test to pass cleanly with code 0.",
+    "validation": "npm run test:flow passes 23 / 23 tests (100%).",
+    "risk": "Low — test environment sanitization only.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "tests/flow/smoke-electron.test.js",
+    "action": "updated",
+    "category": "Test Harness Hygiene",
+    "reason": "Fixed ELECTRON_RUN_AS_NODE environment variable leakage in smoke test fixture.",
+    "evidence": "Child process spawn sanitized to prevent running as pure Node.",
+    "validation": "npm run test:flow passes 23 / 23 tests (100%).",
+    "risk": "Low — test environment sanitization only.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "docs/DEVELOPMENT.md",
+    "action": "updated",
+    "category": "Canonical Documentation",
+    "reason": "Created authoritative developer setup, build, packaging, and configuration runbook.",
+    "evidence": "Documented all actual package scripts, user data paths, and release verification commands.",
+    "validation": "Markdown syntax verified; commands cross-checked against package.json.",
+    "risk": "None — documentation deliverable.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "docs/TESTING.md",
+    "action": "updated",
+    "category": "Canonical Documentation",
+    "reason": "Created authoritative testing and QA guide documenting test suites, evidentiary classifications, and benchmarks.",
+    "evidence": "Documented all test suites, live Electron benchmarks, and skipped GUI test flags.",
+    "validation": "Markdown syntax verified; commands cross-checked against npm test scripts.",
+    "risk": "None — documentation deliverable.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "docs/KNOWN_ISSUES.md",
+    "action": "updated",
+    "category": "Canonical Documentation",
+    "reason": "Created authoritative known issues and limitations log.",
+    "evidence": "Documented voice persistence first-launch behavior, physical mic verification gate, Kokoro CPU latency, and unsigned SmartScreen status.",
+    "validation": "Truthful representation of all remaining constraints.",
+    "risk": "None — documentation deliverable.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "docs/DECISIONS.md",
+    "action": "updated",
+    "category": "Canonical Documentation",
+    "reason": "Appended ADR-026 documenting voice recovery architectural decisions.",
+    "evidence": "Documented DOM select synchronization, direct SAPI5 routing, and landmark calibration.",
+    "validation": "Verified against source implementations in app.js, voice-controller.js, and acoustic-wake-model.js.",
+    "risk": "None — architectural documentation.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "README.md",
+    "action": "updated",
+    "category": "Canonical Documentation",
+    "reason": "Updated documentation index to point to canonical docs (ARCHITECTURE, DEVELOPMENT, TESTING, DECISIONS, KNOWN_ISSUES).",
+    "evidence": "Replaced obsolete links with active file links.",
+    "validation": "Verified link targets exist on disk.",
+    "risk": "None — documentation deliverable.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "scratch/verify-live-ab-acceptance.js",
+    "action": "retained",
+    "category": "Live Acceptance Tooling",
+    "reason": "Valuable Electron live A/B benchmarking script for voice latency and acoustic scoring.",
+    "evidence": "Explicitly protected from deletion per prompt instructions (Phase 3.4).",
+    "validation": "Executes all 10 stages cleanly in Electron.",
+    "risk": "None — preserved tool.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "dist-release",
+    "action": "retained",
+    "category": "Production Release Distribution",
+    "reason": "Active packaged release output containing verified installer and portable binaries.",
+    "evidence": "Referenced by release-manifest.json and smoke-test-packaged-app.js.",
+    "validation": "npm run release:verify passes cryptographic SHA-256 checks.",
+    "risk": "None — required production build.",
+    "status": "COMPLETED"
+  },
+  {
+    "path": "dist-repair11",
+    "action": "retained",
+    "category": "Packaged Build Reference",
+    "reason": "Verified unpacked build directory referenced by packaging regression tests.",
+    "evidence": "Referenced in tests/desktop/desktop-uia-safety-gate-adversarial.test.js.",
+    "validation": "Verified valid PE binary.",
+    "risk": "None — preserved test reference.",
+    "status": "COMPLETED"
+  }
+]

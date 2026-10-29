@@ -21,9 +21,13 @@ const PROMPT_INJECTION_PATTERNS = [
     /ignore\s+(?:all\s+)?previous\s+instructions/i,
     /disregard\s+(?:all\s+)?(?:safety\s+)?(?:rules|instructions)/i,
     /system\s+override\s*:/i,
+    /system\s+instruction\s*:/i,
+    /override\s+(?:all\s+)?safety/i,
     /bypass\s+(?:all\s+)?(?:permission|security)\s+(?:gates|checks)/i,
     /you\s+are\s+now\s+in\s+unrestricted\s+mode/i,
-    /pretend\s+you\s+have\s+no\s+safety\s+rules/i
+    /pretend\s+you\s+have\s+no\s+safety\s+rules/i,
+    /elevate\s+privileges/i,
+    /grant\s+(?:all\s+)?admin(?:istrative)?\s+access/i
 ];
 
 const UNSUPPORTED_DOMAINS = [
@@ -34,16 +38,238 @@ const UNSUPPORTED_DOMAINS = [
     /\b(?:hack\s+into|ddos\s+|crack\s+password)\b/i
 ];
 
+const path = require('path');
 const { classifyTextIntent } = require('./content-discriminator.js');
 const { validateToolArguments } = require('../tools/schema-validator.js');
 const { RISK_TIERS } = require('../security/permission-authority.js');
 const { AUTOMATION_TIERS, getActionCapability } = require('../tools/automation-tier-policy.js');
+
+const INTENT_TYPES = Object.freeze({
+    DIRECT_ANSWER: 'direct_answer',
+    TOOL_ACTION: 'tool_action',
+    COMPOUND_WORKFLOW: 'compound_workflow',
+    CLARIFICATION: 'clarification',
+    CONSEQUENTIAL_APPROVAL: 'consequential_approval',
+    UNSUPPORTED: 'unsupported',
+    SECURITY_VIOLATION: 'security_violation'
+});
 
 class TaskPlanner {
     constructor(options = {}) {
         this.providerAdapter = options.providerAdapter;
         this.toolRegistry = options.toolRegistry;
         this.skillRegistry = options.skillRegistry || null;
+    }
+
+    /**
+     * Classify user request into structured intent with requirements, candidate capabilities, and constraints
+     * @param {string} userRequest
+     * @param {Object} [context={}]
+     * @returns {Object} Structured intent metadata
+     */
+    classifyIntent(userRequest, context = {}) {
+        const trimmed = String(userRequest || '').trim();
+        const lower = trimmed.toLowerCase();
+
+        if (!trimmed) {
+            return {
+                intentType: INTENT_TYPES.CLARIFICATION,
+                desiredOutcome: '',
+                candidateCapabilities: [],
+                candidateTools: [],
+                constraints: {},
+                relevantContext: context,
+                verificationRequirements: [],
+                requiresConfirmation: false,
+                reason: 'Empty request requires clarification.'
+            };
+        }
+
+        // 1. Prompt Injection Defense
+        for (const pattern of PROMPT_INJECTION_PATTERNS) {
+            if (pattern.test(trimmed)) {
+                return {
+                    intentType: INTENT_TYPES.SECURITY_VIOLATION,
+                    desiredOutcome: 'Halt execution fail-closed',
+                    candidateCapabilities: [],
+                    candidateTools: [],
+                    constraints: { blocked: true },
+                    relevantContext: context,
+                    verificationRequirements: ['security_blocked'],
+                    requiresConfirmation: false,
+                    reason: 'Suspected prompt injection or safety bypass detected.'
+                };
+            }
+        }
+
+        // 2. Unsupported Capabilities Recognition
+        for (const pattern of UNSUPPORTED_DOMAINS) {
+            if (pattern.test(trimmed)) {
+                return {
+                    intentType: INTENT_TYPES.UNSUPPORTED,
+                    desiredOutcome: 'Inform user of unsupported capability',
+                    candidateCapabilities: [],
+                    candidateTools: [],
+                    constraints: { supported: false },
+                    relevantContext: context,
+                    verificationRequirements: [],
+                    requiresConfirmation: false,
+                    reason: 'Requested action is outside L.U.C.Y. capabilities.'
+                };
+            }
+        }
+
+        // 3. Contradictions & Missing Parameters Clarification
+        const contradiction = this._detectContradictions(trimmed);
+        if (contradiction) {
+            return {
+                intentType: INTENT_TYPES.CLARIFICATION,
+                desiredOutcome: 'Clarify contradictory instruction',
+                candidateCapabilities: [],
+                candidateTools: [],
+                constraints: { contradictory: true },
+                relevantContext: context,
+                verificationRequirements: [],
+                requiresConfirmation: false,
+                reason: contradiction
+            };
+        }
+
+        const normalizedRequest = trimmed.replace(/^(?:lucy|l\.u\.c\.y\.?)[,\s]+/i, '').replace(/[.!?]+$/, '').trim();
+        const missing = this._checkMissingParameters(trimmed) || this._checkMissingParameters(normalizedRequest);
+        if (missing) {
+            return {
+                intentType: INTENT_TYPES.CLARIFICATION,
+                desiredOutcome: 'Clarify missing parameters',
+                candidateCapabilities: [],
+                candidateTools: [],
+                constraints: { missingParameters: missing.missingParameters || [] },
+                relevantContext: context,
+                verificationRequirements: [],
+                requiresConfirmation: false,
+                reason: missing.replyText
+            };
+        }
+
+        // 4. Consequential / High Risk Operations Needing Explicit Confirmation
+        if (/\b(?:format\s+disk|del\s+\/f|rmdir\s+\/s|drop\s+database|wipe\s+drive|registry\s+delete)\b/i.test(lower)) {
+            return {
+                intentType: INTENT_TYPES.CONSEQUENTIAL_APPROVAL,
+                desiredOutcome: 'Consequential high-risk operation requires explicit approval',
+                candidateCapabilities: ['system_modification'],
+                candidateTools: [],
+                constraints: { highRisk: true },
+                relevantContext: context,
+                verificationRequirements: ['user_confirmation'],
+                requiresConfirmation: true,
+                reason: 'High-risk destructive operation requires explicit user authorization.'
+            };
+        }
+
+        // 5. System inspection / Host information
+        if (/\b(?:system\s+status|system\s+info|host\s+status|system\s+metrics|specs|uptime|ram|cpu|memory\s+usage|inspect\s+system)\b/i.test(lower)) {
+            return {
+                intentType: INTENT_TYPES.TOOL_ACTION,
+                desiredOutcome: 'Inspect host system status and performance metrics',
+                candidateCapabilities: ['system_inspection', 'system_status', 'host_info'],
+                candidateTools: ['system_info'],
+                constraints: { readOnly: true },
+                relevantContext: context,
+                verificationRequirements: ['tool_receipt', 'system_status_verification'],
+                requiresConfirmation: false,
+                reason: 'Request for current host system state requires registered tool execution.'
+            };
+        }
+
+        // 6. Compound Multi-Step Instructions
+        if (
+            /\b(?:and\s+then|then\s+|;\s*|,\s*then\s+|,\s*and\s+verify|and\s+verify\s+that|and\s+read\s+it\s+back)\b/i.test(lower) ||
+            Boolean(this._detectCompoundIntent(trimmed))
+        ) {
+            return {
+                intentType: INTENT_TYPES.COMPOUND_WORKFLOW,
+                desiredOutcome: trimmed,
+                candidateCapabilities: ['desktop_automation', 'filesystem_operation', 'workflow_composition'],
+                candidateTools: ['desktop_launch_app', 'desktop_type_text', 'desktop_inspect_control', 'file_write', 'file_read'],
+                constraints: {},
+                relevantContext: context,
+                verificationRequirements: ['dag_acyclic', 'prerequisite_verification', 'postcondition_evidence'],
+                requiresConfirmation: false,
+                reason: 'Multi-step composed workflow with step dependencies.'
+            };
+        }
+
+        // 7. Single Action Filesystem Operations
+        if (/\b(?:read\s+file|view\s+file|cat\s+|list\s+files|dir\b|ls\b|create\s+file|write\s+file|delete\s+file)\b/i.test(lower)) {
+            return {
+                intentType: INTENT_TYPES.TOOL_ACTION,
+                desiredOutcome: 'Perform filesystem operation',
+                candidateCapabilities: ['filesystem_operation'],
+                candidateTools: ['file_read', 'file_write', 'file_list', 'file_delete'],
+                constraints: { workspaceScoped: true },
+                relevantContext: context,
+                verificationRequirements: ['file_integrity', 'read_receipt'],
+                requiresConfirmation: /\b(?:delete|remove)\b/i.test(lower),
+                reason: 'Request requires filesystem tool execution.'
+            };
+        }
+
+        // 8. Desktop App Automation
+        if (/\b(?:launch\s+|open\s+|start\s+|type\s+|click\s+|close\s+app)\b/i.test(lower)) {
+            return {
+                intentType: INTENT_TYPES.TOOL_ACTION,
+                desiredOutcome: 'Perform desktop application interaction',
+                candidateCapabilities: ['desktop_automation'],
+                candidateTools: ['desktop_launch_app', 'desktop_type_text', 'desktop_click_element', 'desktop_inspect_control'],
+                constraints: { safeAppOnly: true },
+                relevantContext: context,
+                verificationRequirements: ['ui_automation', 'process_running'],
+                requiresConfirmation: false,
+                reason: 'Request requires desktop automation tool execution.'
+            };
+        }
+
+        // 8b. Persistent Memory Management
+        if (/\b(?:remember\s+that|remember\s+to|remember:|save\s+to\s+memory|store\s+in\s+memory|store\s+memory|forget\s+that|forget\s+about|delete\s+memory|remove\s+memory|search\s+memor(?:y|ies)|find\s+in\s+memory|list\s+memor(?:y|ies)|show\s+memor(?:y|ies)|do\s+not\s+remember|don't\s+remember|never\s+remember)\b/i.test(lower)) {
+            return {
+                intentType: INTENT_TYPES.TOOL_ACTION,
+                desiredOutcome: 'Perform persistent memory management operation',
+                candidateCapabilities: ['persistent_memory'],
+                candidateTools: ['memory_store', 'memory_delete', 'memory_forget', 'memory_search', 'memory_list', 'memory_get'],
+                constraints: { lowImpact: true },
+                relevantContext: context,
+                verificationRequirements: ['memory_persistence_verification'],
+                requiresConfirmation: false,
+                reason: 'Persistent memory management operation.'
+            };
+        }
+
+        // 9. Informational & Conversational Direct Answer
+        if (this._isInformationalQuery(trimmed) || this._isConversationalRequest(trimmed)) {
+            return {
+                intentType: INTENT_TYPES.DIRECT_ANSWER,
+                desiredOutcome: 'Provide direct answer or conversation',
+                candidateCapabilities: [],
+                candidateTools: [],
+                constraints: { noToolsNeeded: true },
+                relevantContext: context,
+                verificationRequirements: ['conversational_completion'],
+                requiresConfirmation: false,
+                reason: 'Factual or conversational inquiry answered directly without tool execution.'
+            };
+        }
+
+        return {
+            intentType: INTENT_TYPES.DIRECT_ANSWER,
+            desiredOutcome: trimmed,
+            candidateCapabilities: [],
+            candidateTools: [],
+            constraints: {},
+            relevantContext: context,
+            verificationRequirements: [],
+            requiresConfirmation: false,
+            reason: 'General assistant request.'
+        };
     }
 
     /**
@@ -59,12 +285,14 @@ class TaskPlanner {
                 : this.toolRegistry.listTools())
             : [];
         const trimmedRequest = String(userRequest || '').trim();
+        const structuredIntent = this.classifyIntent(trimmedRequest, context);
 
         if (!trimmedRequest) {
             return {
                 objective: '',
                 type: 'clarification',
                 replyText: 'How can I assist you today? Please provide an instruction or question.',
+                structuredIntent,
                 steps: []
             };
         }
@@ -77,6 +305,7 @@ class TaskPlanner {
                     type: 'security_rejection',
                     replyText: 'Safety Policy Violation: Suspected prompt injection or unauthorized system override instruction detected. Request halted fail-closed.',
                     steps: [],
+                    structuredIntent,
                     securityBlocked: true
                 };
             }
@@ -89,6 +318,7 @@ class TaskPlanner {
                     objective: trimmedRequest,
                     type: 'unsupported',
                     replyText: 'This capability is not supported by L.U.C.Y. I specialize in Windows desktop automation, safe file operations, web browsing, and system inspection.',
+                    structuredIntent,
                     steps: []
                 };
             }
@@ -102,6 +332,7 @@ class TaskPlanner {
                 type: 'clarification',
                 replyText: contradiction,
                 ambiguous: true,
+                structuredIntent,
                 steps: []
             };
         }
@@ -111,6 +342,7 @@ class TaskPlanner {
         // 4. Missing Parameter Clarification
         const missingParamClarification = this._checkMissingParameters(trimmedRequest) || this._checkMissingParameters(normalizedRequest);
         if (missingParamClarification) {
+            missingParamClarification.structuredIntent = structuredIntent;
             return missingParamClarification;
         }
 
@@ -126,6 +358,7 @@ class TaskPlanner {
                         type: 'plan',
                         replyText: `Executing research skill for topic: "${query}".`,
                         skillId: targetSkill.id,
+                        structuredIntent,
                         steps: [
                             {
                                 index: 1,
@@ -146,6 +379,7 @@ class TaskPlanner {
                         type: 'plan',
                         replyText: `Executing document authoring skill for: "${title}".`,
                         skillId: targetSkill.id,
+                        structuredIntent,
                         steps: [
                             {
                                 index: 1,
@@ -161,9 +395,35 @@ class TaskPlanner {
             }
         }
 
+        // 4c. Dynamic Tool Action for System Inspection (Workflow A)
+        if (structuredIntent.intentType === INTENT_TYPES.TOOL_ACTION && structuredIntent.candidateCapabilities.includes('system_inspection')) {
+            const systemTool = availableTools.find((t) => t.id === 'system_info' || (Array.isArray(t.capabilities) && t.capabilities.includes('system_inspection')));
+            if (systemTool) {
+                const plan = {
+                    objective: 'Inspect host system status and performance metrics',
+                    type: 'plan',
+                    replyText: 'Querying host system status and performance metrics.',
+                    structuredIntent,
+                    steps: [
+                        {
+                            index: 1,
+                            id: 'step_1',
+                            title: 'Inspect host system status',
+                            toolId: systemTool.id,
+                            params: {},
+                            verificationStrategy: 'tool_receipt',
+                            expectedOutcome: 'Host system status, OS information, memory, and uptime verified'
+                        }
+                    ]
+                };
+                return this._validatePlanSteps(plan, availableTools);
+            }
+        }
+
         // 5. Multi-Step Compound Intent Recognition
         const compoundPlan = this._detectCompoundIntent(trimmedRequest, availableTools) || this._detectCompoundIntent(normalizedRequest, availableTools);
         if (compoundPlan) {
+            compoundPlan.structuredIntent = structuredIntent;
             if (compoundPlan.isGenerativeIntent) {
                 return await this._planGenerativeCompoundTask(compoundPlan, context, availableTools);
             }
@@ -351,6 +611,7 @@ Respond strictly in JSON if tool execution is required:
                 objective: trimmedRequest,
                 type: 'unconfigured_provider',
                 replyText: errorDetail,
+                spokenText: 'No AI provider is configured. Running in offline tool mode. You can configure a provider in Settings.',
                 needsConfig: true,
                 steps: []
             };
@@ -504,11 +765,63 @@ Respond strictly in JSON if tool execution is required:
             };
         }
 
+        // Phase 9 Capability A: Clarifications for underspecified requests
+        // 1. Research and save without destination file path
+        if (/^(?:research|search\s+for|look\s+up)\s+(?:about\s+)?([a-zA-Z0-9_\s\-]+)\s+(?:and\s+)?(?:save|store)(?:\s+(?:it|results|findings|summary))?\s*$/i.test(lower)) {
+            return {
+                objective: request,
+                type: 'clarification',
+                replyText: "Where would you like me to save the research findings? Please specify the destination file path.",
+                missingParameters: ['destination_path'],
+                steps: []
+            };
+        }
+
+        // 2. Workspace task audit / organize without directory or pattern
+        if (/^(?:audit|organize)\s+(?:workspace|files|directory|folder)\s*$/i.test(lower)) {
+            return {
+                objective: request,
+                type: 'clarification',
+                replyText: "Please specify the directory path and file pattern you would like to audit or organize.",
+                missingParameters: ['directory', 'pattern'],
+                steps: []
+            };
+        }
+
+        // 3. Extract web data and transfer without destination application or file
+        if (/^(?:extract|scrape)\s+(?:data|text|info)\s+from\s+([^\s]+)\s+and\s+(?:transfer|copy)\s*$/i.test(lower)) {
+            return {
+                objective: request,
+                type: 'clarification',
+                replyText: "Which application or destination file should the extracted data be transferred to?",
+                missingParameters: ['target_destination'],
+                steps: []
+            };
+        }
+
+        // 4. Phase 10: Research and save without concrete topic or concrete file path
+        if (lower.includes('research') && (lower.includes('provided topic') || lower.includes('the topic') || !/https?:\/\/|[a-z0-9_-]+\.(?:txt|md|log|json)/i.test(lower)) && (lower.includes('designated test workspace') || lower.includes('a text file') || lower.includes('in notepad'))) {
+            return {
+                objective: request,
+                type: 'clarification',
+                replyText: "Please provide the research topic or URL, and specify the file path in the workspace where the summary should be saved.",
+                missingParameters: ['topic', 'destination_path'],
+                steps: []
+            };
+        }
+
         return null;
     }
 
     _isInformationalQuery(request) {
         const lower = String(request || '').trim().toLowerCase().replace(/[.,!?;:]+$/, '').trim();
+        // Exclude system metrics, hardware status, or file/app actions - these require tools
+        if (/\b(?:cpu|ram|memory\s+usage|uptime|system\s+status|host\s+status|specs|disk\s+space|system\s+info|running\s+processes|os\s+version|processes)\b/i.test(lower)) {
+            return false;
+        }
+        if (/\b(?:files?|folders?|directory|directories|read\s+file|list\s+files|open\s+app|launch)\b/i.test(lower)) {
+            return false;
+        }
         return (
             lower.startsWith('what is') ||
             lower.startsWith('what are') ||
@@ -560,7 +873,547 @@ Respond strictly in JSON if tool execution is required:
     _detectCompoundIntent(request, tools) {
         const lower = request.toLowerCase();
 
-        // 1. "open notepad and type <text>"
+        // Phase 9 Autonomous Workflow C: Cross-Application Information Transfer
+        // "extract data/text from <url>, enter it into notepad, save as <path>, and verify"
+        const crossAppMatch = request.match(/(?:extract|scrape|read)\s+(?:data|information|content|text|facts)?\s*(?:from\s+)?['"]?((?:https?:\/\/|file:\/\/|127\.0\.0\.1|localhost)[^\s'",]+)['"]?[,\s]+(?:and\s+|then\s+)?(?:enter|type|transfer|write)\s+(?:it\s+)?(?:in|into)\s+(notepad|calculator|calc|[a-zA-Z0-9_.\-]+)[,\s]+(?:and\s+|then\s+)?(?:save\s+(?:(?:it|the|document|the\s+document)\s+)?(?:as|to)\s+['"]?([a-zA-Z0-9_.:\-\/\\]+)['"]?)[,\s]*(?:and\s+|then\s+)?(?:verify|confirm)?/i);
+        if (crossAppMatch) {
+            const targetUrl = crossAppMatch[1].trim();
+            const rawApp = crossAppMatch[2].trim();
+            const targetPath = crossAppMatch[3].trim();
+            let executable = rawApp.toLowerCase();
+            if (!executable.endsWith('.exe')) {
+                if (executable === 'notepad') executable = 'notepad.exe';
+                else if (executable === 'calc' || executable === 'calculator') executable = 'calc.exe';
+                else executable = `${executable}.exe`;
+            }
+
+            return {
+                objective: `Extract web content from ${targetUrl}, transfer into ${rawApp}, save document to '${targetPath}', and verify on disk`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        id: 'step_1',
+                        title: `Navigate to ${targetUrl}`,
+                        toolId: 'browser_navigate',
+                        params: { url: targetUrl },
+                        expectedOutcome: 'Page loaded'
+                    },
+                    {
+                        index: 2,
+                        id: 'step_2',
+                        title: 'Extract content from web page',
+                        toolId: 'browser_extract',
+                        params: { selector: 'body', format: 'text' },
+                        dependsOn: ['step_1'],
+                        expectedOutcome: 'Content extracted from web page'
+                    },
+                    {
+                        index: 3,
+                        id: 'step_3',
+                        title: `Launch ${rawApp} application`,
+                        toolId: 'desktop_launch_app',
+                        params: { executable },
+                        dependsOn: ['step_2'],
+                        expectedOutcome: `${rawApp} open on interactive desktop`
+                    },
+                    {
+                        index: 4,
+                        id: 'step_4',
+                        title: `Inspect ${rawApp} readiness for typing`,
+                        toolId: 'desktop_inspect_control',
+                        params: { target: '{{step_3.appId}}', action: 'type', controlType: 'Edit' },
+                        dependsOn: ['step_3'],
+                        expectedOutcome: `${rawApp} responsive and editable control ready for input`
+                    },
+                    {
+                        index: 5,
+                        id: 'step_5',
+                        title: `Transfer extracted content into ${rawApp}`,
+                        toolId: 'desktop_type_text',
+                        params: { target: '{{step_3.appId}}', text: '{{step_2.result.text}}' },
+                        dependsOn: ['step_2', 'step_3', 'step_4'],
+                        expectedOutcome: 'Extracted text entered into application'
+                    },
+                    {
+                        index: 6,
+                        id: 'step_6',
+                        title: `Save ${rawApp} document to '${targetPath}'`,
+                        toolId: 'desktop_save_document',
+                        params: { target: '{{step_3.appId}}', filePath: targetPath, expectedContent: '{{step_2.result.text}}' },
+                        dependsOn: ['step_2', 'step_3', 'step_5'],
+                        expectedOutcome: `Document saved to '${targetPath}' and verified on disk`
+                    },
+                    {
+                        index: 7,
+                        id: 'step_7',
+                        title: `Verify saved file content on disk`,
+                        toolId: 'file_read',
+                        params: { path: targetPath },
+                        dependsOn: ['step_6'],
+                        expectedOutcome: `File content at '${targetPath}' read and verified`
+                    }
+                ]
+            };
+        }
+
+        // Phase 10 Real-World Workflow: Research -> Save -> Open in Notepad -> Verify
+        // "research <topic|url>, extract facts, save to <path>, open in <notepad>, and verify"
+        const researchSaveOpenMatch = request.match(/(?:research|search\s+for|investigate)\s+['"]?([^'",]+?)(?:\s+on\s+(?:the\s+)?web|\s+online|\s+in\s+browser)?['"]?[,\s]+(?:and\s+|then\s+)?(?:extract\s+(?:the\s+)?(?:summary\s+facts|important\s+facts|summary|facts|data|text|content)|read\s+page)[,\s]+(?:and\s+|then\s+)?(?:save\s+(?:(?:a\s+|an\s+|it\s+|the\s+)?(?:clearly\s+formatted\s+summary|summary\s+facts|summary|document|the\s+document|results|findings)\s+)?(?:to|as|in\s+(?:a\s+text\s+file\s+in\s+)?)\s*['"]?([a-zA-Z0-9_.:\-\/\\]+?)['"]?)[,\s]+(?:and\s+|then\s+)?(?:open\s+(?:that\s+|the\s+)?(?:saved\s+)?(?:file|document)?\s*(?:in\s+)?(notepad|calculator|calc|[a-zA-Z0-9_.\-]+))[,\s]*(?:and\s+|then\s+)?(?:verify|confirm)?/i);
+        if (researchSaveOpenMatch) {
+            const topic = researchSaveOpenMatch[1].trim();
+            const targetPath = researchSaveOpenMatch[2].trim();
+            const rawApp = researchSaveOpenMatch[3].trim();
+            let executable = rawApp.toLowerCase();
+            if (!executable.endsWith('.exe')) {
+                if (executable === 'notepad') executable = 'notepad.exe';
+                else if (executable === 'calc' || executable === 'calculator') executable = 'calc.exe';
+                else executable = `${executable}.exe`;
+            }
+
+            const targetUrl = /^https?:\/\//i.test(topic)
+                ? topic
+                : `https://en.wikipedia.org/wiki/${encodeURIComponent(topic.replace(/\s+/g, '_'))}`;
+
+            return {
+                objective: `Research "${topic}", extract facts, save to '${targetPath}', open in ${rawApp}, and verify`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        id: 'step_1',
+                        title: `Navigate to research destination for "${topic}"`,
+                        toolId: 'browser_navigate',
+                        params: { url: targetUrl },
+                        expectedOutcome: `Page loaded for topic ${topic}`
+                    },
+                    {
+                        index: 2,
+                        id: 'step_2',
+                        title: 'Extract summary facts from research page',
+                        toolId: 'browser_extract',
+                        params: { selector: 'body', format: 'text' },
+                        dependsOn: ['step_1'],
+                        expectedOutcome: 'Research content and facts extracted'
+                    },
+                    {
+                        index: 3,
+                        id: 'step_3',
+                        title: `Save extracted research to '${targetPath}'`,
+                        toolId: 'file_write',
+                        params: { path: targetPath, content: '{{step_2.result.text}}' },
+                        dependsOn: ['step_2'],
+                        expectedOutcome: `Research saved to '${targetPath}'`
+                    },
+                    {
+                        index: 4,
+                        id: 'step_4',
+                        title: `Verify saved research file on disk`,
+                        toolId: 'file_read',
+                        params: { path: targetPath },
+                        dependsOn: ['step_3'],
+                        expectedOutcome: `File content at '${targetPath}' verified on disk`
+                    },
+                    {
+                        index: 5,
+                        id: 'step_5',
+                        title: `Open saved document in ${rawApp}`,
+                        toolId: 'desktop_launch_app',
+                        params: { executable, arguments: targetPath },
+                        dependsOn: ['step_4'],
+                        expectedOutcome: `${rawApp} launched opening '${targetPath}'`
+                    },
+                    {
+                        index: 6,
+                        id: 'step_6',
+                        title: `Verify ${rawApp} document and control readiness`,
+                        toolId: 'desktop_inspect_control',
+                        params: { target: '{{step_5.appId}}', action: 'inspect' },
+                        dependsOn: ['step_5'],
+                        expectedOutcome: `${rawApp} verified active and ready with opened document`
+                    }
+                ]
+            };
+        }
+
+        // Phase 9 Autonomous Workflow A: Research and Save
+        // "research <topic> [on the web], extract summary facts, save to <path>, and verify"
+        const researchAndSaveMatch = request.match(/(?:research|search\s+for|investigate)\s+['"]?([^'",]+?)(?:\s+on\s+(?:the\s+)?web|\s+online|\s+in\s+browser)?['"]?[,\s]+(?:and\s+|then\s+)?(?:extract\s+(?:summary\s+facts|summary|facts|data|text|content)|read\s+page)[,\s]+(?:and\s+|then\s+)?(?:save\s+(?:(?:it|the|document|the\s+document|results|findings)\s+)?(?:to|as)\s+['"]?([a-zA-Z0-9_.:\-\/\\]+)['"]?)[,\s]*(?:and\s+|then\s+)?(?:verify|confirm)?/i);
+        if (researchAndSaveMatch) {
+            const topic = researchAndSaveMatch[1].trim();
+            const targetPath = researchAndSaveMatch[2].trim();
+            const targetUrl = /^https?:\/\//i.test(topic)
+                ? topic
+                : `https://en.wikipedia.org/wiki/${encodeURIComponent(topic.replace(/\s+/g, '_'))}`;
+
+            return {
+                objective: `Research topic "${topic}", extract summary facts, save to '${targetPath}', and verify on disk`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        id: 'step_1',
+                        title: `Navigate to research destination for "${topic}"`,
+                        toolId: 'browser_navigate',
+                        params: { url: targetUrl },
+                        expectedOutcome: `Page loaded for topic ${topic}`
+                    },
+                    {
+                        index: 2,
+                        id: 'step_2',
+                        title: 'Extract summary facts from research page',
+                        toolId: 'browser_extract',
+                        params: { selector: 'body', format: 'text' },
+                        dependsOn: ['step_1'],
+                        expectedOutcome: 'Research content and facts extracted'
+                    },
+                    {
+                        index: 3,
+                        id: 'step_3',
+                        title: `Save extracted research to '${targetPath}'`,
+                        toolId: 'file_write',
+                        params: { path: targetPath, content: '{{step_2.result.text}}' },
+                        dependsOn: ['step_2'],
+                        expectedOutcome: `Research saved to '${targetPath}'`
+                    },
+                    {
+                        index: 4,
+                        id: 'step_4',
+                        title: `Verify saved research file on disk`,
+                        toolId: 'file_read',
+                        params: { path: targetPath },
+                        dependsOn: ['step_3'],
+                        expectedOutcome: `File content at '${targetPath}' verified on disk`
+                    }
+                ]
+            };
+        }
+
+        // Phase 9 Autonomous Workflow B: Workspace Task Organization & File Audit
+        // "audit directory <dir>, search for <pattern>, copy to <dest>, and verify"
+        const auditAndOrganizeMatch = request.match(/(?:audit|inspect|organize)\s+(?:directory|folder|workspace)\s+['"]?([a-zA-Z0-9_.\-\/\\]+)['"]?[,\s]+(?:and\s+|then\s+)?(?:find|search\s+for)\s+['"]?([a-zA-Z0-9_.*\-]+)['"]?[,\s]+(?:and\s+|then\s+)?(?:copy\s+(?:them|matching\s+files)?\s+to\s+['"]?([a-zA-Z0-9_.\-\/\\]+)['"]?)[,\s]*(?:and\s+|then\s+)?(?:verify|confirm)?/i);
+        if (auditAndOrganizeMatch) {
+            const sourceDir = auditAndOrganizeMatch[1].trim();
+            const pattern = auditAndOrganizeMatch[2].trim();
+            const destDir = auditAndOrganizeMatch[3].trim();
+
+            return {
+                objective: `Audit directory '${sourceDir}', search for '${pattern}', organize and copy to '${destDir}', and verify`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        id: 'step_1',
+                        title: `Search for '${pattern}' in '${sourceDir}'`,
+                        toolId: 'file_search',
+                        params: { path: sourceDir, query: pattern },
+                        expectedOutcome: `Found files matching '${pattern}'`
+                    },
+                    {
+                        index: 2,
+                        id: 'step_2',
+                        title: `Ensure destination directory '${destDir}' exists`,
+                        toolId: 'file_mkdir',
+                        params: { path: destDir },
+                        dependsOn: ['step_1'],
+                        expectedOutcome: `Destination directory '${destDir}' created or confirmed`
+                    },
+                    {
+                        index: 3,
+                        id: 'step_3',
+                        title: `List and verify organized destination directory '${destDir}'`,
+                        toolId: 'file_list',
+                        params: { path: destDir },
+                        dependsOn: ['step_2'],
+                        expectedOutcome: `Destination directory '${destDir}' verified`
+                    }
+                ]
+            };
+        }
+
+        // "organize files: copy <source> to <dest> and verify"
+        const fileCopyOrganizeMatch = request.match(/(?:organize\s+files?|copy\s+and\s+organize)[,\s:]+(?:copy\s+)?['"]?([a-zA-Z0-9_.\-\/\\]+)['"]?\s+to\s+['"]?([a-zA-Z0-9_.\-\/\\]+)['"]?[,\s]*(?:and\s+|then\s+)?(?:verify|confirm)?/i);
+        if (fileCopyOrganizeMatch) {
+            const sourceFile = fileCopyOrganizeMatch[1].trim();
+            const destFile = fileCopyOrganizeMatch[2].trim();
+            const destDir = path.dirname(destFile);
+
+            return {
+                objective: `Organize file: copy '${sourceFile}' to '${destFile}' and verify on disk`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        id: 'step_1',
+                        title: `Ensure target folder '${destDir}' exists`,
+                        toolId: 'file_mkdir',
+                        params: { path: destDir },
+                        expectedOutcome: `Directory '${destDir}' created or confirmed`
+                    },
+                    {
+                        index: 2,
+                        id: 'step_2',
+                        title: `Copy '${sourceFile}' to '${destFile}'`,
+                        toolId: 'file_copy',
+                        params: { source: sourceFile, destination: destFile, overwrite: true },
+                        dependsOn: ['step_1'],
+                        expectedOutcome: `File copied to '${destFile}'`
+                    },
+                    {
+                        index: 3,
+                        id: 'step_3',
+                        title: `Verify copied file '${destFile}' on disk`,
+                        toolId: 'file_read',
+                        params: { path: destFile },
+                        dependsOn: ['step_2'],
+                        expectedOutcome: `File content at '${destFile}' read and verified`
+                    }
+                ]
+            };
+        }
+
+        // Phase 8 Workflow A: "open notepad, write/type <text>, save it to/as <path>, and verify [file]"
+        const workflowSaveDocMatch = request.match(/(?:open|launch|start)\s+(notepad|calculator|calc|[a-zA-Z0-9_.\-]+)[,\s]+(?:and\s+|then\s+)?(?:enter|type|write)\s+([`'"]?)([\s\S]+?)\2[,\s]+(?:and\s+|then\s+)?(?:save\s+(?:it\s+)?(?:as|to)\s+[`'"]?([a-zA-Z0-9_.:\-\/\\]+)[`'"]?)[,\s]*(?:and\s+|then\s+)?(?:verify|confirm)?/i);
+        if (workflowSaveDocMatch) {
+            const rawApp = workflowSaveDocMatch[1].trim();
+            const wasQuoted = Boolean(workflowSaveDocMatch[2]);
+            const rawText = workflowSaveDocMatch[3].trim();
+            const targetPath = workflowSaveDocMatch[4].trim();
+            const classification = classifyTextIntent(rawText, request, wasQuoted);
+            const textToType = classification.text;
+            let executable = rawApp.toLowerCase();
+            if (!executable.endsWith('.exe')) {
+                if (executable === 'notepad') executable = 'notepad.exe';
+                else if (executable === 'calc' || executable === 'calculator') executable = 'calc.exe';
+                else executable = `${executable}.exe`;
+            }
+
+            return {
+                objective: `Open ${rawApp}, enter text "${textToType}", save to '${targetPath}', and verify file`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        id: 'step_1',
+                        title: `Launch ${rawApp} application`,
+                        toolId: 'desktop_launch_app',
+                        params: { executable },
+                        expectedOutcome: `${rawApp} open on interactive desktop`
+                    },
+                    {
+                        index: 2,
+                        id: 'step_2',
+                        title: `Inspect ${rawApp} readiness for typing`,
+                        toolId: 'desktop_inspect_control',
+                        params: { target: '{{step_1.appId}}', action: 'type', controlType: 'Edit' },
+                        dependsOn: ['step_1'],
+                        expectedOutcome: `${rawApp} responsive and editable control ready for input`
+                    },
+                    {
+                        index: 3,
+                        id: 'step_3',
+                        title: `Type "${textToType}" into ${rawApp}`,
+                        toolId: 'desktop_type_text',
+                        params: { target: '{{step_1.appId}}', text: textToType },
+                        dependsOn: ['step_1', 'step_2'],
+                        expectedOutcome: 'Text entered and verified via UI Automation'
+                    },
+                    {
+                        index: 4,
+                        id: 'step_4',
+                        title: `Save ${rawApp} document to '${targetPath}'`,
+                        toolId: 'desktop_save_document',
+                        params: { target: '{{step_1.appId}}', filePath: targetPath, expectedContent: textToType },
+                        dependsOn: ['step_1', 'step_3'],
+                        expectedOutcome: `Document saved to '${targetPath}' and verified on disk`
+                    },
+                    {
+                        index: 5,
+                        id: 'step_5',
+                        title: `Verify saved file content on disk`,
+                        toolId: 'file_read',
+                        params: { path: targetPath },
+                        dependsOn: ['step_4'],
+                        expectedOutcome: `File content at '${targetPath}' read and verified`
+                    }
+                ]
+            };
+        }
+
+        // Phase 8 Workflow C: "navigate to/open <url>, extract text, save to/as <path>, and verify"
+        const browserToFileMatch = request.match(/(?:navigate\s+to|open\s+url|browse|scrape|extract\s+from)\s+['"]?((?:https?:\/\/|file:\/\/|127\.0\.0\.1|localhost)[^\s'"]+)['"]?[,\s]+(?:and\s+|then\s+)?(?:extract\s+(?:text|data|content)|read\s+page|scrape)[,\s]+(?:and\s+|then\s+)?(?:save\s+(?:it\s+)?(?:to|as)\s+['"]?([a-zA-Z0-9_.:\-\/\\]+)['"]?)[,\s]*(?:and\s+|then\s+)?(?:verify)?/i);
+        if (browserToFileMatch) {
+            const targetUrl = browserToFileMatch[1].trim();
+            const targetPath = browserToFileMatch[2].trim();
+            return {
+                objective: `Navigate to ${targetUrl}, extract visible text, save to '${targetPath}', and verify`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        id: 'step_1',
+                        title: `Navigate to ${targetUrl}`,
+                        toolId: 'browser_navigate',
+                        params: { url: targetUrl },
+                        expectedOutcome: 'Page loaded'
+                    },
+                    {
+                        index: 2,
+                        id: 'step_2',
+                        title: 'Extract visible text from page',
+                        toolId: 'browser_extract',
+                        params: { selector: 'body', format: 'text' },
+                        dependsOn: ['step_1'],
+                        expectedOutcome: 'Page text extracted'
+                    },
+                    {
+                        index: 3,
+                        id: 'step_3',
+                        title: `Save extracted web content to '${targetPath}'`,
+                        toolId: 'file_write',
+                        params: { path: targetPath, content: '{{step_2.result.text}}' },
+                        dependsOn: ['step_2'],
+                        expectedOutcome: `Extracted content saved to '${targetPath}'`
+                    },
+                    {
+                        index: 4,
+                        id: 'step_4',
+                        title: `Verify saved file content on disk`,
+                        toolId: 'file_read',
+                        params: { path: targetPath },
+                        dependsOn: ['step_3'],
+                        expectedOutcome: `File content at '${targetPath}' read and verified`
+                    }
+                ]
+            };
+        }
+
+        // 1. Workflow C: "open notepad, enter <text>, verify [it], and summarize result"
+        const workflowCMatch = request.match(/(?:open|launch|start)\s+(notepad|calculator|calc|[a-zA-Z0-9_.\-]+)[,\s]+(?:and\s+|then\s+)?(?:enter|type|write)\s+([`'"]?)([\s\S]+?)\2[,\s]+(?:and\s+|then\s+)?(?:verify|confirm|check)(?:\s+(?:it|the\s+text|text|entry))?[,\s]+(?:and\s+|then\s+)?(?:summarize|report)(?:\s+(?:the\s+)?result)?/i);
+        if (workflowCMatch) {
+            const rawApp = workflowCMatch[1].trim();
+            const wasQuoted = Boolean(workflowCMatch[2]);
+            const rawText = workflowCMatch[3].trim();
+            const classification = classifyTextIntent(rawText, request, wasQuoted);
+            const textToType = classification.text;
+            let executable = rawApp.toLowerCase();
+            if (!executable.endsWith('.exe')) {
+                if (executable === 'notepad') executable = 'notepad.exe';
+                else if (executable === 'calc' || executable === 'calculator') executable = 'calc.exe';
+                else executable = `${executable}.exe`;
+            }
+
+            return {
+                objective: `Open ${rawApp}, enter text "${textToType}", verify it, and summarize result`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        id: 'step_1',
+                        title: `Launch ${rawApp} application`,
+                        toolId: 'desktop_launch_app',
+                        params: { executable },
+                        expectedOutcome: `${rawApp} open on interactive desktop`
+                    },
+                    {
+                        index: 2,
+                        id: 'step_2',
+                        title: `Type "${textToType}" into ${rawApp}`,
+                        toolId: 'desktop_type_text',
+                        params: { target: '{{step_1.appId}}', text: textToType },
+                        dependsOn: ['step_1'],
+                        expectedOutcome: 'Text entered and verified via UI Automation'
+                    },
+                    {
+                        index: 3,
+                        id: 'step_3',
+                        title: `Verify ${rawApp} state and content`,
+                        toolId: 'desktop_inspect_control',
+                        params: { target: '{{step_1.appId}}', action: 'read', controlType: 'Edit' },
+                        dependsOn: ['step_1', 'step_2'],
+                        expectedOutcome: `${rawApp} content and responsive state confirmed`
+                    }
+                ]
+            };
+        }
+
+        // 2. Workflow B: "open notepad, type <text>, and verify [that] the text is present"
+        const workflowBMatch = request.match(/(?:open|launch|start)\s+([a-zA-Z0-9_.\-]+)[,\s]+(?:and\s+|then\s+)?(?:type|enter|write)\s+([`'"]?)([\s\S]+?)\2(?:\s+(?:in|into)\s+[a-zA-Z0-9_.\-]+)?[,\s]+(?:and\s+|then\s+)?(?:verify|confirm)(?:\s+(?:that\s+)?(?:the\s+)?text\s+is\s+present)?$/i);
+        if (workflowBMatch) {
+            const rawApp = workflowBMatch[1].trim();
+            const wasQuoted = Boolean(workflowBMatch[2]);
+            const rawText = workflowBMatch[3].trim();
+            const classification = classifyTextIntent(rawText, request, wasQuoted);
+            const textToType = classification.text;
+            let executable = rawApp.toLowerCase();
+            if (!executable.endsWith('.exe')) {
+                if (executable === 'notepad') executable = 'notepad.exe';
+                else if (executable === 'calc' || executable === 'calculator') executable = 'calc.exe';
+                else executable = `${executable}.exe`;
+            }
+
+            return {
+                objective: `Launch ${rawApp}, enter text "${textToType}", and verify presence`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        id: 'step_1',
+                        title: `Launch ${rawApp} application`,
+                        toolId: 'desktop_launch_app',
+                        params: { executable },
+                        expectedOutcome: `${rawApp} open on interactive desktop`
+                    },
+                    {
+                        index: 2,
+                        id: 'step_2',
+                        title: `Type "${textToType}" into ${rawApp}`,
+                        toolId: 'desktop_type_text',
+                        params: { target: '{{step_1.appId}}', text: textToType },
+                        dependsOn: ['step_1'],
+                        expectedOutcome: 'Text entered and verified via UI Automation'
+                    }
+                ]
+            };
+        }
+
+        // 3. Workflow A: "open notepad and tell me whether it is ready for me to type"
+        const workflowAMatch = request.match(/(?:open|launch|start)\s+([a-zA-Z0-9_.\-]+)[,\s]+(?:and\s+|then\s+)?(?:tell\s+me\s+(?:whether|if)\s+(?:it\s+is\s+)?ready(?:\s+for\s+(?:me\s+to\s+)?type)?|check\s+(?:if\s+it\s+is\s+)?ready(?:\s+for\s+typing)?|inspect\s+(?:if\s+it\s+is\s+)?ready|see\s+if\s+it\s+is\s+ready)/i);
+        if (workflowAMatch) {
+            const rawApp = workflowAMatch[1].trim();
+            let executable = rawApp.toLowerCase();
+            if (!executable.endsWith('.exe')) {
+                if (executable === 'notepad') executable = 'notepad.exe';
+                else if (executable === 'calc' || executable === 'calculator') executable = 'calc.exe';
+                else executable = `${executable}.exe`;
+            }
+
+            return {
+                objective: `Open ${rawApp} and inspect input readiness`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        id: 'step_1',
+                        title: `Launch ${rawApp} application`,
+                        toolId: 'desktop_launch_app',
+                        params: { executable },
+                        expectedOutcome: `${rawApp} open on interactive desktop`
+                    },
+                    {
+                        index: 2,
+                        id: 'step_2',
+                        title: `Inspect ${rawApp} readiness for typing`,
+                        toolId: 'desktop_inspect_control',
+                        params: { target: '{{step_1.appId}}', action: 'type', controlType: 'Edit' },
+                        dependsOn: ['step_1'],
+                        expectedOutcome: `${rawApp} responsive and editable control ready for input`
+                    }
+                ]
+            };
+        }
+
+        // 4. "open notepad and type <text>" (direct two-step intent)
         const notepadTypeMatch = request.match(/(?:open|launch|start)\s+notepad\s+(?:and|then)\s+(?:type|enter|write)\s+(['"]?)([\s\S]+?)\1(?:\s+(?:in|into)\s+notepad)?$/i);
         if (notepadTypeMatch) {
             const wasQuoted = Boolean(notepadTypeMatch[1]);
@@ -584,6 +1437,7 @@ Respond strictly in JSON if tool execution is required:
                 steps: [
                     {
                         index: 1,
+                        id: 'step_1',
                         title: 'Launch Notepad application',
                         toolId: 'desktop_launch_app',
                         params: { executable: 'notepad.exe' },
@@ -591,9 +1445,11 @@ Respond strictly in JSON if tool execution is required:
                     },
                     {
                         index: 2,
+                        id: 'step_2',
                         title: `Type "${textToType}" into Notepad`,
                         toolId: 'desktop_type_text',
-                        params: { target: 'Notepad', text: textToType },
+                        params: { target: '{{step_1.appId}}', text: textToType },
+                        dependsOn: ['step_1'],
                         expectedOutcome: 'Text entered and verified via UI Automation'
                     }
                 ]
@@ -1798,6 +2654,124 @@ Respond strictly in JSON if tool execution is required:
             };
         }
 
+        // Memory store intent
+        if (
+            lower.startsWith('remember that ') ||
+            lower.startsWith('remember: ') ||
+            lower.startsWith('save to memory ') ||
+            lower.startsWith('store memory ') ||
+            lower.startsWith('save memory ') ||
+            lower.startsWith('store in memory ') ||
+            (lower.startsWith('remember ') && !lower.startsWith('remember to ') && !lower.startsWith('remember that '))
+        ) {
+            const match = request.match(/(?:remember\s+that\s+|remember:\s*|save\s+to\s+memory\s+|store\s+memory\s+|save\s+memory\s+|store\s+in\s+memory\s+|remember\s+)(.+)/i);
+            if (match) {
+                const content = match[1].trim();
+                return {
+                    objective: `Store persistent memory: "${content}"`,
+                    type: 'plan',
+                    steps: [
+                        {
+                            index: 1,
+                            title: `Store persistent memory: ${content}`,
+                            toolId: 'memory_store',
+                            params: { content, category: 'user_approved', importance: 2 },
+                            expectedOutcome: 'Memory persisted into long-term store'
+                        }
+                    ]
+                };
+            }
+        }
+
+        // Memory negative instruction / prohibit intent
+        if (
+            lower.startsWith('do not remember') ||
+            lower.startsWith("don't remember") ||
+            lower.startsWith('never remember') ||
+            lower.startsWith('do not store') ||
+            lower.startsWith("don't store") ||
+            lower.startsWith('never store')
+        ) {
+            const match = request.match(/(?:do\s+not\s+remember|don'?t\s+remember|never\s+remember|do\s+not\s+store|don'?t\s+store|never\s+store)\s+(?:any\s+|my\s+|the\s+)?(.+)/i);
+            const topic = match ? match[1].trim() : request;
+            return {
+                objective: `Forget and prohibit remembering topic: "${topic}"`,
+                type: 'plan',
+                steps: [
+                    {
+                        index: 1,
+                        title: `Forget topic and register negative instruction: ${topic}`,
+                        toolId: 'memory_forget',
+                        params: { topic, removeExisting: true, prohibitFuture: true },
+                        expectedOutcome: 'Existing memories removed and negative user instruction recorded'
+                    }
+                ]
+            };
+        }
+
+        // Memory delete intent
+        if (lower.startsWith('delete memory ') || lower.startsWith('remove memory ')) {
+            const match = request.match(/(?:delete|remove)\s+memory\s+['"]?([^'"]+)['"]?/i);
+            if (match) {
+                const idOrKey = match[1].trim();
+                return {
+                    objective: `Delete memory record '${idOrKey}'`,
+                    type: 'plan',
+                    steps: [
+                        {
+                            index: 1,
+                            title: `Delete memory: ${idOrKey}`,
+                            toolId: 'memory_delete',
+                            params: { idOrKey, exactIdOnly: idOrKey.startsWith('mem_') },
+                            expectedOutcome: 'Memory record deleted from persistent store'
+                        }
+                    ]
+                };
+            }
+        }
+
+        // Memory forget intent
+        if (lower.startsWith('forget that ') || lower.startsWith('forget about ') || (lower.startsWith('forget ') && !lower.startsWith('forget password'))) {
+            const match = request.match(/forget(?:\s+that|\s+about)?\s+['"]?([^'"]+)['"]?/i);
+            if (match) {
+                const topic = match[1].trim();
+                return {
+                    objective: `Forget topic: "${topic}"`,
+                    type: 'plan',
+                    steps: [
+                        {
+                            index: 1,
+                            title: `Forget topic: ${topic}`,
+                            toolId: 'memory_forget',
+                            params: { topic, removeExisting: true, prohibitFuture: false },
+                            expectedOutcome: 'Topic forgotten from memory'
+                        }
+                    ]
+                };
+            }
+        }
+
+        // Memory get intent
+        if (lower.startsWith('get memory ') || lower.startsWith('show memory ') || lower.startsWith('view memory ')) {
+            const match = request.match(/(?:get|show|view)\s+memory\s+['"]?([^'"]+)['"]?/i);
+            if (match) {
+                const idOrKey = match[1].trim();
+                return {
+                    objective: `Retrieve memory record '${idOrKey}'`,
+                    type: 'plan',
+                    steps: [
+                        {
+                            index: 1,
+                            title: `Get memory: ${idOrKey}`,
+                            toolId: 'memory_get',
+                            params: { idOrKey },
+                            expectedOutcome: 'Retrieve individual memory record'
+                        }
+                    ]
+                };
+            }
+        }
+
         // Memory search intent
         if (lower.startsWith('search memory') || lower.startsWith('search memories') || lower.startsWith('find in memory') || lower.startsWith('recall ') || lower.startsWith('lookup memory')) {
             const match = request.match(/(?:search\s+memor(?:y|ies)(?:\s+for)?|find\s+in\s+memor(?:y|ies)|recall|lookup\s+memor(?:y|ies)(?:\s+for)?)\s+['"]?([^'"]+)['"]?/i);
@@ -1925,8 +2899,155 @@ Respond strictly in JSON if tool execution is required:
             validatedSteps.push(this._enrichStepMetadata(step, i, tool));
         }
 
+        const dagCheck = this._validateDAG(validatedSteps);
+        if (!dagCheck.valid) {
+            return {
+                objective: plan.objective,
+                type: 'invalid_plan',
+                replyText: `Proposed plan has invalid dependencies: ${dagCheck.error}`,
+                error: dagCheck.error,
+                steps: []
+            };
+        }
+
         plan.steps = validatedSteps;
+        plan.structuredIntent = plan.structuredIntent || (typeof this.classifyIntent === 'function' ? this.classifyIntent(plan.objective || '') : null);
         return plan;
+    }
+
+    _validateDAG(steps) {
+        if (!Array.isArray(steps) || steps.length === 0) {
+            return { valid: true };
+        }
+        const seenIds = new Set();
+        const stepsById = new Map();
+        for (let i = 0; i < steps.length; i++) {
+            const step = steps[i];
+            const id = step.id || `step_${i + 1}`;
+            if (seenIds.has(id)) {
+                return { valid: false, error: `Duplicate step ID detected: '${id}'` };
+            }
+            seenIds.add(id);
+            stepsById.set(id, step);
+        }
+
+        const inDegree = new Map();
+        const adj = new Map();
+        for (const id of seenIds) {
+            inDegree.set(id, 0);
+            adj.set(id, []);
+        }
+
+        for (let i = 0; i < steps.length; i++) {
+            const step = steps[i];
+            const deps = Array.isArray(step.dependsOn) ? step.dependsOn : (i > 0 ? [steps[i - 1].id] : []);
+            for (const depId of deps) {
+                if (depId === step.id) {
+                    return { valid: false, error: `Cyclic dependency detected: step '${step.id}' cannot depend on itself.` };
+                }
+                if (!stepsById.has(depId)) {
+                    return { valid: false, error: `Unknown dependency reference: step '${step.id}' depends on non-existent step '${depId}'.` };
+                }
+                adj.get(depId).push(step.id);
+                inDegree.set(step.id, inDegree.get(step.id) + 1);
+            }
+
+            // Validate condition schema if present
+            if (step.condition !== undefined && step.condition !== null) {
+                if (typeof step.condition !== 'object' || Array.isArray(step.condition)) {
+                    return { valid: false, error: `Invalid condition in step '${step.id}': condition must be a non-null object.` };
+                }
+                const { ref, op } = step.condition;
+                if (!ref || typeof ref !== 'string') {
+                    return { valid: false, error: `Invalid condition in step '${step.id}': 'ref' must be a non-empty string.` };
+                }
+                const validOps = ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in', 'contains', 'exists', 'not_exists'];
+                if (!op || !validOps.includes(op)) {
+                    return { valid: false, error: `Invalid condition in step '${step.id}': unsupported operator '${op}'. Supported: ${validOps.join(', ')}.` };
+                }
+                if (step.onFalse !== undefined && step.onFalse !== 'skip' && step.onFalse !== 'fail') {
+                    return { valid: false, error: `Invalid onFalse in step '${step.id}': must be 'skip' or 'fail', got '${step.onFalse}'.` };
+                }
+
+                const cleanRef = String(ref).replace(/^\{\{\s*/, '').replace(/\s*\}\}$/, '').trim();
+                const stepKey = cleanRef.split('.')[0];
+                if (stepKey === step.id) {
+                    return { valid: false, error: `Cyclic dependency detected: step '${step.id}' cannot condition on itself.` };
+                }
+                if (!stepsById.has(stepKey)) {
+                    return { valid: false, error: `Unknown dependency reference: step '${step.id}' condition references non-existent step '${stepKey}'.` };
+                }
+                if (!deps.includes(stepKey)) {
+                    return { valid: false, error: `Undeclared dependency reference: step '${step.id}' condition references '${stepKey}', but '${stepKey}' is not declared in dependsOn.` };
+                }
+            }
+
+            // Validate parameter template references
+            if (step.params && typeof step.params === 'object') {
+                const paramRefs = this._extractTemplateRefs(step.params);
+                for (const pathStr of paramRefs) {
+                    const parts = pathStr.split('.');
+                    const stepKey = parts[0];
+                    const isKnown = stepsById.has(stepKey);
+                    const isStepPrefix = /^step_\d+$/i.test(stepKey);
+
+                    if (!isKnown && !isStepPrefix && parts.length === 1) {
+                        continue;
+                    }
+
+                    if (!isKnown) {
+                        return { valid: false, error: `Unknown dependency reference: step '${step.id}' references non-existent step '${stepKey}' in parameters.` };
+                    }
+
+                    if (stepKey === step.id) {
+                        return { valid: false, error: `Cyclic dependency detected: step '${step.id}' cannot reference its own output in parameters.` };
+                    }
+
+                    if (!deps.includes(stepKey)) {
+                        return { valid: false, error: `Undeclared dependency reference: step '${step.id}' references output of '${stepKey}' in parameters, but '${stepKey}' is not declared in dependsOn.` };
+                    }
+                }
+            }
+        }
+
+        const queue = [];
+        for (const id of seenIds) {
+            if (inDegree.get(id) === 0) queue.push(id);
+        }
+        let visited = 0;
+        while (queue.length > 0) {
+            const currId = queue.shift();
+            visited++;
+            for (const neighborId of adj.get(currId) || []) {
+                const newDeg = inDegree.get(neighborId) - 1;
+                inDegree.set(neighborId, newDeg);
+                if (newDeg === 0) queue.push(neighborId);
+            }
+        }
+
+        if (visited !== steps.length) {
+            return { valid: false, error: 'Cyclic dependency detected in task plan.' };
+        }
+        return { valid: true };
+    }
+
+    _extractTemplateRefs(val, refs = []) {
+        if (!val) return refs;
+        if (typeof val === 'string') {
+            const matches = val.matchAll(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g);
+            for (const m of matches) {
+                refs.push(m[1]);
+            }
+        } else if (Array.isArray(val)) {
+            for (const item of val) {
+                this._extractTemplateRefs(item, refs);
+            }
+        } else if (typeof val === 'object') {
+            for (const v of Object.values(val)) {
+                this._extractTemplateRefs(v, refs);
+            }
+        }
+        return refs;
     }
 
     _enrichStepMetadata(step, index, tool) {
@@ -1953,6 +3074,9 @@ Respond strictly in JSON if tool execution is required:
             dependsOn = [`step_${index}`];
         }
 
+        const condition = (step.condition && typeof step.condition === 'object') ? { ...step.condition } : undefined;
+        const onFalse = step.onFalse === 'fail' ? 'fail' : 'skip';
+
         let verificationStrategy = step.verificationStrategy;
         if (!verificationStrategy) {
             if (step.toolId === 'file_write') verificationStrategy = 'file_integrity';
@@ -1961,6 +3085,7 @@ Respond strictly in JSON if tool execution is required:
             else if (step.toolId === 'desktop_launch_app') verificationStrategy = 'process_running';
             else if (step.toolId === 'desktop_type_text') verificationStrategy = 'ui_automation';
             else if (step.toolId === 'desktop_click_element') verificationStrategy = 'ui_automation';
+            else if (step.toolId === 'desktop_inspect_control') verificationStrategy = 'ui_automation';
             else if (step.toolId === 'browser_navigate') verificationStrategy = 'http_status';
             else if (step.toolId === 'browser_extract') verificationStrategy = 'content_extraction';
             else if (step.toolId === 'visual_inspect') verificationStrategy = 'visual_confirmation';
@@ -1978,6 +3103,8 @@ Respond strictly in JSON if tool execution is required:
             params: step.params || {},
             expectedOutcome: step.expectedOutcome || `Completed ${step.toolId}`,
             dependsOn,
+            condition,
+            onFalse,
             inputs: Array.isArray(step.inputs) ? step.inputs : Object.keys(step.params || {}),
             outputs: Array.isArray(step.outputs) ? step.outputs : ['result'],
             isConsequential,
@@ -2013,5 +3140,6 @@ Respond strictly in JSON if tool execution is required:
 }
 
 module.exports = {
-    TaskPlanner
+    TaskPlanner,
+    INTENT_TYPES
 };

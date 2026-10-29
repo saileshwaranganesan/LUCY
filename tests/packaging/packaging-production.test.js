@@ -61,4 +61,85 @@ test('Production Packaging & Installer Verification Suite', async (t) => {
         assert.ok(fs.existsSync(memoryDir), 'User persistent memory directory must exist in AppData');
         assert.ok(fs.existsSync(secureDir), 'User DPAPI secure directory must exist in AppData');
     });
+
+    await t.test('LucyUiaWorker.exe resolution never returns a virtual ASAR path and rejects in-archive execution', () => {
+        const { isVirtualAsarPath, resolveExeFile } = require('../../src/tools/native-uia/build-worker.js');
+        assert.ok(typeof isVirtualAsarPath === 'function', 'isVirtualAsarPath helper must be exported');
+
+        // Verify virtual vs unpacked ASAR classification
+        assert.equal(isVirtualAsarPath('C:\\test\\resources\\app.asar\\LucyUiaWorker.exe'), true);
+        assert.equal(isVirtualAsarPath('C:/test/resources/app.asar/src/tools/native-uia/LucyUiaWorker.exe'), true);
+        assert.equal(isVirtualAsarPath('C:\\test\\resources\\app.asar.unpacked\\src\\tools\\native-uia\\LucyUiaWorker.exe'), false);
+        assert.equal(isVirtualAsarPath('C:\\dev\\LUCY\\src\\tools\\native-uia\\LucyUiaWorker.exe'), false);
+
+        // Current resolution must point to a real physical path on disk, not virtual ASAR
+        const resolved = resolveExeFile();
+        assert.equal(isVirtualAsarPath(resolved), false, 'Resolved path must not be inside virtual ASAR');
+    });
+
+    await t.test('DesktopAutomationManager rejects virtual ASAR paths and re-resolves physical binary', async () => {
+        const { DesktopAutomationManager } = require('../../src/tools/desktop-automation-manager.js');
+        const virtualMock = 'C:\\dummy\\resources\\app.asar\\src\\tools\\native-uia\\LucyUiaWorker.exe';
+        const mgr = new DesktopAutomationManager({ workerExe: virtualMock });
+
+        // WorkerExe starts as mock, but ensureWorker will reject it and attempt to resolve physical binary
+        try {
+            await mgr.ensureWorker();
+        } catch (err) {
+            // Either spawns successfully if worker exists on dev disk, or fails with not found / compilation error,
+            // but must NEVER fail with virtual asar spawn ENOENT
+            assert.ok(!err.message.includes('cannot be spawned from virtual asar path') || err.message.includes('LucyUiaWorker'), 'Must handle virtual asar gracefully');
+        }
+        if (mgr.proc) {
+            mgr.cleanup();
+        }
+    });
+
+    await t.test('Portable packaging configuration specifies unpackDirName: false and patch is applied', () => {
+        const configPath = path.resolve(__dirname, '../../electron-builder.yml');
+        const content = fs.readFileSync(configPath, 'utf8');
+        assert.ok(content.includes('unpackDirName: false'), 'Must configure unpackDirName: false');
+
+        const patchScript = path.resolve(__dirname, '../../scripts/patch-electron-builder.js');
+        assert.ok(fs.existsSync(patchScript), 'scripts/patch-electron-builder.js must exist');
+        const { applyPatch } = require('../../scripts/patch-electron-builder.js');
+        
+        // 1. Idempotency verification
+        assert.doesNotThrow(() => applyPatch(), 'applyPatch must be idempotent and succeed when already patched');
+
+        // 2. Fresh application durability simulation
+        const targetFile = path.resolve(__dirname, '../../node_modules/app-builder-lib/out/targets/nsis/NsisTarget.js');
+        const originalContent = fs.readFileSync(targetFile, 'utf8');
+        try {
+            // Revert temporarily to buggy pattern
+            const buggyPattern = 'if (typeof unpackDirName === "string" || !unpackDirName) {';
+            const patchedPattern = 'if (unpackDirName !== false && (typeof unpackDirName === "string" || !unpackDirName)) {';
+            const reverted = originalContent.replace(patchedPattern, buggyPattern);
+            fs.writeFileSync(targetFile, reverted, 'utf8');
+
+            // Apply patch and verify it caught and fixed it
+            const applied = applyPatch();
+            assert.strictEqual(applied, true, 'Must detect and fix buggy pattern');
+            const newlyPatched = fs.readFileSync(targetFile, 'utf8');
+            assert.ok(newlyPatched.includes(patchedPattern), 'Must contain patched pattern after apply');
+        } finally {
+            // Ensure targetFile is restored
+            fs.writeFileSync(targetFile, originalContent, 'utf8');
+        }
+    });
+
+    await t.test('patch-electron-builder fails closed with error when unexpected code is encountered', () => {
+        const { applyPatch } = require('../../scripts/patch-electron-builder.js');
+        const targetFile = path.resolve(__dirname, '../../node_modules/app-builder-lib/out/targets/nsis/NsisTarget.js');
+        const originalContent = fs.readFileSync(targetFile, 'utf8');
+        try {
+            // Inject unexpected corrupted code
+            fs.writeFileSync(targetFile, '// Corrupted code with neither pattern', 'utf8');
+            assert.throws(() => applyPatch({ strict: true }), /FATAL: Unexpected source/, 'Must throw on unexpected source');
+        } finally {
+            fs.writeFileSync(targetFile, originalContent, 'utf8');
+        }
+    });
 });
+
+

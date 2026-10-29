@@ -28,13 +28,24 @@ const _synthesizeLucy = (typeof require !== 'undefined')
     ? require('./acoustic-synthesizer.js').synthesizeLucy
     : (typeof window !== 'undefined' ? window.synthesizeLucy : globalThis.synthesizeLucy);
 
-// Precomputed reference acoustic profiles (computed once on module load)
 const REF_HEY_LUCY = typeof _extractAudioFeatures === 'function' && typeof _synthesizeHeyLucy === 'function'
     ? _extractAudioFeatures(_synthesizeHeyLucy({ seed: 42, f0: 135 }))
     : [];
 const REF_LUCY = typeof _extractAudioFeatures === 'function' && typeof _synthesizeLucy === 'function'
     ? _extractAudioFeatures(_synthesizeLucy({ seed: 84, f0: 140 }))
     : [];
+
+let _NATURAL_HEY_LUCY = [];
+let _NATURAL_LUCY = [];
+let _NATURAL_HEY_LUCY_FEMALE = [];
+let _NATURAL_LUCY_FEMALE = [];
+try {
+    const nat = (typeof require !== 'undefined') ? require('./natural-profiles.js') : (typeof window !== 'undefined' ? window : {});
+    _NATURAL_HEY_LUCY = nat.NATURAL_HEY_LUCY || [];
+    _NATURAL_LUCY = nat.NATURAL_LUCY || [];
+    _NATURAL_HEY_LUCY_FEMALE = nat.NATURAL_HEY_LUCY_FEMALE || [];
+    _NATURAL_LUCY_FEMALE = nat.NATURAL_LUCY_FEMALE || [];
+} catch (_) {}
 
 // Frame distance combining MFCC, HFER, and ZCR
 function computeFrameDistance(frameA, frameB) {
@@ -99,7 +110,7 @@ function dtwDistance(seqA, seqB, maxBand = 25) {
  * - Sibilant must occur in the second half of the phrase (onset -> vowel -> /s/ -> /i/)
  */
 function evaluatePhoneticLandmarks(frames, keyword = 'hey lucy') {
-    if (!frames || frames.length < 15) {
+    if (!frames || frames.length < 10) {
         return { valid: false, score: 0.0, reason: 'insufficient_frames' };
     }
 
@@ -109,31 +120,44 @@ function evaluatePhoneticLandmarks(frames, keyword = 'hey lucy') {
     let maxHfer = 0;
     let maxCentroid = 0;
     let speechEnergyCount = 0;
+    let firstSpeechIndex = -1;
+    let lastSpeechIndex = -1;
+
+    let maxRms = 0;
+    for (let i = 0; i < frames.length; i++) {
+        if (frames[i].rms > maxRms) maxRms = frames[i].rms;
+    }
+    const energyFloor = Math.max(0.005, Math.min(0.015, maxRms * 0.15));
+    const vowelFloor = Math.max(0.010, Math.min(0.020, maxRms * 0.35));
 
     for (let i = 0; i < frames.length; i++) {
         const f = frames[i];
-        if (f.rms > 0.015) {
+        if (f.rms > energyFloor) {
             speechEnergyCount++;
-        }
+            if (firstSpeechIndex === -1) firstSpeechIndex = i;
+            lastSpeechIndex = i;
 
-        if (f.hfer > maxHfer) maxHfer = f.hfer;
-        if (f.spectralCentroid > maxCentroid) maxCentroid = f.spectralCentroid;
+            if (f.hfer > maxHfer) maxHfer = f.hfer;
+            if (f.spectralCentroid > maxCentroid) maxCentroid = f.spectralCentroid;
 
-        // Vowel core check: voiced, low HFER, significant RMS
-        if (!hasVowelCore && f.rms > 0.03 && f.hfer < 0.25 && f.zcr < 0.15) {
-            hasVowelCore = true;
-        }
+            // Vowel core check: voiced, low HFER, low ZCR
+            // Calibrated for natural human voice formant inflections across diverse microphones
+            if (!hasVowelCore && f.rms >= vowelFloor && f.hfer < 0.22 && f.zcr < 0.18) {
+                hasVowelCore = true;
+            }
 
-        // Sibilant /s/ check: high HFER, high centroid, elevated ZCR
-        if (f.hfer > 0.35 && f.spectralCentroid > 3500 && f.zcr > 0.15) {
-            hasSibilant = true;
-            if (sibilantIndex === -1) {
-                sibilantIndex = i;
+            // Sibilant /s/ check: occurs after vowel onset with elevated HFER, centroid, or ZCR
+            // Calibrated for physical laptop microphone arrays and natural human acoustic articulation
+            if (hasVowelCore && f.zcr > 0.20 && (f.hfer > 0.10 || f.spectralCentroid > 2500)) {
+                hasSibilant = true;
+                if (sibilantIndex === -1) {
+                    sibilantIndex = i;
+                }
             }
         }
     }
 
-    if (speechEnergyCount < 10) {
+    if (speechEnergyCount < 8) {
         return { valid: false, score: 0.0, reason: 'pure_silence_or_noise' };
     }
 
@@ -146,57 +170,62 @@ function evaluatePhoneticLandmarks(frames, keyword = 'hey lucy') {
     }
 
     // Sibilant must occur in the second half of the phrase (after vowel onset)
-    const relativeSibilantPos = sibilantIndex / frames.length;
-    if (relativeSibilantPos < 0.25) {
+    const effectiveTotal = (lastSpeechIndex > firstSpeechIndex) ? (lastSpeechIndex - firstSpeechIndex + 1) : frames.length;
+    const effectivePos = (firstSpeechIndex !== -1 && sibilantIndex >= firstSpeechIndex)
+        ? (sibilantIndex - firstSpeechIndex) / effectiveTotal
+        : (sibilantIndex / frames.length);
+
+    if (effectivePos < 0.20) {
         return { valid: false, score: 0.2, reason: 'inverted_phonetic_order' };
     }
 
-    // Keyword specific checks:
-    // If "hey lucy", the first ~25% of frames must exhibit the /eɪ/ front diphthong (MFCC[1] < 0)
-    if (keyword === 'hey lucy') {
-        const initialSegmentFrames = Math.max(5, Math.floor(frames.length * 0.25));
-        let initialMfcc1Sum = 0;
-        for (let i = 0; i < initialSegmentFrames; i++) {
-            initialMfcc1Sum += frames[i].mfcc[1];
-        }
-        const meanInitialMfcc1 = initialMfcc1Sum / initialSegmentFrames;
-        if (meanInitialMfcc1 > 4.0) {
-            // Lacks the "Hey" diphthong
-            return { valid: false, score: 0.3, reason: 'missing_hey_diphthong' };
-        }
+    if (keyword === 'hey lucy' && effectiveTotal < 20) {
+        return { valid: false, score: 0.25, reason: 'phrase_too_short_for_hey_lucy' };
+    }
+
+    if (keyword === 'lucy' && effectiveTotal > 80) {
+        return { valid: false, score: 0.25, reason: 'phrase_too_long_for_lucy' };
     }
 
     const landmarkScore = Math.min(1.0, 0.5 + (maxHfer * 0.3) + (Math.min(maxCentroid, 6000) / 6000) * 0.2);
-    return { valid: true, score: landmarkScore };
+    return {
+        valid: true,
+        score: landmarkScore,
+        firstSpeechIndex,
+        lastSpeechIndex,
+        sibilantIndex,
+        effectivePos
+    };
 }
 
 class AcousticWakeModel {
     constructor({
         keywords = ['hey lucy', 'lucy'],
-        confidenceThreshold = 0.65,
+        confidenceThreshold = 0.58,
         sensitivity = 0.5
     } = {}) {
         this.keywords = keywords.map(k => String(k).trim().toLowerCase());
         this.sensitivity = Math.max(0.0, Math.min(1.0, Number(sensitivity) || 0.5));
         
         // Effective threshold adjusted by sensitivity
-        this.confidenceThreshold = Math.max(0.4, Math.min(0.85, confidenceThreshold - (this.sensitivity - 0.5) * 0.2));
+        const baseThreshold = Number.isFinite(confidenceThreshold) ? confidenceThreshold : 0.58;
+        this.confidenceThreshold = Math.max(0.40, Math.min(0.85, baseThreshold - (this.sensitivity - 0.5) * 0.25));
 
         this.templates = {
-            'hey lucy': REF_HEY_LUCY,
-            'lucy': REF_LUCY
+            'hey lucy': [REF_HEY_LUCY, _NATURAL_HEY_LUCY, _NATURAL_HEY_LUCY_FEMALE].filter(t => t && t.length > 0),
+            'lucy': [REF_LUCY, _NATURAL_LUCY, _NATURAL_LUCY_FEMALE].filter(t => t && t.length > 0)
         };
     }
 
     setSensitivity(sensitivity) {
         this.sensitivity = Math.max(0.0, Math.min(1.0, Number(sensitivity) || 0.5));
-        this.confidenceThreshold = Math.max(0.4, Math.min(0.85, 0.65 - (this.sensitivity - 0.5) * 0.2));
+        this.confidenceThreshold = Math.max(0.40, Math.min(0.85, 0.58 - (this.sensitivity - 0.5) * 0.25));
         return this.confidenceThreshold;
     }
 
     /**
      * Evaluates a sequence of framed acoustic features or raw audio buffer
-     * against configured wake words.
+     * against configured wake words with automatic gain control (AGC).
      * 
      * @param {Array|Float32Array|Buffer} input - Audio features or raw audio
      * @returns {{ detected: boolean, keyword: string|null, confidence: number, details: object }}
@@ -206,10 +235,30 @@ class AcousticWakeModel {
         if (Array.isArray(input)) {
             frames = input;
         } else {
-            frames = typeof _extractAudioFeatures === 'function' ? _extractAudioFeatures(input) : [];
+            // Apply Automatic Gain Control (AGC) to raw audio buffer before feature extraction
+            // Scales quiet or distant microphone audio into nominal operating range
+            let audioInput = input;
+            if (input instanceof Float32Array || input instanceof Int16Array || (typeof Buffer !== 'undefined' && Buffer.isBuffer(input)) || input instanceof Uint8Array) {
+                const normalized = (typeof _normalizeAudioBuffer === 'function') ? _normalizeAudioBuffer(input) : input;
+                let maxA = 0;
+                for (let i = 0; i < normalized.length; i++) {
+                    const a = Math.abs(normalized[i]);
+                    if (a > maxA) maxA = a;
+                }
+                if (maxA >= 0.003 && maxA < 0.35) {
+                    const agcGain = Math.min(10.0, 0.70 / maxA);
+                    audioInput = new Float32Array(normalized.length);
+                    for (let i = 0; i < normalized.length; i++) {
+                        audioInput[i] = normalized[i] * agcGain;
+                    }
+                } else {
+                    audioInput = normalized;
+                }
+            }
+            frames = typeof _extractAudioFeatures === 'function' ? _extractAudioFeatures(audioInput) : [];
         }
 
-        if (!frames || frames.length < 15) {
+        if (!frames || frames.length < 10) {
             return {
                 detected: false,
                 keyword: null,
@@ -224,8 +273,8 @@ class AcousticWakeModel {
         let bestLandmarkScore = 0.0;
 
         for (const kw of this.keywords) {
-            const refFrames = this.templates[kw];
-            if (!refFrames) continue;
+            const tmplList = this.templates[kw];
+            if (!tmplList || tmplList.length === 0) continue;
 
             // Landmark check specific to keyword
             const landmark = evaluatePhoneticLandmarks(frames, kw);
@@ -236,16 +285,28 @@ class AcousticWakeModel {
                 continue;
             }
 
-            const dist = dtwDistance(frames, refFrames);
-            // Dynamic scale: distance < 0.015 gives score > 0.73
-            // distance > 0.038 gives score < 0.32
-            const dtwScore = Math.max(0.0, Math.min(1.0, 1.0 - (dist * 18.0)));
-            const combinedConfidence = 0.60 * dtwScore + 0.40 * landmark.score;
+            // Trim frames to active speech boundaries before DTW comparison
+            const speechFrames = (landmark.firstSpeechIndex !== undefined && landmark.firstSpeechIndex >= 0)
+                ? frames.slice(Math.max(0, landmark.firstSpeechIndex - 2), Math.min(frames.length, landmark.lastSpeechIndex + 3))
+                : frames;
+
+            let bestTmplDist = 2.0;
+            const candidates = Array.isArray(tmplList[0]) ? tmplList : [tmplList];
+            for (const refFrames of candidates) {
+                if (!refFrames || refFrames.length === 0) continue;
+                const dist = dtwDistance(speechFrames, refFrames);
+                if (dist < bestTmplDist) {
+                    bestTmplDist = dist;
+                }
+            }
+
+            const dtwScore = Math.max(0.0, Math.min(1.0, 1.0 - (bestTmplDist * 8.5)));
+            const combinedConfidence = 0.55 * dtwScore + 0.45 * landmark.score;
 
             if (combinedConfidence > bestConfidence) {
                 bestConfidence = combinedConfidence;
                 bestKeyword = kw;
-                bestDtw = dist;
+                bestDtw = bestTmplDist;
                 bestLandmarkScore = landmark.score;
             }
         }
@@ -260,6 +321,7 @@ class AcousticWakeModel {
                 bestKeyword,
                 dtwDistance: Math.round(bestDtw * 1000) / 1000,
                 landmarkScore: Math.round(bestLandmarkScore * 1000) / 1000,
+                dtwScore: Math.round(Math.max(0.0, Math.min(1.0, 1.0 - (bestDtw * 8.5))) * 1000) / 1000,
                 threshold: this.confidenceThreshold
             }
         };

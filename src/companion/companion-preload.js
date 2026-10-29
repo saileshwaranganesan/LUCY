@@ -34,6 +34,9 @@ contextBridge.exposeInMainWorld('companionIpc', {
     onLifecycleStateChanged: (callback) => {
         ipcRenderer.on('companion:lifecycleStateChanged', (_event, data) => callback(data));
     },
+    onTaskUpdate: (callback) => {
+        ipcRenderer.on('companion:taskUpdate', (_event, data) => callback(data));
+    },
 
     // Window controls
     moveWindow: (deltaX, deltaY) => {
@@ -65,8 +68,8 @@ contextBridge.exposeInMainWorld('companionIpc', {
     },
 
     // Companion interactions (routed strictly through central task coordinator)
-    petCompanion: () => {
-        return ipcRenderer.invoke('companion:pet');
+    petCompanion: (payload = {}) => {
+        return ipcRenderer.invoke('companion:pet', payload);
     },
     magicCompanion: () => {
         return ipcRenderer.invoke('companion:magic');

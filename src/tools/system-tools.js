@@ -12,6 +12,12 @@ function registerSystemTools(registry) {
         name: 'System Inspector',
         description: 'Get verified host system status, OS information, memory, and uptime',
         riskTier: RISK_TIERS.SAFE_READ,
+        category: 'system',
+        capabilities: ['system_inspection', 'system_status', 'host_info', 'system_info'],
+        outputContract: {
+            type: 'system_status',
+            provides: ['platform', 'arch', 'memory', 'uptimeHours', 'nodeVersion']
+        },
         schema: {
             type: 'object',
             properties: {}

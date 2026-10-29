@@ -27,6 +27,9 @@ const { verifyReleaseArtifacts } = require('./verify-release-artifacts.js');
 const { ensureWorkerBuilt } = require('../src/tools/native-uia/build-worker.js');
 const { verifyBinaryIntegrity, verifyModelIntegrity, provisionAll } = require('./provision-whisper.js');
 const { runPackagedAppSmokeTest } = require('./smoke-test-packaged-app.js');
+const { checkEnvironment } = require('./verify-environment.js');
+const { applyPatch } = require('./patch-electron-builder.js');
+applyPatch();
 
 function formatBytes(bytes) {
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
@@ -66,19 +69,36 @@ async function executeReleasePipeline(options = {}) {
     const skipSmoke = Boolean(options.skipSmoke);
     const dryRun = Boolean(options.dryRun);
     const target = options.target || 'all';
+    const rootDir = options.rootDir || PROJECT_ROOT;
 
     console.log('========================================================================');
     console.log('       L.U.C.Y. Reproducible Windows Production Release Pipeline        ');
     console.log('========================================================================\n');
 
     // -------------------------------------------------------------------------
+    // STAGE 0: Engineering Environment Verification Gate
+    // -------------------------------------------------------------------------
+    console.log('[STAGE 0] Verifying Engineering Environment & Release Prerequisites Gate...');
+    const envReport = options.envReport || checkEnvironment(rootDir);
+    if (!envReport.ok) {
+        const failedChecks = (envReport.checks || []).filter(c => !c.passed);
+        console.error('\n❌ Release Pipeline Environment Gate FAILED. Essential prerequisites are invalid:');
+        for (const fc of failedChecks) {
+            console.error(`  - [FAIL] ${fc.name}: ${fc.message}`);
+        }
+        const diagnosticSummary = failedChecks.map(c => `${c.name} (${c.message})`).join('; ');
+        throw new Error(`Release pipeline aborted by Environment Gate: ${diagnosticSummary}`);
+    }
+    console.log(`  ✓ Environment gate verified: ${envReport.checksPassed}/${envReport.checksTotal} checks passed.\n`);
+
+    // -------------------------------------------------------------------------
     // STAGE 1: Source, Git Revision, and Security Boundary Validation
     // -------------------------------------------------------------------------
     console.log('[STAGE 1] Validating Git Source, Working Tree, and Security Boundary...');
 
-    const gitCommit = getGitCommit(PROJECT_ROOT);
-    const gitBranch = getGitBranch(PROJECT_ROOT);
-    const gitClean = isGitTreeClean(PROJECT_ROOT);
+    const gitCommit = getGitCommit(rootDir);
+    const gitBranch = getGitBranch(rootDir);
+    const gitClean = isGitTreeClean(rootDir);
 
     console.log(`  Source Git Commit: ${gitCommit}`);
     console.log(`  Source Git Branch: ${gitBranch}`);
@@ -93,15 +113,15 @@ async function executeReleasePipeline(options = {}) {
     }
 
     // Security check: Zero private keys or certs in workspace
-    const leakedFiles = checkSecurityExclusions(PROJECT_ROOT);
+    const leakedFiles = checkSecurityExclusions(rootDir);
     if (leakedFiles.length > 0) {
         throw new Error(`Security Boundary Violation: Private keys or certificates detected in repository: ${leakedFiles.join(', ')}`);
     }
     console.log('  ✓ Security audit: Zero private signing keys, certificates, or credentials found in tree');
 
     // Package lockfile check
-    const pkgJsonPath = path.join(PROJECT_ROOT, 'package.json');
-    const lockfilePath = path.join(PROJECT_ROOT, 'package-lock.json');
+    const pkgJsonPath = path.join(rootDir, 'package.json');
+    const lockfilePath = path.join(rootDir, 'package-lock.json');
     if (!fs.existsSync(pkgJsonPath) || !fs.existsSync(lockfilePath)) {
         throw new Error('Missing package.json or package-lock.json');
     }
@@ -110,7 +130,7 @@ async function executeReleasePipeline(options = {}) {
 
     if (dryRun) {
         console.log('\n[DRY RUN] Validations passed. Terminating early without building.');
-        return { ok: true, dryRun: true, gitCommit };
+        return { ok: true, dryRun: true, gitCommit, envReport };
     }
 
     // -------------------------------------------------------------------------
@@ -120,8 +140,8 @@ async function executeReleasePipeline(options = {}) {
     if (skipTests) {
         console.log('  [WARNING] Pre-release test suite skipped via --skip-tests flag.');
     } else {
-        console.log('  Executing: node --test tests/**/*.test.js');
-        const testRes = spawnSync('node', ['--test', 'tests/**/*.test.js'], {
+        console.log('  Executing: node --test --test-concurrency=1 tests/**/*.test.js');
+        const testRes = spawnSync('node', ['--test', '--test-concurrency=1', 'tests/**/*.test.js'], {
             cwd: PROJECT_ROOT,
             stdio: 'inherit',
             shell: process.platform === 'win32'
@@ -299,6 +319,7 @@ async function executeReleasePipeline(options = {}) {
         ok: true,
         durationSec,
         gitCommit,
+        envReport,
         manifest: manifestResult.manifest,
         distDir: DIST_DIR,
         verification: verifyResult
@@ -319,6 +340,13 @@ if (require.main === module) {
         if (arg.startsWith('--target=')) {
             options.target = arg.slice(9);
         }
+        if (arg.startsWith('--dir=')) {
+            options.rootDir = path.resolve(arg.slice(6));
+        }
+    }
+    const dirIdx = args.indexOf('--dir');
+    if (dirIdx !== -1 && args[dirIdx + 1]) {
+        options.rootDir = path.resolve(args[dirIdx + 1]);
     }
 
     executeReleasePipeline(options)

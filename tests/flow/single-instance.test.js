@@ -16,14 +16,18 @@ test('SEC-004: Real Electron Single-Instance Lock Prevents Concurrent Running In
     const testUserDataDir = path.join(os.tmpdir(), `lucy-lock-test-${Date.now()}`);
     fs.mkdirSync(testUserDataDir, { recursive: true });
 
+    // Clean environment to prevent parent runners from forcing ELECTRON_RUN_AS_NODE
+    const cleanEnv = {
+        ...process.env,
+        ELECTRON_ENABLE_LOGGING: '1',
+        LUCY_SMOKE_TEST: 'false'
+    };
+    delete cleanEnv.ELECTRON_RUN_AS_NODE;
+
     // 1. Launch Primary Electron instance with isolated user-data-dir
     const primaryChild = spawn(electronBinary, ['.', `--user-data-dir=${testUserDataDir}`], {
         cwd: appDir,
-        env: {
-            ...process.env,
-            ELECTRON_ENABLE_LOGGING: '1',
-            LUCY_SMOKE_TEST: 'false'
-        },
+        env: cleanEnv,
         windowsHide: true
     });
 
@@ -38,11 +42,7 @@ test('SEC-004: Real Electron Single-Instance Lock Prevents Concurrent Running In
         const secondaryExitPromise = new Promise((resolve, reject) => {
             const secondaryChild = spawn(electronBinary, ['.', `--user-data-dir=${testUserDataDir}`], {
                 cwd: appDir,
-                env: {
-                    ...process.env,
-                    ELECTRON_ENABLE_LOGGING: '1',
-                    LUCY_SMOKE_TEST: 'false'
-                },
+                env: cleanEnv,
                 windowsHide: true
             });
 

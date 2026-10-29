@@ -1,0 +1,194 @@
+[
+  {
+    "id": "FIND-VOICE-001",
+    "title": "TTS Engine Persistence Reversion to Kokoro Across Application Restart",
+    "subsystem": "Voice Settings & Main Process Lifecycle",
+    "severity": "P1 — HIGH",
+    "status": "RESOLVED IN WORKING TREE",
+    "evidence_type": "VERIFIED — TEST",
+    "description": "Selecting Windows Speech (SAPI5) in Settings appeared to save during the session, but exiting L.U.C.Y. via its Exit control and relaunching reverted the active engine to Kokoro-82M.",
+    "evidence": "Source code inspection of src/ui/index.html showed settingsTtsEngineSelect statically defaulting to 'kokoro'. Startup config loader failed to set select.value, causing subsequent persistVoiceSettings() calls to overwrite voice-config.json with 'kokoro'. Tests in tests/voice/voice-recovery-execution.test.js pass 8/8.",
+    "source_files": [
+      "src/ui/app.js",
+      "src/ui/index.html",
+      "src/main/index.js"
+    ],
+    "test_references": [
+      "tests/voice/voice-recovery-execution.test.js"
+    ],
+    "root_cause": "DOM select element was not initialized on startup config load, causing persistVoiceSettings() to read static HTML default ('kokoro') and clobber voice-config.json on disk. Additionally, main/index.js unconditionally pre-warmed Kokoro worker on launch.",
+    "user_impact": "User preference for lightweight, instant Windows Speech was discarded on application restart, forcing the slow neural model on every fresh boot.",
+    "dependencies": [],
+    "recommended_next_action": "Launch the application once with npm start, confirm Windows Speech (SAPI5) is selected in Settings to write the updated setting to AppData disk, and commit working tree fixes."
+  },
+  {
+    "id": "FIND-VOICE-002",
+    "title": "Excessive 22-Second First-Audible Speech Latency and Listening State Deadlock",
+    "subsystem": "Speech Synthesis & Audio Output",
+    "severity": "P1 — HIGH",
+    "status": "RESOLVED IN WORKING TREE",
+    "evidence_type": "VERIFIED — RUNTIME",
+    "description": "Speech responses took approximately 22 seconds to emit their first audible word, or aborted immediately in 0 ms without producing audio.",
+    "evidence": "Live Electron A/B benchmark (scratch/verify-live-ab-acceptance.js) measured Kokoro CPU inference at 17,089 ms, while Windows SAPI5 measured 564 ms nominal and 48 ms offline fallback. Source inspection confirmed early return false in _executeSpeech() when isListening was true.",
+    "source_files": [
+      "src/voice/voice-controller.js",
+      "src/voice/kokoro-tts-service.js",
+      "src/voice/kokoro-worker.py"
+    ],
+    "test_references": [
+      "tests/voice/voice-recovery-execution.test.js",
+      "scratch/verify-live-ab-acceptance.js"
+    ],
+    "root_cause": "Kokoro-82M ONNX model ran on host 15W Intel Core i5-1335U CPU without quantization or GPU acceleration. Additionally, voice-controller.js line 643 aborted speech when isListening was active.",
+    "user_impact": "Conversational assistant was practically unusable via voice due to multi-second delays or silent failure to respond.",
+    "dependencies": [
+      "FIND-VOICE-001"
+    ],
+    "recommended_next_action": "Preserve direct SAPI5 routing in voice-controller.js and verified listening state cancellation."
+  },
+  {
+    "id": "FIND-VOICE-003",
+    "title": "Physical Laptop Microphone Wake-Word Rejection and Speaker Feedback Loop",
+    "subsystem": "Wake-Word Detection & Web Audio Capture",
+    "severity": "P1 — HIGH",
+    "status": "RESOLVED IN WORKING TREE",
+    "evidence_type": "VERIFIED — RUNTIME",
+    "description": "Saying 'Hey Lucy' into the physical laptop microphone failed to activate the assistant despite automated synthetic tests reporting success.",
+    "evidence": "Synthetic tests generated artificial high-frequency noise bursts (hfer > 0.35). Real microphone speech experienced room acoustic attenuation (hfer ~ 0.10-0.15), failing evaluatePhoneticLandmarks sibilant gate (> 0.18). Furthermore, processorNode was connected directly to audioContext.destination, leaking audio to speakers and triggering Windows AEC suppression.",
+    "source_files": [
+      "src/voice/acoustic-wake-model.js",
+      "src/voice/audio-recorder.js",
+      "src/voice/wake-word-engine.js"
+    ],
+    "test_references": [
+      "tests/voice/voice-recovery-execution.test.js",
+      "scratch/verify-live-ab-acceptance.js"
+    ],
+    "root_cause": "Phonetic landmark sibilant gate threshold was excessively high for natural human speech over laptop microphone arrays, and audio recorder lacked a zero-gain isolation node, causing speaker bleed and acoustic echo cancellation suppression.",
+    "user_impact": "Hands-free voice activation was completely non-functional for real human speakers on laptop hardware.",
+    "dependencies": [],
+    "recommended_next_action": "Perform physical microphone acoustic confirmation in a running desktop session with conversational speech."
+  },
+  {
+    "id": "FIND-ENV-001",
+    "title": "ELECTRON_RUN_AS_NODE Environment Variable Collision in Single-Instance Test",
+    "subsystem": "Test Harness & Flow Verification",
+    "severity": "P3 — LOW",
+    "status": "OPEN",
+    "evidence_type": "VERIFIED — TEST",
+    "description": "Running 'npm run test:flow' in an IDE or terminal session that exports ELECTRON_RUN_AS_NODE=1 causes tests/flow/single-instance.test.js to fail with exit code 1 instead of 0.",
+    "evidence": "Executing 'npm run test:flow' failed on single-instance.test.js. Executing 'Remove-Item env:ELECTRON_RUN_AS_NODE; node --test tests/flow/single-instance.test.js' passed cleanly with exit code 0.",
+    "source_files": [
+      "tests/flow/single-instance.test.js"
+    ],
+    "test_references": [
+      "tests/flow/single-instance.test.js"
+    ],
+    "root_cause": "Child Electron process inherits ELECTRON_RUN_AS_NODE from the parent shell environment, bypassing Electron main process application lifecycle APIs.",
+    "user_impact": "False negative test failure during flow integration runs when executed from certain IDE shells.",
+    "dependencies": [],
+    "recommended_next_action": "Add explicit environment scrubbing (delete process.env.ELECTRON_RUN_AS_NODE) in single-instance.test.js before spawning child Electron processes."
+  },
+  {
+    "id": "FIND-TOOL-001",
+    "title": "Ralph CLI Batch Wrapper Label Resolution Failure on Windows cmd.exe",
+    "subsystem": "Autonomous Engineering Toolchain (Ralph Wiggum)",
+    "severity": "P3 — LOW",
+    "status": "OPEN",
+    "evidence_type": "VERIFIED — TEST",
+    "description": "Executing 'ralph.cmd status' in Windows cmd.exe returns 'The system cannot find the batch label specified - status'.",
+    "evidence": "Tested 'ralph.cmd status' via cmd.exe; failed with batch label error. Tested 'powershell -File ralph.ps1 status'; succeeded cleanly with exit code 0.",
+    "source_files": [
+      "C:\\Users\\admin\\.gemini\\bin\\ralph.cmd",
+      "C:\\Users\\admin\\.gemini\\bin\\ralph.ps1"
+    ],
+    "test_references": [],
+    "root_cause": "C:\\Users\\admin\\.gemini\\bin\\ralph.cmd was saved with LF (Unix) line endings instead of CRLF (Windows) line endings, causing cmd.exe label parser to fail to locate :status.",
+    "user_impact": "Users running cmd.exe cannot use ralph.cmd; must use ralph.ps1 in PowerShell or bash.",
+    "dependencies": [],
+    "recommended_next_action": "Convert ralph.cmd line endings from LF to CRLF."
+  },
+  {
+    "id": "FIND-SEC-001",
+    "title": "Unsigned Windows Packaged Executables Trigger SmartScreen Advisory",
+    "subsystem": "Packaging & Distribution Trust",
+    "severity": "P3 — LOW",
+    "status": "CONFIRMED LIMITATION",
+    "evidence_type": "VERIFIED — SOURCE",
+    "description": "Production binaries in dist-release are unsigned (Status: NotSigned), triggering Windows Defender SmartScreen unknown publisher advisory upon download.",
+    "evidence": "Inspected dist-release/L.U.C.Y-Setup-0.1.0-win-x64.exe with PowerShell Get-AuthenticodeSignature; returned NotSigned.",
+    "source_files": [
+      "electron-builder.yml",
+      "scripts/generate-release-manifest.js"
+    ],
+    "test_references": [
+      "tests/packaging/release-trust-verification.test.js"
+    ],
+    "root_cause": "Open-source development environment lacks a commercial EV / OV Windows Code Signing Certificate.",
+    "user_impact": "Users downloading installer binaries from internet browsers see an 'Unknown Publisher' security advisory.",
+    "dependencies": [],
+    "recommended_next_action": "Continue providing cryptographic SHA-256 checksums in release-manifest.json and SHA256SUMS.txt; obtain Windows signing certificate if distributing publicly."
+  },
+  {
+    "id": "FIND-PKG-001",
+    "title": "Portable Distribution NSIS Extraction Collision and Worker Deletion",
+    "subsystem": "Packaging & Native UIA Worker",
+    "severity": "P1 — HIGH",
+    "status": "RESOLVED IN SOURCE",
+    "evidence_type": "VERIFIED — TEST",
+    "description": "Portable executable failed Step 12 in smoke tests because secondary single-instance extraction deleted LucyUiaWorker.exe out from under running instance.",
+    "evidence": "scripts/patch-electron-builder.js and unpackDirName: false in electron-builder.yml isolate portable instances in $PLUGINSDIR/app. Verified by tests/packaging/packaging-production.test.js (32/32 pass).",
+    "source_files": [
+      "electron-builder.yml",
+      "scripts/patch-electron-builder.js",
+      "src/tools/native-uia/build-worker.js"
+    ],
+    "test_references": [
+      "tests/packaging/packaging-production.test.js"
+    ],
+    "root_cause": "Upstream electron-builder logic bug in NsisTarget.js ignored unpackDirName: false; secondary instance RMDir on exit unlinked extracted binaries.",
+    "user_impact": "Native UI automation crashed with ENOENT in portable distribution runs.",
+    "dependencies": [],
+    "recommended_next_action": "Preserve scripts/patch-electron-builder.js postinstall hook in package.json."
+  },
+  {
+    "id": "FIND-PKG-002",
+    "title": "Missing sql.js WASM Module in Packaged Application ASAR Bundle",
+    "subsystem": "Release Packaging & Persistent Memory",
+    "severity": "P1 — HIGH",
+    "status": "RESOLVED IN SOURCE",
+    "evidence_type": "VERIFIED — TEST",
+    "description": "Installed packaged app crashed on startup with 'Cannot find module sql.js' when initializing memory store.",
+    "evidence": "electron-builder.yml files glob was updated to include node_modules/sql.js/**/*; dist-release ASAR verified via npx asar list.",
+    "source_files": [
+      "electron-builder.yml"
+    ],
+    "test_references": [
+      "tests/packaging/packaging-production.test.js"
+    ],
+    "root_cause": "electron-builder files filter omitted sql.js distribution folder.",
+    "user_impact": "Packaged release crashed immediately upon attempting SQLite database initialization.",
+    "dependencies": [],
+    "recommended_next_action": "Preserve node_modules/sql.js/**/* entry in electron-builder.yml."
+  },
+  {
+    "id": "FIND-EXT-001",
+    "title": "External Phone, WhatsApp, and Shopping Capabilities Are Roadmap Placeholders",
+    "subsystem": "External Integrations",
+    "severity": "P3 — LOW",
+    "status": "CONFIRMED SPECIFICATION",
+    "evidence_type": "VERIFIED — SOURCE",
+    "description": "Phone calling, WhatsApp messaging, and shopping workflows are conceptual roadmap features with zero supporting backend code or API integrations.",
+    "evidence": "Full-codebase grep for 'whatsapp', 'phone', 'shopping' found zero integration modules; only general intent matching for opening installed desktop apps via UIA allowlist.",
+    "source_files": [
+      "src/core/task-planner.js",
+      "src/tools/desktop-automation-manager.js"
+    ],
+    "test_references": [],
+    "root_cause": "Features were discussed during requirements planning but deferred in favor of core local-first assistant, voice, desktop UIA, and memory continuity capabilities.",
+    "user_impact": "Users asking Lucy to make phone calls or buy products are routed to general browser or desktop application launch tools.",
+    "dependencies": [],
+    "recommended_next_action": "Accurately document these capabilities as planned/unimplemented in user-facing manuals and roadmaps to prevent false expectations."
+  }
+]
+

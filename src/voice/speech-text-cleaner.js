@@ -26,6 +26,20 @@ const PARENTHETICAL_ACTION_PATTERN = /\(\s*(?:action|sound|sfx|effect|sound effe
 const BRACKET_ACTION_PATTERN = /\[\s*(?:action|sound|sfx|effect|sound effect|boing+|sparkle(?:\s+sparkle)?|twirl|swoosh|whoosh|wheee+|purr+|giggle|giggles|flutter)[^\]]*\]/gi;
 const ACTION_EXCLAMATION_PATTERN = /(?:^|[.!?]\s+)(?:(?:\*|_)?(?:boing+|sparkle(?:\s+sparkle)?|twirl|swoosh|whoosh|wheee+|purr+|giggle(?:[\s-]+giggle)?|giggles|flutter|poof|ta-da|tada|la\s+la(?:\s+la)?)(?:\*|_)?(?:[!:,.~]|\s+)+)+/gi;
 
+// Sensitive secrets, passwords, and tokens that must never be pronounced aloud
+const SECRET_TOKEN_PATTERNS = Object.freeze([
+    { pattern: /\b(?:api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*['"]?[a-zA-Z0-9_\-]{6,}['"]?/gi, replace: ' credentials omitted ' },
+    { pattern: /\b(?:bearer\s+)[a-zA-Z0-9_\.\-]+/gi, replace: ' bearer token ' },
+    { pattern: /\bsk-[a-zA-Z0-9_\-]{8,}\b/gi, replace: ' secret key ' },
+    { pattern: /\bghp_[a-zA-Z0-9]{20,}\b/gi, replace: ' access token ' },
+    { pattern: /\bAIza[0-9A-Za-z\-_]{35}\b/g, replace: ' api key ' },
+    { pattern: /\bglpat-[a-zA-Z0-9\-]{20,}\b/gi, replace: ' access token ' },
+    { pattern: /\bxox[baprs]-[0-9a-zA-Z]{10,}\b/gi, replace: ' access token ' },
+    { pattern: /\bhf_[a-zA-Z0-9]{20,}\b/gi, replace: ' access token ' },
+    { pattern: /\[\s*REDACTED(?:_[A-Z0-9]+)?\s*\]/gi, replace: ' redacted ' },
+    { pattern: /\*{3,}REDACTED\*{3,}/gi, replace: ' redacted ' }
+]);
+
 /**
  * Clean text for natural spoken audio.
  * @param {string} rawText 
@@ -39,6 +53,11 @@ function cleanTextForSpeech(rawText, { maxChars = 600 } = {}) {
     }
 
     let text = rawText;
+
+    // 0. Redact secrets, keys, and credentials so they are never spoken aloud
+    for (const { pattern, replace } of SECRET_TOKEN_PATTERNS) {
+        text = text.replace(pattern, replace);
+    }
 
     // 1. Remove control tags and persona metadata
     text = text.replace(CONTROL_TAG_PATTERN, '');

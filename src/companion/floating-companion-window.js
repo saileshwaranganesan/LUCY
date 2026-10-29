@@ -755,6 +755,12 @@ class FloatingCompanionWindow {
         }
     }
 
+    sendTaskUpdate(event) {
+        if (this.window && !this.window.isDestroyed() && this.window.webContents) {
+            this.window.webContents.send('companion:taskUpdate', event);
+        }
+    }
+
     _registerIpcHandlers() {
         if (!ipcMain || typeof ipcMain.on !== 'function') {
             return;

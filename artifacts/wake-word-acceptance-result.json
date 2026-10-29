@@ -1,0 +1,97 @@
+{
+  "devices": {
+    "supported": true,
+    "count": 4,
+    "devices": [
+      {
+        "deviceId": "default",
+        "label": "Default - Microphone Array (Intel® Smart Sound Technology for Digital Microphones)",
+        "groupId": "758e8912f03e18a37f88d335d5902ea3180940857df95ddc8ef92db53edbc800"
+      },
+      {
+        "deviceId": "communications",
+        "label": "Communications - Microphone Array (Intel® Smart Sound Technology for Digital Microphones)",
+        "groupId": "758e8912f03e18a37f88d335d5902ea3180940857df95ddc8ef92db53edbc800"
+      },
+      {
+        "deviceId": "7a4c1db4c1353df8bdf892d51c87671a39a17fb0f9cbc17fa175dde6895d2f5e",
+        "label": "Microphone Array (Intel® Smart Sound Technology for Digital Microphones)",
+        "groupId": "758e8912f03e18a37f88d335d5902ea3180940857df95ddc8ef92db53edbc800"
+      },
+      {
+        "deviceId": "a3e6c2bfbdeb8cf574cb3e3331aeda370d32fa35c08e00e99ba9d0b5cfb08980",
+        "label": "Microphone (Voice Changer Virtual Audio Device (WDM))",
+        "groupId": "8ca0f0eef20d279b01ff436a2fe9418c64d27bfdc8814c00f74f86d9f8ddcbcb"
+      }
+    ]
+  },
+  "micStreamTest": {
+    "success": true,
+    "tracks": [
+      {
+        "label": "Default - Microphone Array (Intel® Smart Sound Technology for Digital Microphones)",
+        "enabled": true,
+        "muted": false,
+        "readyState": "live"
+      }
+    ],
+    "framesReceived": 10,
+    "maxRms": 0.048934482907717305,
+    "nonZeroSamples": 3976
+  },
+  "toggleResult": {
+    "stateBefore": {
+      "checked": false,
+      "badge": "Disabled",
+      "isStreaming": false,
+      "enabled": false
+    },
+    "stateAfter": {
+      "checked": true,
+      "badge": "Listening for \"Hey Lucy\"",
+      "isStreaming": true,
+      "enabled": true,
+      "voiceState": "idle"
+    }
+  },
+  "executionResult": {
+    "match": {
+      "keyword": "hey lucy",
+      "confidence": 0.873,
+      "timestamp": 1792952506356,
+      "licence": "Apache-2.0",
+      "method": "acoustic"
+    },
+    "transitions": [
+      {
+        "type": "wakeState",
+        "state": "triggered",
+        "keyword": "hey lucy",
+        "confidence": 0.873
+      }
+    ],
+    "voiceState": "idle",
+    "isListening": false,
+    "badgeText": "\"hey lucy\" Detected!",
+    "statusLabelText": "IDLE"
+  },
+  "commandPipelineResult": {
+    "finalVoiceState": "idle",
+    "badgeText": "\"hey lucy\" Detected!",
+    "statusLabelText": "COMPLETED",
+    "wakeWordEnabled": true,
+    "isStreaming": true
+  },
+  "notepadRunning": {
+    "running": true,
+    "pids": [
+      "12108"
+    ]
+  },
+  "disableResult": {
+    "checked": false,
+    "badge": "Disabled",
+    "isStreaming": false,
+    "enabled": false
+  }
+}

@@ -19,6 +19,7 @@ const TASK_STATES = Object.freeze({
     EXECUTING_TOOL: 'EXECUTING_TOOL',
     VERIFYING: 'VERIFYING',
     RECOVERING: 'RECOVERING',
+    AWAITING_RECONCILIATION: 'AWAITING_RECONCILIATION',
     COMPLETED: 'COMPLETED',
     PARTIALLY_COMPLETED: 'PARTIALLY_COMPLETED',
     FAILED: 'FAILED',
@@ -112,6 +113,7 @@ const ALLOWED_TRANSITIONS = Object.freeze({
         TASK_STATES.EXECUTING_TOOL,
         TASK_STATES.VERIFYING,
         TASK_STATES.RECOVERING,
+        TASK_STATES.AWAITING_RECONCILIATION,
         TASK_STATES.AWAITING_AUTHORIZATION,
         TASK_STATES.WAITING_PERMISSION,
         TASK_STATES.COMPLETED,
@@ -125,6 +127,7 @@ const ALLOWED_TRANSITIONS = Object.freeze({
         TASK_STATES.RUNNING,
         TASK_STATES.VERIFYING,
         TASK_STATES.RECOVERING,
+        TASK_STATES.AWAITING_RECONCILIATION,
         TASK_STATES.AWAITING_AUTHORIZATION,
         TASK_STATES.WAITING_PERMISSION,
         TASK_STATES.COMPLETED,
@@ -138,6 +141,7 @@ const ALLOWED_TRANSITIONS = Object.freeze({
         TASK_STATES.RUNNING,
         TASK_STATES.EXECUTING_TOOL,
         TASK_STATES.RECOVERING,
+        TASK_STATES.AWAITING_RECONCILIATION,
         TASK_STATES.PLANNING, // re-plan on verification failure
         TASK_STATES.COMPLETED,
         TASK_STATES.PARTIALLY_COMPLETED,
@@ -149,6 +153,7 @@ const ALLOWED_TRANSITIONS = Object.freeze({
         TASK_STATES.RUNNING,
         TASK_STATES.EXECUTING_TOOL,
         TASK_STATES.VERIFYING,
+        TASK_STATES.AWAITING_RECONCILIATION,
         TASK_STATES.PLANNING, // re-plan on alternative strategy
         TASK_STATES.AWAITING_AUTHORIZATION,
         TASK_STATES.WAITING_PERMISSION,
@@ -157,10 +162,23 @@ const ALLOWED_TRANSITIONS = Object.freeze({
         TASK_STATES.FAILED,
         TASK_STATES.CANCELLED
     ]),
+    [TASK_STATES.AWAITING_RECONCILIATION]: new Set([
+        TASK_STATES.READY,
+        TASK_STATES.RUNNING,
+        TASK_STATES.EXECUTING_TOOL,
+        TASK_STATES.VERIFYING,
+        TASK_STATES.PLANNING,
+        TASK_STATES.COMPLETED,
+        TASK_STATES.PARTIALLY_COMPLETED,
+        TASK_STATES.FAILED,
+        TASK_STATES.CANCELLED,
+        TASK_STATES.INTERRUPTED
+    ]),
     [TASK_STATES.INTERRUPTED]: new Set([
         TASK_STATES.READY,
         TASK_STATES.RUNNING,
         TASK_STATES.EXECUTING_TOOL,
+        TASK_STATES.AWAITING_RECONCILIATION,
         TASK_STATES.PLANNING,
         TASK_STATES.FAILED,
         TASK_STATES.CANCELLED
@@ -184,10 +202,26 @@ class IllegalStateTransitionError extends Error {
 
 class DuplicateTaskExecutionError extends Error {
     constructor(activeTaskId, attemptedTaskId) {
-        super(`Cannot start task '${attemptedTaskId}': another task '${activeTaskId}' is currently active and running.`);
+        let msg;
+        if (!attemptedTaskId && typeof activeTaskId === 'string') {
+            msg = activeTaskId;
+        } else {
+            msg = `Cannot start task '${attemptedTaskId}': another task '${activeTaskId}' is currently active and running.`;
+        }
+        super(msg);
         this.name = 'DuplicateTaskExecutionError';
         this.activeTaskId = activeTaskId;
         this.attemptedTaskId = attemptedTaskId;
+    }
+}
+
+class UncertainOutcomeError extends Error {
+    constructor(taskId, stepId, reason) {
+        super(`Task '${taskId}' cannot proceed: step '${stepId}' has an uncertain outcome (${reason}). Automatic replay is strictly blocked to prevent duplicate side effects.`);
+        this.name = 'UncertainOutcomeError';
+        this.taskId = taskId;
+        this.stepId = stepId;
+        this.reason = reason;
     }
 }
 
@@ -219,6 +253,7 @@ class TaskStatusManager extends EventEmitter {
         return {
             total: steps.length,
             completed: steps.filter(s => s.status === 'completed').length,
+            skipped: steps.filter(s => s.status === 'skipped').length,
             failed: steps.filter(s => s.status === 'failed').length,
             started: steps.filter(s => s.status === 'started' || s.status === 'running').length
         };
@@ -299,7 +334,13 @@ class TaskStatusManager extends EventEmitter {
 
     startTask(taskId, description, options = {}) {
         // Prevent duplicate concurrent execution if another task is active
-        if (this.currentTask && !this.isTerminal() && this.currentState !== TASK_STATES.IDLE && !options.allowConcurrent) {
+        const isSameTaskResume = Boolean(
+            this.currentTask &&
+            this.currentTask.id === taskId &&
+            (options.resume || this.currentState === TASK_STATES.INTERRUPTED || this.currentState === TASK_STATES.AWAITING_RECONCILIATION)
+        );
+
+        if (this.currentTask && !this.isTerminal() && this.currentState !== TASK_STATES.IDLE && !options.allowConcurrent && !isSameTaskResume) {
             throw new DuplicateTaskExecutionError(this.currentTask.id, taskId);
         }
 
@@ -367,6 +408,31 @@ class TaskStatusManager extends EventEmitter {
         }
     }
 
+    recordStepSkipped(stepIdOrIndex, reason = '', condition = {}) {
+        if (!this.currentTask) return;
+        if (!this.currentTask.steps) this.currentTask.steps = [];
+        let step = this.currentTask.steps.find(
+            s => s.id === stepIdOrIndex || s.index === stepIdOrIndex
+        );
+        if (!step) {
+            step = {
+                id: String(stepIdOrIndex),
+                index: typeof stepIdOrIndex === 'number' ? stepIdOrIndex : (this.currentTask.steps.length + 1),
+                status: 'skipped',
+                startedAt: new Date().toISOString()
+            };
+            this.currentTask.steps.push(step);
+        }
+        step.completedAt = new Date().toISOString();
+        step.status = 'skipped';
+        step.skipped = true;
+        step.toolExecuted = false;
+        step.reason = typeof reason === 'string' ? reason : reason?.message || 'Condition not met';
+        step.condition = condition;
+        step.verified = true;
+        this.emit('stepSkipped', { taskId: this.currentTask.id, step });
+    }
+
     recordStepFailure(stepIdOrIndex, error, verificationOrRecovery = {}) {
         if (!this.currentTask || !this.currentTask.steps) return;
         const step = this.currentTask.steps.find(
@@ -414,13 +480,15 @@ class TaskStatusManager extends EventEmitter {
     }
 
     reset() {
+        const previousState = this.currentState;
         this.currentTask = null;
         this.currentState = TASK_STATES.IDLE;
         const event = {
-            from: this.currentState,
+            from: previousState,
             to: TASK_STATES.IDLE,
             timestamp: new Date().toISOString()
         };
+        this.history.push(event);
         this.emit('stateChanged', event);
         return event;
     }
@@ -432,5 +500,6 @@ module.exports = {
     TERMINAL_STATES,
     ALLOWED_TRANSITIONS,
     IllegalStateTransitionError,
-    DuplicateTaskExecutionError
+    DuplicateTaskExecutionError,
+    UncertainOutcomeError
 };

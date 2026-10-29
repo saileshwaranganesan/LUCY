@@ -729,23 +729,273 @@ class BrowserManager {
             url: this._sanitizeUrlOutput(page.url()),
             selector,
             content: cleaned,
+            text: cleaned,
             length: cleaned.length,
             verification: { verified: true, method: 'visible_text_inspection' }
         };
     }
 
     /**
-     * Click an element using robust locators and verify effect
+     * Classify an active overlay on the page to distinguish harmless promotional banners
+     * from privacy consent, authentication, payment, or unknown dialogs.
+     * @param {Page} page
+     * @returns {Promise<Object>} Overlay classification result
+     */
+    async classifyOverlay(page) {
+        try {
+            return await page.evaluate(() => {
+                const modalSel = '.modal, [role="dialog"], [aria-modal="true"], .cookie-banner, #cookie-notice, .overlay, #consent-banner, [class*="overlay"], [class*="modal"]';
+                const el = document.querySelector(modalSel);
+                if (!el) return { hasOverlay: false, type: 'none' };
+
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                const isVisible = rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+                if (!isVisible) return { hasOverlay: false, type: 'none' };
+
+                const text = (el.innerText || el.textContent || '').toLowerCase();
+
+                // 1. Authentication & Permission Dialogs
+                const authKeywords = ['sign in', 'log in', 'login', 'password', 'create account', 'enter your email', 'credentials', 'grant permission', 'allow location', 'allow microphone', 'allow camera'];
+                const hasPasswordInput = Boolean(el.querySelector('input[type="password"]'));
+                const hasAuthInput = Boolean(el.querySelector('input[type="email"], input[name*="user"], input[name*="login"], input[name*="auth"]'));
+                if (hasPasswordInput || (hasAuthInput && authKeywords.some(k => text.includes(k)))) {
+                    return {
+                        hasOverlay: true,
+                        type: 'authentication',
+                        title: el.querySelector('h1, h2, h3, .title, [class*="title"]')?.innerText || 'Authentication Required',
+                        dismissible: false,
+                        requiresUserDecision: true,
+                        reason: 'Authentication and credential dialogs require explicit user credentials and cannot be dismissed automatically.'
+                    };
+                }
+
+                // 2. Consequential Confirmation Dialogs (Payment, purchase, destruction, subscription)
+                const consequentialKeywords = ['payment', 'credit card', 'checkout', 'pay now', 'buy now', 'purchase', 'place order', 'subscribe', 'delete account', 'confirm deletion', 'cancel subscription', 'billing'];
+                const hasPaymentInput = Boolean(el.querySelector('input[name*="card"], input[name*="cc"], input[autocomplete*="cc-"]'));
+                if (hasPaymentInput || consequentialKeywords.some(k => text.includes(k))) {
+                    return {
+                        hasOverlay: true,
+                        type: 'consequential',
+                        title: el.querySelector('h1, h2, h3, .title, [class*="title"]')?.innerText || 'Consequential Confirmation',
+                        dismissible: false,
+                        requiresUserDecision: true,
+                        reason: 'Payment, purchase, and consequential confirmation dialogs require explicit user authorization.'
+                    };
+                }
+
+                // 3. Privacy & Cookie Consent Dialogs
+                const consentKeywords = ['cookie', 'gdpr', 'privacy choice', 'privacy policy', 'we use cookies', 'consent', 'tracking', 'our partners', 'manage preferences', 'accept all', 'reject all'];
+                if (consentKeywords.some(k => text.includes(k))) {
+                    return {
+                        hasOverlay: true,
+                        type: 'privacy_consent',
+                        title: el.querySelector('h1, h2, h3, .title, [class*="title"]')?.innerText || 'Cookie / Privacy Consent',
+                        dismissible: false,
+                        requiresUserDecision: true,
+                        reason: 'Privacy and cookie consent dialogs require user decision; silent automatic acceptance or rejection is prohibited.'
+                    };
+                }
+
+                // 4. Harmless Promotional / Announcement Overlays
+                const closeBtn = el.querySelector('button[aria-label*="close" i], button.close, .close, [aria-label*="dismiss" i], button:not([type="submit"])');
+                const closeBtnText = closeBtn ? (closeBtn.innerText || closeBtn.textContent || '').trim().toLowerCase() : '';
+                const isHarmlessCloseText = ['close', 'dismiss', 'no thanks', '✕', 'x', 'got it', 'maybe later', 'skip'].includes(closeBtnText) ||
+                                           (closeBtn && closeBtn.getAttribute('aria-label') && /close|dismiss/i.test(closeBtn.getAttribute('aria-label')));
+
+                const hasFormInputs = Boolean(el.querySelector('input:not([type="hidden"]), select, textarea'));
+
+                if (closeBtn && isHarmlessCloseText && !hasFormInputs) {
+                    return {
+                        hasOverlay: true,
+                        type: 'harmless_promotional',
+                        title: el.querySelector('h1, h2, h3, .title, [class*="title"]')?.innerText || 'Announcement Overlay',
+                        dismissible: true,
+                        dismissSelector: closeBtn.id ? `#${closeBtn.id}` : (closeBtn.className ? `.${closeBtn.className.trim().split(/\s+/)[0]}` : null),
+                        requiresUserDecision: false
+                    };
+                }
+
+                // 5. Unknown Overlay: cannot establish confident harmlessness
+                return {
+                    hasOverlay: true,
+                    type: 'unknown',
+                    title: el.querySelector('h1, h2, h3, .title, [class*="title"]')?.innerText || 'Unknown Overlay Dialog',
+                    dismissible: false,
+                    requiresUserDecision: true,
+                    reason: 'Unknown overlay dialog cannot be dismissed safely without establishing its meaning.'
+                };
+            });
+        } catch {
+            return { hasOverlay: false, type: 'none' };
+        }
+    }
+
+    /**
+     * Inspect current page state, returning structured evidence of readiness, security gates, and active overlays.
+     * @returns {Promise<Object>} Structured page inspection evidence
+     */
+    async inspectPage() {
+        const page = await this.ensurePage();
+        const url = this._sanitizeUrlOutput(page.url());
+        let title = '';
+        try {
+            title = await page.title();
+        } catch { }
+
+        const gates = await this._detectSecurityGates(page);
+        const overlayInfo = await this.classifyOverlay(page);
+
+        // Count interactive elements
+        let interactiveCount = 0;
+        try {
+            interactiveCount = await page.evaluate(() => {
+                return document.querySelectorAll('button, a[href], input, textarea, select').length;
+            });
+        } catch { }
+
+        return {
+            ok: true,
+            status: 'page_inspected',
+            url,
+            title,
+            dialogOpen: Boolean(overlayInfo?.hasOverlay),
+            dialog: {
+                dialogOpen: Boolean(overlayInfo?.hasOverlay),
+                overlayType: overlayInfo?.type || 'none',
+                title: overlayInfo?.title || '',
+                dismissible: Boolean(overlayInfo?.dismissible),
+                requiresUserDecision: Boolean(overlayInfo?.requiresUserDecision),
+                reason: overlayInfo?.reason || null
+            },
+            securityGates: gates,
+            interactiveElementsCount: interactiveCount,
+            verification: {
+                verified: true,
+                method: 'dom_state_inspection'
+            }
+        };
+    }
+
+    /**
+     * Attempt to safely dismiss an unexpected overlay if it is strictly harmless promotional/announcement.
+     * Refuses to dismiss consent, authentication, payment, or unknown overlays that require user decisions.
+     */
+    async _dismissSafeOverlayIfPresent(page) {
+        try {
+            const classification = await this.classifyOverlay(page);
+            if (!classification || !classification.hasOverlay) {
+                return { dismissed: false, hasOverlay: false };
+            }
+
+            // Consequential, authentication, consent, or unknown overlays MUST NOT be dismissed automatically!
+            if (classification.requiresUserDecision) {
+                return {
+                    dismissed: false,
+                    hasOverlay: true,
+                    requiresUserDecision: true,
+                    overlayType: classification.type,
+                    title: classification.title,
+                    reason: classification.reason
+                };
+            }
+
+            // Only harmless promotional/announcement overlays are safe to dismiss
+            if (classification.type === 'harmless_promotional') {
+                const closeSelectors = [
+                    classification.dismissSelector,
+                    '[aria-modal="true"] [aria-label*="close" i]',
+                    '[aria-modal="true"] button:has-text("Close")',
+                    '[aria-modal="true"] button:has-text("Dismiss")',
+                    '[aria-modal="true"] button:has-text("No thanks")',
+                    '.modal button:has-text("Close")',
+                    '.modal .close',
+                    '.overlay button.close',
+                    '.overlay [aria-label*="close" i]'
+                ].filter(Boolean);
+
+                for (const sel of closeSelectors) {
+                    const btn = page.locator(sel).first();
+                    if (await btn.isVisible({ timeout: 250 }).catch(() => false)) {
+                        await btn.click({ timeout: 1500 }).catch(() => {});
+                        await page.waitForTimeout(300);
+                        return {
+                            dismissed: true,
+                            hasOverlay: true,
+                            recoveredFromOverlay: true,
+                            overlayType: 'harmless_promotional'
+                        };
+                    }
+                }
+            }
+        } catch { }
+        return { dismissed: false, hasOverlay: false };
+    }
+
+    /**
+     * Click an element using robust locators and verify effect.
+     * Enforces that obstructing overlays requiring user decisions halt fail-closed.
      */
     async click(selector, options = {}) {
         const page = await this.ensurePage();
         const timeoutMs = options.timeoutMs || 8000;
 
+        let recoveredFromOverlay = false;
+
+        // Proactively check if an overlay is present
+        const earlyCheck = await this._dismissSafeOverlayIfPresent(page);
+        if (earlyCheck.requiresUserDecision) {
+            const err = new Error(`[OVERLAY_REQUIRES_USER_DECISION] Cannot click '${selector}': An active '${earlyCheck.overlayType}' overlay is blocking the page. ${earlyCheck.reason}`);
+            err.code = 'OVERLAY_REQUIRES_USER_DECISION';
+            err.overlayType = earlyCheck.overlayType;
+            err.title = earlyCheck.title;
+            throw err;
+        }
+        if (earlyCheck.dismissed) {
+            recoveredFromOverlay = true;
+        }
+
         const locator = page.locator(selector).first();
-        await locator.waitFor({ state: 'visible', timeout: timeoutMs });
+        try {
+            await locator.waitFor({ state: 'visible', timeout: timeoutMs });
+        } catch (waitErr) {
+            // Check if an overlay appeared during wait
+            const lateCheck = await this._dismissSafeOverlayIfPresent(page);
+            if (lateCheck.requiresUserDecision) {
+                const err = new Error(`[OVERLAY_REQUIRES_USER_DECISION] Target element '${selector}' is obstructed by an active '${lateCheck.overlayType}' overlay. ${lateCheck.reason}`);
+                err.code = 'OVERLAY_REQUIRES_USER_DECISION';
+                err.overlayType = lateCheck.overlayType;
+                err.title = lateCheck.title;
+                throw err;
+            }
+            if (lateCheck.dismissed) {
+                recoveredFromOverlay = true;
+                await locator.waitFor({ state: 'visible', timeout: timeoutMs });
+            } else {
+                throw waitErr;
+            }
+        }
 
         const beforeUrl = page.url();
-        await locator.click({ timeout: timeoutMs });
+        try {
+            await locator.click({ timeout: timeoutMs });
+        } catch (clickErr) {
+            // If click was intercepted by overlay, check if it's safe to dismiss
+            const retryCheck = await this._dismissSafeOverlayIfPresent(page);
+            if (retryCheck.requiresUserDecision) {
+                const err = new Error(`[OVERLAY_REQUIRES_USER_DECISION] Click on '${selector}' was intercepted by an active '${retryCheck.overlayType}' overlay. ${retryCheck.reason}`);
+                err.code = 'OVERLAY_REQUIRES_USER_DECISION';
+                err.overlayType = retryCheck.overlayType;
+                err.title = retryCheck.title;
+                throw err;
+            }
+            if (retryCheck.dismissed) {
+                recoveredFromOverlay = true;
+                await locator.click({ timeout: timeoutMs });
+            } else {
+                throw clickErr;
+            }
+        }
 
         // Wait briefly for potential navigation or DOM update
         await page.waitForTimeout(500);
@@ -756,6 +1006,7 @@ class BrowserManager {
             status: 'click_success',
             selector,
             navigationOccurred: beforeUrl !== afterUrl,
+            recoveredFromOverlay,
             currentUrl: this._sanitizeUrlOutput(afterUrl),
             verification: {
                 verified: true,
@@ -1523,6 +1774,10 @@ class BrowserManager {
         this.currentPage = null;
         this.tabIdMap.clear();
         this.reservedDestinations.clear();
+    }
+
+    async close() {
+        return await this.closeAll();
     }
 
     /**

@@ -168,6 +168,7 @@ function registerFileTools(registry, workspaceRoot = process.cwd()) {
                 ok: true,
                 status: 'write_success',
                 path: params.path,
+                fullPath: filePath,
                 bytesWritten: writtenStat.size,
                 verification: { verified, method: 'post_write_stat_verification' }
             };

@@ -120,6 +120,28 @@ test('Workstream 1: Unified Execution State Machine', async (t) => {
         }
     });
 
+    await t.test('3b. Explicit reset accurately captures previous state in transition event and updates history', () => {
+        const sm = new TaskStatusManager();
+        sm.startTask('task-reset-test', 'Testing explicit reset');
+        sm.transition(TASK_STATES.PLANNING);
+        sm.transition(TASK_STATES.COMPLETED, { summary: 'Finished' });
+
+        assert.equal(sm.state, TASK_STATES.COMPLETED);
+        assert.equal(sm.isTerminal(), true);
+
+        const resetEvent = sm.reset();
+        assert.equal(resetEvent.from, TASK_STATES.COMPLETED);
+        assert.equal(resetEvent.to, TASK_STATES.IDLE);
+        assert.equal(sm.state, TASK_STATES.IDLE);
+        assert.equal(sm.isTerminal(), false);
+        assert.equal(sm.currentTask, null);
+
+        const lastHistoryEvent = sm.history[sm.history.length - 1];
+        assert.ok(lastHistoryEvent, 'Reset event should be recorded in history');
+        assert.equal(lastHistoryEvent.from, TASK_STATES.COMPLETED);
+        assert.equal(lastHistoryEvent.to, TASK_STATES.IDLE);
+    });
+
     await t.test('4. Duplicate task execution rejection in TaskCoordinator', async () => {
         const pa = new PermissionAuthority({ workspaceRoot: testDir });
         const tr = new ToolRegistry({ permissionAuthority: pa });

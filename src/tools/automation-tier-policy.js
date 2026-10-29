@@ -105,6 +105,7 @@ function getActionCapability(toolId, params = {}, options = {}) {
         if (id === 'desktop_list_apps' ||
             id === 'desktop_inspect_ui' ||
             id === 'desktop_find_element' ||
+            id === 'desktop_inspect_control' ||
             id === 'desktop_take_screenshot') {
             return {
                 tier: AUTOMATION_TIERS.TIER_3_ACCESSIBILITY_UIA,

@@ -85,7 +85,7 @@ class KokoroTtsService extends EventEmitter {
         voiceName = 'af_bella',
         maxRssMb = 450,
         minAvailableMemMb = 300,
-        idleUnloadTimeoutMs = 30000,
+        idleUnloadTimeoutMs = 120000,
         threads = 4,
         fallbackService = null,
         onStateChange = () => {},
@@ -156,17 +156,19 @@ class KokoroTtsService extends EventEmitter {
                 }
                 const reqId = res._reqId;
                 if (reqId && this.pendingRequests.has(reqId)) {
-                    const { resolve, reject } = this.pendingRequests.get(reqId);
+                    const reqObj = this.pendingRequests.get(reqId);
+                    if (reqObj.timeoutId) clearTimeout(reqObj.timeoutId);
                     this.pendingRequests.delete(reqId);
                     if (res.status === 'error') {
-                        reject(new Error(res.error || 'Worker error'));
+                        reqObj.reject(new Error(res.error || 'Worker error'));
                     } else {
-                        resolve(res);
+                        reqObj.resolve(res);
                     }
                 } else {
                     // Match by action if no reqId
                     for (const [id, req] of this.pendingRequests.entries()) {
                         if (req.action === res.action) {
+                            if (req.timeoutId) clearTimeout(req.timeoutId);
                             this.pendingRequests.delete(id);
                             if (res.status === 'error') {
                                 req.reject(new Error(res.error || 'Worker error'));
@@ -216,6 +218,7 @@ class KokoroTtsService extends EventEmitter {
         }
         // Reject any dangling pending requests
         for (const [id, req] of this.pendingRequests.entries()) {
+            if (req.timeoutId) clearTimeout(req.timeoutId);
             req.reject(new Error('Kokoro worker process terminated unexpectedly'));
         }
         this.pendingRequests.clear();
@@ -227,15 +230,24 @@ class KokoroTtsService extends EventEmitter {
         this.emit('stateChange', { state: newState, ...payload });
     }
 
-    _sendCommand(cmdObj) {
+    _sendCommand(cmdObj, timeoutMs = 35000) {
         return new Promise((resolve, reject) => {
             try {
                 this._ensureWorker();
                 const reqId = ++this.requestIdCounter;
                 cmdObj._reqId = reqId;
+
+                const timeoutId = setTimeout(() => {
+                    if (this.pendingRequests.has(reqId)) {
+                        this.pendingRequests.delete(reqId);
+                        reject(new Error(`Kokoro worker command '${cmdObj.cmd}' timed out after ${timeoutMs}ms`));
+                    }
+                }, timeoutMs);
+
                 this.pendingRequests.set(reqId, {
                     resolve,
                     reject,
+                    timeoutId,
                     action: cmdObj.cmd,
                     timestamp: Date.now()
                 });

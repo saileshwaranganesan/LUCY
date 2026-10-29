@@ -95,7 +95,10 @@ function registerVisualTools(registry, options = {}) {
                 } else if (desktopManager) {
                     try {
                         const appTarget = params.target || 'active';
-                        const shot = await desktopManager.takeScreenshot(appTarget);
+                        const shot = await desktopManager.takeScreenshot(appTarget, {
+                            taskId: context?.taskId,
+                            signal: context?.signal
+                        });
                         const shotBase64 = shot?.base64 || (typeof shot === 'string' ? shot : null);
                         if (shotBase64) {
                             base64 = shotBase64;

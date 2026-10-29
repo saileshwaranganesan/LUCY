@@ -42,10 +42,18 @@ class SimpleCdpClient {
             this.ws = new WebSocket(this.wsUrl);
             this.ws.onopen = () => resolve();
             this.ws.onerror = (err) => reject(err);
+            this.ws.onclose = () => {
+                for (const [, { reject: rej, timer }] of this.pending.entries()) {
+                    if (timer) clearTimeout(timer);
+                    rej(new Error('WebSocket closed while awaiting response'));
+                }
+                this.pending.clear();
+            };
             this.ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
                 if (data.id && this.pending.has(data.id)) {
-                    const { resolve: res, reject: rej } = this.pending.get(data.id);
+                    const { resolve: res, reject: rej, timer } = this.pending.get(data.id);
+                    if (timer) clearTimeout(timer);
                     this.pending.delete(data.id);
                     if (data.error) {
                         rej(new Error(data.error.message || JSON.stringify(data.error)));
@@ -57,11 +65,23 @@ class SimpleCdpClient {
         });
     }
 
-    async send(method, params = {}) {
+    async send(method, params = {}, timeoutMs = 8000) {
         const id = this.msgId++;
         return new Promise((resolve, reject) => {
-            this.pending.set(id, { resolve, reject });
-            this.ws.send(JSON.stringify({ id, method, params }));
+            const timer = setTimeout(() => {
+                if (this.pending.has(id)) {
+                    this.pending.delete(id);
+                    reject(new Error(`CDP request ${method} (id=${id}) timed out after ${timeoutMs}ms`));
+                }
+            }, timeoutMs);
+            this.pending.set(id, { resolve, reject, timer });
+            try {
+                this.ws.send(JSON.stringify({ id, method, params }));
+            } catch (err) {
+                clearTimeout(timer);
+                this.pending.delete(id);
+                reject(err);
+            }
         });
     }
 
@@ -242,9 +262,9 @@ async function runPackagedAppSmokeTest(options = {}) {
             if (options.verbose) console.warn(`  [App stderr] ${str}`);
         });
 
-        // 4. Connect CDP
+        // 4. Connect CDP (allow 60s for cold extraction of portable distribution)
         console.log('\n[Step 4] Connecting to Chrome DevTools Protocol...');
-        const targets = await getCdpTargets(port, 20000);
+        const targets = await getCdpTargets(port, 60000);
         const mainTarget = targets.find((t) => t.url.includes('index.html') || t.title.includes('L.U.C.Y.'));
         if (!mainTarget) {
             throw new Error(`Main window target not found. Discovered: ${JSON.stringify(targets.map((t) => t.url))}`);
@@ -345,7 +365,30 @@ async function runPackagedAppSmokeTest(options = {}) {
         console.log('\n[Step 12] Testing desktop automation manager & native worker...');
         const desktopListResult = await mainCdp.eval(`window.lucyIpc.executeRequest('list running apps')`);
         const workerPassed = desktopListResult && desktopListResult.ok;
+        if (!workerPassed) {
+            console.log('  [DIAGNOSTIC] desktopListResult:', JSON.stringify(desktopListResult, null, 2));
+        }
         recordResult('Desktop Automation & LucyUiaWorker Availability', workerPassed, `Status: ${desktopListResult?.status}`);
+
+        // 12b. Verify Desktop Workflow Execution Record & Structured Observability
+        console.log('\n[Step 12b] Testing desktop workflow execution record & structured audit trace...');
+        const workflowRecordCheck = await mainCdp.eval(`(() => {
+            const res = ${JSON.stringify(desktopListResult)};
+            const rec = res && (res.workflowRecord || (res.summary && res.summary.workflowRecord));
+            return {
+                hasRecord: Boolean(rec),
+                hasActionAttempts: Array.isArray(rec?.actionAttempts),
+                hasTargetApp: rec ? ('targetApp' in rec) : false,
+                hasFinalStatus: typeof rec?.finalStatus === 'string',
+                hasSummary: typeof rec?.summary === 'string'
+            };
+        })()`);
+        const recordPassed = workflowRecordCheck && workflowRecordCheck.hasRecord && workflowRecordCheck.hasActionAttempts;
+        recordResult(
+            'Workflow Execution Record & Structured Observability',
+            recordPassed,
+            `RecordPresent: ${workflowRecordCheck?.hasRecord}, Attempts: ${workflowRecordCheck?.hasActionAttempts}`
+        );
 
         // 13. Verify Floating Companion Window Creation, Rendering, & Docking
         console.log('\n[Step 13] Testing 3D floating companion creation, rendering, and docking...');
@@ -390,15 +433,26 @@ async function runPackagedAppSmokeTest(options = {}) {
         }
 
     } finally {
-        if (mainCdp) mainCdp.close();
+        if (mainCdp) {
+            try {
+                await Promise.race([
+                    mainCdp.eval('typeof window.lucyIpc?.exitApp === "function" ? window.lucyIpc.exitApp() : window.close()'),
+                    sleep(1500)
+                ]);
+            } catch (_) {}
+            await sleep(1000);
+            mainCdp.close();
+        }
         if (companionCdp) companionCdp.close();
 
         // 14. Shutdown & Clean Process Cleanup
         console.log('\n[Step 14] Shutting down application and verifying zero orphaned processes...');
-        if (appProcess) {
-            try { appProcess.kill('SIGTERM'); } catch (_) {}
-            await sleep(1500);
+        if (appProcess && appProcess.pid) {
+            try {
+                execSync(`taskkill /F /T /PID ${appProcess.pid} 2>nul || exit 0`, { shell: 'cmd.exe' });
+            } catch (_) {}
             try { appProcess.kill('SIGKILL'); } catch (_) {}
+            await sleep(1000);
         }
 
         // Verify no orphaned LucyUiaWorker

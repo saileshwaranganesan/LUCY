@@ -560,6 +560,21 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Keyboard Interaction & Dismissal (Escape key dismisses open menus and side panel)
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            if (trickDropdown && trickDropdown.classList.contains('open')) {
+                trickDropdown.classList.remove('open');
+            }
+            if (sidePanel && !sidePanel.classList.contains('collapsed')) {
+                collapseSidePanel();
+            }
+            if (companionContainer && !companionContainer.matches(':hover') && !companionContainer.matches(':focus-within')) {
+                companionContainer.classList.remove('controls-visible');
+            }
+        }
+    });
+
     // Direct Character Interaction (Petting reaction on fairy click)
     if (fairyStage) {
         fairyStage.addEventListener('click', () => {
@@ -608,26 +623,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.companionIpc.onVoiceUpdate) {
             window.companionIpc.onVoiceUpdate((voiceData) => {
                 if (!voiceData) return;
-                if (voiceData.voiceState === 'speaking') {
-                    renderer.setVisualState({ emotion: 'speaking' });
-                    if (statusText) statusText.textContent = 'SPEAKING';
-                    if (statusDot) {
-                        statusDot.style.background = '#70d6ff';
-                        statusDot.style.boxShadow = '0 0 6px #70d6ff';
-                    }
-                    if (voiceData.text) {
-                        displayMessage(voiceData.text, false);
-                    }
-                } else if (voiceData.voiceState === 'listening') {
-                    renderer.setVisualState({ emotion: 'listening' });
-                    if (statusText) statusText.textContent = 'LISTENING';
-                    if (statusDot) {
-                        statusDot.style.background = '#ff70a6';
-                        statusDot.style.boxShadow = '0 0 6px #ff70a6';
-                    }
-                    displayMessage('Listening carefully... 🎙️', true);
-                } else if (voiceData.voiceState === 'idle') {
-                    if (renderer.state.emotion === 'speaking' || renderer.state.emotion === 'listening') {
+                const state = (voiceData.voiceState || voiceData.state || '').toLowerCase();
+                if (state === 'idle') {
+                    if (['speaking', 'listening', 'thinking', 'worried'].includes(renderer.state.emotion)) {
                         renderer.setVisualState({ emotion: 'idle' });
                     }
                     if (statusText) statusText.textContent = 'IDLE';
@@ -639,6 +637,181 @@ document.addEventListener('DOMContentLoaded', () => {
                         collapseSidePanel();
                         scheduleHideControls(150);
                     }
+                } else if (state === 'speaking') {
+                    renderer.setVisualState({ emotion: 'speaking' });
+                    if (statusText) statusText.textContent = 'SPEAKING';
+                    if (statusDot) {
+                        statusDot.style.background = '#70d6ff';
+                        statusDot.style.boxShadow = '0 0 6px #70d6ff';
+                    }
+                    if (voiceData.text) {
+                        displayMessage(voiceData.text, false);
+                    }
+                } else if (state === 'listening') {
+                    renderer.setVisualState({ emotion: 'listening' });
+                    if (statusText) statusText.textContent = 'LISTENING';
+                    if (statusDot) {
+                        statusDot.style.background = '#ff70a6';
+                        statusDot.style.boxShadow = '0 0 6px #ff70a6';
+                    }
+                    displayMessage('Listening carefully... 🎙️', true);
+                } else if (state === 'transcribing' || state === 'processing') {
+                    renderer.setVisualState({ emotion: 'thinking' });
+                    if (statusText) statusText.textContent = 'TRANSCRIBING';
+                    if (statusDot) {
+                        statusDot.style.background = '#e0aaff';
+                        statusDot.style.boxShadow = '0 0 6px #e0aaff';
+                    }
+                } else if (state === 'understanding') {
+                    renderer.setVisualState({ emotion: 'thinking' });
+                    if (statusText) statusText.textContent = 'UNDERSTANDING';
+                    if (statusDot) {
+                        statusDot.style.background = '#c77dff';
+                        statusDot.style.boxShadow = '0 0 6px #c77dff';
+                    }
+                } else if (state === 'awaiting_confirmation' || state === 'awaiting-confirmation') {
+                    renderer.setVisualState({ emotion: 'curious' });
+                    if (statusText) statusText.textContent = 'AWAITING APPROVAL';
+                    if (statusDot) {
+                        statusDot.style.background = '#ffd166';
+                        statusDot.style.boxShadow = '0 0 6px #ffd166';
+                    }
+                } else if (state === 'executing') {
+                    renderer.setVisualState({ emotion: 'working' });
+                    if (statusText) statusText.textContent = 'EXECUTING';
+                    if (statusDot) {
+                        statusDot.style.background = '#38bdf8';
+                        statusDot.style.boxShadow = '0 0 6px #38bdf8';
+                    }
+                } else if (state === 'recovering' || state === 'awaiting_reconciliation') {
+                    renderer.setVisualState({ emotion: 'thinking' });
+                    if (statusText) statusText.textContent = state === 'recovering' ? 'RECOVERING' : 'RECONCILIATION';
+                    if (statusDot) {
+                        statusDot.style.background = '#f59e0b';
+                        statusDot.style.boxShadow = '0 0 6px #f59e0b';
+                    }
+                    if (voiceData.text) {
+                        displayMessage(voiceData.text, true);
+                    }
+                } else if (state === 'cancelled') {
+                    renderer.setVisualState({ emotion: 'idle' });
+                    if (statusText) statusText.textContent = 'CANCELLED';
+                    if (statusDot) {
+                        statusDot.style.background = '#ff70a6';
+                        statusDot.style.boxShadow = '0 0 6px #ff70a6';
+                    }
+                    displayMessage('Request cancelled.', true);
+                } else if (state === 'error') {
+                    renderer.setVisualState({ emotion: 'worried' });
+                    if (statusText) statusText.textContent = 'ERROR';
+                    if (statusDot) {
+                        statusDot.style.background = '#ef476f';
+                        statusDot.style.boxShadow = '0 0 6px #ef476f';
+                    }
+                }
+            });
+        }
+
+        if (window.companionIpc.onTaskUpdate) {
+            window.companionIpc.onTaskUpdate((taskEvent) => {
+                if (!taskEvent) return;
+                const to = taskEvent.to;
+                if (!to) return;
+                switch (to) {
+                    case 'IDLE':
+                        renderer.setVisualState({ emotion: 'idle' });
+                        if (statusText) statusText.textContent = 'IDLE';
+                        if (statusDot) {
+                            statusDot.style.background = '#70d6ff';
+                            statusDot.style.boxShadow = '0 0 6px #70d6ff';
+                        }
+                        if (!isUserHovering && (!companionContainer || !companionContainer.matches(':focus-within'))) {
+                            collapseSidePanel();
+                            scheduleHideControls(150);
+                        }
+                        break;
+                    case 'INTERPRETING':
+                    case 'PLANNING':
+                        renderer.setVisualState({ emotion: 'thinking' });
+                        if (statusText) statusText.textContent = to === 'PLANNING' ? 'PLANNING' : 'THINKING';
+                        if (statusDot) {
+                            statusDot.style.background = '#c77dff';
+                            statusDot.style.boxShadow = '0 0 6px #c77dff';
+                        }
+                        break;
+                    case 'WAITING_PERMISSION':
+                    case 'AWAITING_AUTHORIZATION':
+                        renderer.setVisualState({ emotion: 'curious' });
+                        if (statusText) statusText.textContent = 'AWAITING APPROVAL';
+                        if (statusDot) {
+                            statusDot.style.background = '#ffd166';
+                            statusDot.style.boxShadow = '0 0 6px #ffd166';
+                        }
+                        if (taskEvent.description) {
+                            displayMessage(taskEvent.description, true);
+                        }
+                        break;
+                    case 'RUNNING':
+                    case 'EXECUTING_TOOL':
+                        renderer.setVisualState({ emotion: 'working' });
+                        if (statusText) statusText.textContent = 'EXECUTING';
+                        if (statusDot) {
+                            statusDot.style.background = '#38bdf8';
+                            statusDot.style.boxShadow = '0 0 6px #38bdf8';
+                        }
+                        break;
+                    case 'VERIFYING':
+                        renderer.setVisualState({ emotion: 'focused' });
+                        if (statusText) statusText.textContent = 'VERIFYING';
+                        if (statusDot) {
+                            statusDot.style.background = '#a855f7';
+                            statusDot.style.boxShadow = '0 0 6px #a855f7';
+                        }
+                        break;
+                    case 'RECOVERING':
+                    case 'AWAITING_RECONCILIATION':
+                        renderer.setVisualState({ emotion: 'thinking' });
+                        if (statusText) statusText.textContent = to === 'RECOVERING' ? 'RECOVERING' : 'RECONCILIATION';
+                        if (statusDot) {
+                            statusDot.style.background = '#f59e0b';
+                            statusDot.style.boxShadow = '0 0 6px #f59e0b';
+                        }
+                        if (taskEvent.description) {
+                            displayMessage(taskEvent.description, true);
+                        }
+                        break;
+                    case 'COMPLETED':
+                        renderer.setVisualState({ emotion: 'happy' });
+                        if (statusText) statusText.textContent = 'COMPLETED';
+                        if (statusDot) {
+                            statusDot.style.background = '#10b981';
+                            statusDot.style.boxShadow = '0 0 6px #10b981';
+                        }
+                        if (taskEvent.result?.summary) {
+                            displayMessage(taskEvent.result.summary, true);
+                        }
+                        break;
+                    case 'FAILED':
+                        renderer.setVisualState({ emotion: 'worried' });
+                        if (statusText) statusText.textContent = 'FAILED';
+                        if (statusDot) {
+                            statusDot.style.background = '#ef476f';
+                            statusDot.style.boxShadow = '0 0 6px #ef476f';
+                        }
+                        if (taskEvent.error) {
+                            displayMessage(taskEvent.error, true);
+                        }
+                        break;
+                    case 'CANCELLED':
+                    case 'INTERRUPTED':
+                        renderer.setVisualState({ emotion: 'idle' });
+                        if (statusText) statusText.textContent = to;
+                        if (statusDot) {
+                            statusDot.style.background = '#ff70a6';
+                            statusDot.style.boxShadow = '0 0 6px #ff70a6';
+                        }
+                        displayMessage('Task cancelled.', true);
+                        break;
                 }
             });
         }

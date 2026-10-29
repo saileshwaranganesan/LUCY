@@ -265,6 +265,8 @@ def run_loop():
             continue
 
         cmd = req.get("cmd", "")
+        req_id = req.get("_reqId")
+
         if cmd == "ping":
             res = {"status": "ok", "action": "ping", "memory": worker.get_memory_info()}
         elif cmd == "status":
@@ -289,11 +291,18 @@ def run_loop():
             res = worker.cancel()
         elif cmd == "exit":
             res = {"status": "ok", "action": "exit"}
+            if req_id is not None:
+                res["_reqId"] = req_id
             sys.stdout.write(json.dumps(res) + "\n")
             sys.stdout.flush()
             break
         else:
-            res = {"status": "error", "error": f"Unknown command: {cmd}"}
+            res = {"status": "error", "error": f"Unknown command: {cmd}", "action": cmd}
+
+        if req_id is not None:
+            res["_reqId"] = req_id
+        if "action" not in res:
+            res["action"] = cmd
 
         sys.stdout.write(json.dumps(res) + "\n")
         sys.stdout.flush()

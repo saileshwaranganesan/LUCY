@@ -113,9 +113,18 @@ class ResultVerifier {
                 case 'desktop_click_element':
                     return await this._verifyDesktopClick(step, toolResult, options);
                 case 'desktop_find_element':
+                case 'desktop_resolve_target':
                 case 'desktop_inspect_ui':
                 case 'desktop_list_apps':
                     return await this._verifyDesktopRead(step, toolResult, options);
+                case 'desktop_inspect_control':
+                    return await this._verifyDesktopInspectControl(step, toolResult, options);
+                case 'desktop_save_document':
+                    return await this._verifyDesktopSaveDocument(step, toolResult, options);
+                case 'desktop_close_app':
+                    return await this._verifyDesktopCloseApp(step, toolResult, options);
+                case 'desktop_take_screenshot':
+                    return await this._verifyDesktopTakeScreenshot(step, toolResult, options);
                 case 'browser_navigate':
                     return await this._verifyBrowserNavigate(step, toolResult, options);
                 case 'browser_search':
@@ -124,6 +133,13 @@ class ResultVerifier {
                     return await this._verifyBrowserScroll(step, toolResult);
                 case 'browser_extract':
                     return await this._verifyBrowserExtract(step, toolResult, options);
+                case 'browser_inspect_page':
+                    return {
+                        status: VERIFICATION_STATUSES.VERIFIED,
+                        verified: Boolean(toolResult && toolResult.ok),
+                        method: 'browser_page_inspection_check',
+                        details: `Page inspected: '${toolResult.title || toolResult.url || 'browser'}'. Dialog open: ${Boolean(toolResult.dialogOpen)}.`
+                    };
                 case 'browser_click':
                 case 'browser_fill':
                 case 'browser_select_option':
@@ -347,8 +363,45 @@ class ResultVerifier {
         const tier = result?.tier || step.automationTier || (result?.physicalInputUsed ? 4 : 3);
         const tierName = result?.tierName || (tier === 4 ? 'Tier 4 — Physical mouse/keyboard fallback' : 'Tier 3 — Windows UI Automation');
         const physicalInputUsed = Boolean(result?.physicalInputUsed);
+        const isSecret = Boolean(
+            step.params?.isSecret ||
+            result?.isSecret ||
+            /password|passwd|pwd|pin|secret|credential|token|auth/i.test(step.params?.name || step.params?.automationId || step.params?.className || '')
+        );
 
-        if (result && result.verified) {
+        const sanitizeError = (msg) => {
+            if (!msg || typeof msg !== 'string') return msg;
+            if (isSecret && step.params?.text) {
+                return msg.split(step.params.text).join('[REDACTED]');
+            }
+            return msg;
+        };
+
+        if (result?.postconditionStatus === 'FAILED' || (result?.verified === false && result?.postconditionStatus !== 'UNVERIFIABLE')) {
+            return {
+                status: VERIFICATION_STATUSES.FAILED,
+                verified: false,
+                method: 'uia_text_insertion_postcondition_check',
+                tier,
+                tierName,
+                physicalInputUsed,
+                failureReason: sanitizeError(result?.error || result?.postconditionDetail || 'Text insertion postcondition verification failed (readback mismatch).')
+            };
+        }
+
+        if (result?.postconditionStatus === 'UNVERIFIABLE') {
+            return {
+                status: VERIFICATION_STATUSES.INCONCLUSIVE,
+                verified: false,
+                method: 'uia_text_insertion_postcondition_check',
+                tier,
+                tierName,
+                physicalInputUsed,
+                failureReason: sanitizeError(`UNVERIFIABLE: ${result?.postconditionDetail || 'Text insertion outcome could not be independently verified by the UIA provider.'}`)
+            };
+        }
+
+        if (result && result.verified === true) {
             return {
                 status: VERIFICATION_STATUSES.VERIFIED,
                 verified: true,
@@ -360,7 +413,13 @@ class ResultVerifier {
                 targetApp: step.params?.target,
                 targetControl: result?.controlName || null,
                 action: step.toolId,
-                evidence: { target: step.params?.target, textLength: (step.params?.text || '').length, tier, physicalInputUsed }
+                evidence: {
+                    target: step.params?.target,
+                    textLength: isSecret ? undefined : (step.params?.text || '').length,
+                    isSecret,
+                    tier,
+                    physicalInputUsed
+                }
             };
         }
         return {
@@ -371,7 +430,7 @@ class ResultVerifier {
             tierName,
             physicalInputUsed,
             requiresUserIntervention: Boolean(result?.reason === 'TIER3_UIA_UNSUPPORTED' || result?.reason === 'TARGET_FOCUS_LOST'),
-            failureReason: result?.error || 'Text insertion executed but was not verified by UI Automation.'
+            failureReason: sanitizeError(result?.error || 'Text insertion executed but was not verified by UI Automation.')
         };
     }
 
@@ -381,7 +440,31 @@ class ResultVerifier {
         const tierName = result?.tierName || (tier === 4 ? 'Tier 4 — Physical mouse/keyboard fallback' : 'Tier 3 — Windows UI Automation');
         const physicalInputUsed = Boolean(result?.physicalInputUsed);
 
-        if (result && (result.verified || result.clicked || result.action === 'click' || result.action === 'invoked' || result.action === 'toggled' || result.action === 'selected' || result.action === 'bm_click')) {
+        if (result?.postconditionStatus === 'FAILED' || (result?.verified === false && result?.postconditionStatus !== 'UNVERIFIABLE')) {
+            return {
+                status: VERIFICATION_STATUSES.FAILED,
+                verified: false,
+                method: 'uia_click_postcondition_check',
+                tier,
+                tierName,
+                physicalInputUsed,
+                failureReason: result?.error || result?.postconditionDetail || 'Postcondition check failed after click action.'
+            };
+        }
+
+        if (result?.postconditionStatus === 'UNVERIFIABLE') {
+            return {
+                status: VERIFICATION_STATUSES.INCONCLUSIVE,
+                verified: false,
+                method: 'uia_click_postcondition_check',
+                tier,
+                tierName,
+                physicalInputUsed,
+                failureReason: result?.postconditionDetail || 'Click execution completed but the outcome state transition could not be verified.'
+            };
+        }
+
+        if (result && result.verified === true) {
             return {
                 status: VERIFICATION_STATUSES.VERIFIED,
                 verified: true,
@@ -404,13 +487,13 @@ class ResultVerifier {
             tierName,
             physicalInputUsed,
             requiresUserIntervention: Boolean(result?.reason === 'TIER3_UIA_UNSUPPORTED' || result?.reason === 'TARGET_FOCUS_LOST'),
-            failureReason: result?.error || 'Click command returned without confirmation receipt.'
+            failureReason: result?.error || result?.postconditionDetail || 'Click command returned without confirmation receipt.'
         };
     }
 
     async _verifyDesktopRead(step, toolResult) {
         const result = toolResult.result || toolResult;
-        if (result && (Array.isArray(result) || result.element || result.tree || result.apps)) {
+        if (result && (Array.isArray(result) || result.element || result.tree || result.apps || result.matched !== undefined || result.resolvedTarget || result.automationId || result.name)) {
             return {
                 status: VERIFICATION_STATUSES.VERIFIED,
                 verified: true,
@@ -423,6 +506,41 @@ class ResultVerifier {
             verified: false,
             method: 'desktop_inspection_receipt',
             failureReason: 'Desktop inspection produced no accessibility tree or elements.'
+        };
+    }
+
+    async _verifyDesktopInspectControl(step, toolResult) {
+        const result = toolResult.result || toolResult;
+        if (result && result.ready === true && result.controlFound === true) {
+            return {
+                status: VERIFICATION_STATUSES.VERIFIED,
+                verified: true,
+                method: 'desktop_control_readiness_check',
+                details: `Target application '${step.params?.target}' is active, responsive, and ready for ${step.params?.action || 'typing'} (Control: ${result.controlType || 'Edit'} "${result.controlName || ''}").`,
+                evidence: {
+                    target: step.params?.target,
+                    appId: result.appId,
+                    pid: result.pid,
+                    controlType: result.controlType,
+                    controlName: result.controlName,
+                    isEditable: result.isEditable,
+                    windowResponsive: result.windowResponsive
+                }
+            };
+        }
+        if (result && result.ready === false) {
+            return {
+                status: VERIFICATION_STATUSES.FAILED,
+                verified: false,
+                method: 'desktop_control_readiness_check',
+                failureReason: result.message || 'Target window is active but no compatible ready control was found.'
+            };
+        }
+        return {
+            status: VERIFICATION_STATUSES.INCONCLUSIVE,
+            verified: false,
+            method: 'desktop_control_readiness_check',
+            failureReason: result?.error || 'Could not verify application control readiness.'
         };
     }
 
@@ -721,6 +839,194 @@ class ResultVerifier {
             verified: false,
             method: 'browser_scroll_receipt',
             failureReason: 'Browser scroll did not return confirmation.'
+        };
+    }
+
+    async _verifyDesktopCloseApp(step, toolResult, options = {}) {
+        const result = toolResult.result || toolResult;
+        if (!result) {
+            return {
+                status: VERIFICATION_STATUSES.FAILED,
+                verified: false,
+                method: 'desktop_close_app_check',
+                failureReason: 'No execution result returned from desktop close operation.'
+            };
+        }
+
+        const savePolicy = step.params?.savePolicy;
+        if (savePolicy === 'save') {
+            const hasConfirmedPersistence = (result.applicationSaveConfirmed === true || result.fallbackPersistenceVerified === true) && result.verifiedContentMatch !== false;
+            if (!result.closed || result.saveSuccess === false || result.status === 'save_uncertain' || result.status === 'conflict' || !hasConfirmedPersistence) {
+                return {
+                    status: VERIFICATION_STATUSES.FAILED,
+                    verified: false,
+                    method: 'desktop_save_verification',
+                    failureReason: result.error || 'Document save failed, encountered conflict, lacked verified persistence, or remained uncertain; application window was not safely closed.'
+                };
+            }
+            return {
+                status: VERIFICATION_STATUSES.VERIFIED,
+                verified: true,
+                method: 'desktop_save_verification',
+                details: `Document saved via ${result.saveMethod || 'application_ui_save'} (appSaveConfirmed: ${result.applicationSaveConfirmed}, fallbackVerified: ${result.fallbackPersistenceVerified}, verifiedContentMatch: ${Boolean(result.verifiedContentMatch)}) and application closed.`,
+                evidence: {
+                    saveMethod: result.saveMethod,
+                    applicationSaveConfirmed: result.applicationSaveConfirmed,
+                    fallbackPersistenceVerified: result.fallbackPersistenceVerified,
+                    verifiedContentMatch: Boolean(result.verifiedContentMatch)
+                }
+            };
+        }
+
+        if (result.dialogOpen) {
+            return {
+                status: VERIFICATION_STATUSES.VERIFIED,
+                verified: true,
+                method: 'desktop_dialog_open_receipt',
+                details: `Unsaved changes confirmation dialog is open (${result.dialogTitle || 'confirmation'}).`,
+                evidence: { dialogOpen: true, availableActions: result.availableActions }
+            };
+        }
+
+        if (result.closed) {
+            return {
+                status: VERIFICATION_STATUSES.VERIFIED,
+                verified: true,
+                method: 'desktop_close_receipt',
+                details: `Application window closed successfully (action: ${result.actionTaken || 'close'}).`,
+                evidence: { closed: true, pid: result.pid }
+            };
+        }
+
+        return {
+            status: VERIFICATION_STATUSES.INCONCLUSIVE,
+            verified: false,
+            method: 'desktop_close_receipt',
+            failureReason: 'Application close operation did not produce confirmed closed state.'
+        };
+    }
+
+    async _verifyDesktopSaveDocument(step, toolResult, options = {}) {
+        const result = toolResult.result || toolResult;
+        if (!result) {
+            return {
+                status: VERIFICATION_STATUSES.FAILED,
+                verified: false,
+                method: 'desktop_save_document_check',
+                failureReason: 'No execution result returned from desktop document save operation.'
+            };
+        }
+
+        if (result.ok === false || result.saved === false || result.saveSuccess === false) {
+            return {
+                status: VERIFICATION_STATUSES.FAILED,
+                verified: false,
+                method: 'desktop_save_document_check',
+                failureReason: result.error || 'Desktop application failed to save document.'
+            };
+        }
+
+        const targetPath = step.params?.filePath || step.params?.path || result.filePath || result.path;
+        if (!targetPath) {
+            return {
+                status: VERIFICATION_STATUSES.INCONCLUSIVE,
+                verified: false,
+                method: 'desktop_save_document_check',
+                failureReason: 'Missing target file path in step parameters or result receipt.'
+            };
+        }
+
+        // Deterministic disk verification: confirm file exists and is readable
+        const resolvedPath = result.fullPath || this._resolveWorkspacePath(targetPath, toolResult, options) || path.resolve(targetPath);
+        if (!fs.existsSync(resolvedPath)) {
+            return {
+                status: VERIFICATION_STATUSES.FAILED,
+                verified: false,
+                method: 'desktop_save_disk_evidence_check',
+                failureReason: `Saved document file does not exist on disk at: ${resolvedPath}`
+            };
+        }
+
+        try {
+            const stat = fs.statSync(resolvedPath);
+            const content = fs.readFileSync(resolvedPath, 'utf8');
+
+            // If expected content or text is provided, verify content match
+            if (step.params?.expectedContent) {
+                const normDisk = content.replace(/\r\n/g, '\n').trim();
+                const normExpected = String(step.params.expectedContent).replace(/\r\n/g, '\n').trim();
+                if (!normDisk.includes(normExpected)) {
+                    return {
+                        status: VERIFICATION_STATUSES.FAILED,
+                        verified: false,
+                        method: 'desktop_save_content_verification',
+                        failureReason: `Disk content of '${resolvedPath}' does not match expected text.`
+                    };
+                }
+            }
+
+            return {
+                status: VERIFICATION_STATUSES.VERIFIED,
+                verified: true,
+                method: 'desktop_save_document_verified',
+                details: `Document saved and verified on disk at '${resolvedPath}' (${stat.size} bytes).`,
+                evidence: {
+                    path: resolvedPath,
+                    sizeBytes: stat.size,
+                    saveMethod: result.saveMethod || 'native_uia_save',
+                    verifiedContentMatch: result.verifiedContentMatch !== false
+                }
+            };
+        } catch (err) {
+            return {
+                status: VERIFICATION_STATUSES.FAILED,
+                verified: false,
+                method: 'desktop_save_disk_evidence_check',
+                failureReason: `Failed to inspect saved document on disk: ${err.message}`
+            };
+        }
+    }
+
+    async _verifyDesktopTakeScreenshot(step, toolResult, options = {}) {
+        const result = toolResult.result || toolResult;
+        if (!result) {
+            return {
+                status: VERIFICATION_STATUSES.FAILED,
+                verified: false,
+                method: 'desktop_screenshot_check',
+                failureReason: 'No execution result returned from screenshot operation.'
+            };
+        }
+
+        if (result.isPlaceholder && !step.params?.allowPlaceholder) {
+            return {
+                status: VERIFICATION_STATUSES.FAILED,
+                verified: false,
+                method: 'desktop_screenshot_truthfulness_check',
+                failureReason: 'Screenshot capture failed and placeholder canvas was returned without allowPlaceholder authorization.'
+            };
+        }
+
+        if (result.captured !== false && (result.base64 || toolResult.base64)) {
+            return {
+                status: VERIFICATION_STATUSES.VERIFIED,
+                verified: true,
+                method: 'desktop_screenshot_check',
+                details: `Screenshot captured successfully using ${result.method || 'PrintWindow/CopyFromScreen'} (${result.width}x${result.height}).`,
+                evidence: {
+                    width: result.width,
+                    height: result.height,
+                    method: result.method,
+                    isPlaceholder: Boolean(result.isPlaceholder)
+                }
+            };
+        }
+
+        return {
+            status: VERIFICATION_STATUSES.FAILED,
+            verified: false,
+            method: 'desktop_screenshot_check',
+            failureReason: result.error || 'Desktop screenshot capture failed.'
         };
     }
 

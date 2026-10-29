@@ -108,6 +108,15 @@ class MemoryStore {
                     this.loadFailed = true;
                     this.memories = [];
                     this.loaded = true;
+                    if (this.sqliteActive && this.sqliteAdapter) {
+                        try {
+                            const all = this.sqliteAdapter.getAllMemories();
+                            if (Array.isArray(all) && all.length > 0) {
+                                this.memories = all;
+                                this.recoveredFromSqlite = true;
+                            }
+                        } catch (_) {}
+                    }
                     return;
                 }
 
@@ -245,6 +254,20 @@ class MemoryStore {
         const cleanContent = redactSecrets(content.trim());
         const cleanKey = key ? key.trim().toLowerCase() : '';
         const reqProjectId = (metadata && metadata.projectId) ? String(metadata.projectId).trim().toLowerCase() : '';
+
+        // Negative Instruction Enforcement:
+        // If an active user instruction prohibits remembering or storing this topic, reject it fail-closed
+        if (type !== MEMORY_TYPES.USER_INSTRUCTION && !metadata?.isNegativeInstruction) {
+            const negativeMatch = this._matchesNegativeInstruction(cleanContent, cleanKey);
+            if (negativeMatch.matched) {
+                return {
+                    ok: false,
+                    rejected: true,
+                    reason: `Memory storage rejected by active user instruction: "${negativeMatch.instruction.content}"`,
+                    instructionId: negativeMatch.instruction.id
+                };
+            }
+        }
 
         // Deduplication Check (Section 4 & Acceptance Criterion 6)
         // If an active memory with identical content already exists in the same category (and same key/projectId),
@@ -447,15 +470,58 @@ class MemoryStore {
     }
 
     /**
-     * Delete a memory record by ID or key.
-     * Prioritizes exact ID matching; only falls back to non-empty key matching.
+    /**
+     * Check if candidate memory content or key violates an active negative user instruction
+     * @param {string} content 
+     * @param {string} key 
+     * @returns {{ matched: boolean, instruction?: Object }}
      */
-    deleteMemory(idOrKey) {
+    _matchesNegativeInstruction(content, key) {
+        if (!content && !key) return { matched: false };
+        const normContent = String(content || '').toLowerCase();
+        const normKey = String(key || '').toLowerCase();
+
+        for (const m of this.memories) {
+            if (m.status !== 'active') continue;
+            const isInstruction = m.type === MEMORY_TYPES.USER_INSTRUCTION || Boolean(m.metadata && m.metadata.isNegativeInstruction);
+            if (!isInstruction) continue;
+
+            const instContent = String(m.content || '').toLowerCase();
+            const prohibitedTopic = m.metadata?.prohibitedTopic
+                ? String(m.metadata.prohibitedTopic).toLowerCase()
+                : null;
+
+            // 1. Direct prohibited topic match from metadata
+            if (prohibitedTopic && prohibitedTopic.length >= 2) {
+                if (normContent.includes(prohibitedTopic) || normKey.includes(prohibitedTopic)) {
+                    return { matched: true, instruction: m };
+                }
+            }
+
+            // 2. Pattern extraction from instruction content: "do not remember [topic]", "never remember [topic]", etc.
+            const negPattern = /(?:do not|don'?t|never)\s+(?:remember|store|save|record|keep)\s+(?:any\s+|my\s+|the\s+)?([a-z0-9_\-\s]{3,})/i;
+            const match = instContent.match(negPattern);
+            if (match && match[1]) {
+                const topic = match[1].trim().toLowerCase();
+                if (topic && (normContent.includes(topic) || normKey.includes(topic))) {
+                    return { matched: true, instruction: m };
+                }
+            }
+        }
+        return { matched: false };
+    }
+
+    /**
+     * Delete a memory record by ID or key.
+     * Prioritizes exact ID matching; only falls back to non-empty key matching when target is not an explicit ID.
+     */
+    deleteMemory(idOrKey, options = {}) {
         if (!idOrKey || typeof idOrKey !== 'string' || !idOrKey.trim()) {
             return false;
         }
         const targetId = idOrKey.trim();
         const lookupKey = targetId.toLowerCase();
+        const isExplicitId = targetId.startsWith('mem_') || options.exactIdOnly === true;
         const removed = [];
 
         // 1. Prioritize exact ID match
@@ -467,8 +533,8 @@ class MemoryStore {
             return true;
         });
 
-        // 2. Only if not matched by ID and lookupKey is non-empty, match by key (never match empty keys)
-        if (removed.length === 0 && lookupKey.length > 0) {
+        // 2. Only if not matched by ID, target is NOT an explicit ID, and lookupKey is non-empty, match by key (never match empty keys)
+        if (removed.length === 0 && !isExplicitId && lookupKey.length > 0) {
             this.memories = this.memories.filter((m) => {
                 if (m.key && m.key === lookupKey) {
                     removed.push(m);
@@ -486,7 +552,7 @@ class MemoryStore {
         if (this.sqliteActive && this.sqliteAdapter) {
             for (const item of removed) {
                 try {
-                    this.sqliteAdapter.deleteMemory(item.id);
+                    this.sqliteAdapter.deleteMemory(item.id, { exactIdOnly: true });
                 } catch (err) {
                     console.warn('[MemoryStore] Failed to delete memory from SQLite adapter:', err.message);
                 }

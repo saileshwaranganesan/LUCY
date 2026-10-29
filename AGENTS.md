@@ -36,21 +36,24 @@ Agents have access to a verified toolchain and must select tools intelligently b
 - **UI/UX Intelligence & Anti-Slop Art Direction (`ui-ux-pro-max`, `taste-design`)**:
   - Consult `ui-ux-pro-max` and `taste-design` for responsive layouts, WCAG AA contrast (minimum 4.5:1), and micro-animations.
   - **Preserve Established Identity**: Always respect L.U.C.Y.'s existing dark fairy palette (`#0f172a`, `#1e293b`, `#a855f7`) and wrap all animations in `@media (prefers-reduced-motion: no-preference)`.
-- **Engineering Quality (`superpowers`)**:
-  - Use `test-driven-development`, `systematic-debugging`, `writing-plans`, and `code-review` for structured engineering workflows.
+- **Engineering Quality & Task Routing (`superpowers`, `antigravity-dev-suite`, `.agents/`)**:
+  - Refer to [lucy-workflow](file:///.agents/skills/lucy-workflow/SKILL.md) and [authoritative-docs](file:///.agents/rules/authoritative-docs.md) for task routing and ground truth.
+  - Antigravity executes coding tasks inline with bounded TDD: use `executing-plans`, `gsd-execution`, `test-driven-development`, `systematic-debugging`, and `code-review`. Subagents are not dispatched for general coding; `browser_subagent` is reserved for browser automation.
 
 ## 3. Standard Development Workflow (10 Steps)
 
 Every development task must follow these steps:
 
-1. **Understand First**: Read relevant project files, tests, and architecture specs before proposing edits.
-2. **Choose Tools Intelligently**: Select only tools required for the task. Do not make pointless tool calls.
+1. **Understand First**: Consult ground-truth documentation (`PHASE0_BASELINE_REPORT.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`) before proposing edits.
+2. **Choose Tools Intelligently**: Select only tools required for the task (`context7`, `sequential-thinking`, `rea`). Do not make pointless tool calls.
 3. **Plan Proportionately**: For simple fixes, proceed directly with minimal diffs. For multi-component tasks, define explicit milestones, acceptance criteria, and a turn cap.
-4. **Implement Minimally**: Make the smallest correct change that satisfies the requirement. Avoid unprompted refactoring of unrelated files.
+4. **Implement Minimally**: Make the smallest correct change that satisfies the requirement using TDD. Avoid unprompted refactoring of unrelated files.
 5. **Preserve Context & Integrity**: Retain existing docstrings, comments, and architectural invariants. Never delete or overwrite unrelated user work.
 6. **Verify the Result**:
    - Run unit tests: `npm run test:unit`
    - Run security tests: `npm run test:security`
+   - Run integration tests: `npm run test:flow`
+   - Run packaging tests: `npm run test:packaging`
    - Run full suite: `npm test` (`node --test --test-concurrency=1 tests/**/*.test.js`)
 7. **Review Independently**: Examine `git diff` for requirement coverage, regression risks, input validation, and absence of hardcoded secrets.
 8. **Report Honestly**: State exactly what was modified, which tests were run with their actual exit codes, and what remains unverified. Never claim an unexecuted check passed.

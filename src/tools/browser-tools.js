@@ -526,6 +526,27 @@ function registerBrowserTools(registry, browserManager) {
             };
         }
     });
+
+    // 18. browser_inspect_page
+    registry.registerTool({
+        id: 'browser_inspect_page',
+        name: 'Browser Page Inspector',
+        description: 'Inspect current page state, accessibility tree, presence of modal/dialog overlays, and security gates without mutating state',
+        riskTier: RISK_TIERS.SAFE_READ,
+        schema: {
+            type: 'object',
+            properties: {}
+        },
+        handler: async () => {
+            return await browserManager.inspectPage();
+        },
+        dryRunSimulate: async () => {
+            return {
+                simulatedAction: 'inspect_page',
+                effect: 'Would inspect current web page title, URL, modal dialogs, and interactive elements (read-only)'
+            };
+        }
+    });
 }
 
 module.exports = {

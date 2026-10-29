@@ -1,7 +1,7 @@
 'use strict';
 
 const { RISK_TIERS } = require('../security/permission-authority.js');
-const { MEMORY_CATEGORIES, redactSecrets } = require('../memory/memory-constants.js');
+const { MEMORY_CATEGORIES, MEMORY_TYPES, MEMORY_SOURCES, redactSecrets } = require('../memory/memory-constants.js');
 
 /**
  * Register model-facing memory retrieval and inspection tools
@@ -258,6 +258,279 @@ function registerMemoryTools(registry, memoryStore) {
             return {
                 simulatedAction: 'list_memory_category',
                 category: params.category || 'all'
+            };
+        }
+    });
+
+    // 4. memory_store: Persist a confirmed fact, preference, instruction, or project note
+    registry.registerTool({
+        id: 'memory_store',
+        name: 'Store Persistent Memory',
+        description: 'Store a confirmed fact, preference, user instruction, or project note in persistent memory.',
+        riskTier: RISK_TIERS.LOW_IMPACT,
+        schema: {
+            type: 'object',
+            properties: {
+                content: {
+                    type: 'string',
+                    description: 'The memory content or fact to store'
+                },
+                category: {
+                    type: 'string',
+                    description: 'Memory category (user_approved, project, working_data, conversation). Defaults to user_approved.'
+                },
+                key: {
+                    type: 'string',
+                    description: 'Optional lookup key or topic tag'
+                },
+                type: {
+                    type: 'string',
+                    description: 'Memory type (confirmed_fact, user_instruction, project_decision, etc.)'
+                },
+                importance: {
+                    type: 'number',
+                    description: 'Importance rating from 1 to 5 (default: 2)'
+                },
+                tags: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'Optional tags for categorization'
+                },
+                metadata: {
+                    type: 'object',
+                    description: 'Optional structured metadata'
+                }
+            },
+            required: ['content']
+        },
+        handler: async (params = {}) => {
+            const content = String(params.content || '').trim();
+            if (!content) {
+                return {
+                    ok: false,
+                    status: 'invalid_parameter',
+                    error: 'Parameter content cannot be empty',
+                    verification: { verified: false, failureReason: 'Empty content' }
+                };
+            }
+
+            const category = params.category && Object.values(MEMORY_CATEGORIES).includes(params.category)
+                ? params.category
+                : MEMORY_CATEGORIES.USER_APPROVED;
+            const type = params.type && Object.values(MEMORY_TYPES).includes(params.type)
+                ? params.type
+                : (params.isInstruction ? MEMORY_TYPES.USER_INSTRUCTION : MEMORY_TYPES.CONFIRMED_FACT);
+
+            try {
+                const res = memoryStore.addMemory({
+                    category,
+                    key: params.key || '',
+                    content,
+                    type,
+                    source: params.source || MEMORY_SOURCES.USER_EXPLICIT,
+                    importance: Number(params.importance) || 2,
+                    tags: Array.isArray(params.tags) ? params.tags : [],
+                    metadata: params.metadata || {}
+                });
+
+                if (res && res.rejected) {
+                    return {
+                        ok: false,
+                        status: 'rejected',
+                        reason: res.reason,
+                        rejected: true,
+                        instructionId: res.instructionId || null,
+                        verification: { verified: false, failureReason: res.reason }
+                    };
+                }
+
+                return {
+                    ok: true,
+                    status: 'completed',
+                    memory: {
+                        id: res.id,
+                        category: res.category,
+                        key: res.key || '',
+                        content: redactSecrets(res.content),
+                        type: res.type,
+                        source: res.source,
+                        importance: res.importance,
+                        createdAt: res.createdAt,
+                        updatedAt: res.updatedAt
+                    },
+                    verification: { verified: true, method: 'memory_store_persisted' }
+                };
+            } catch (err) {
+                return {
+                    ok: false,
+                    status: 'error',
+                    error: `Failed to store memory: ${err.message}`,
+                    verification: { verified: false, failureReason: err.message }
+                };
+            }
+        },
+        dryRunSimulate: async (params = {}) => {
+            return {
+                simulatedAction: 'store_memory',
+                content: params.content || '',
+                category: params.category || 'user_approved'
+            };
+        }
+    });
+
+    // 5. memory_delete: Delete an individual memory record by ID or key
+    registry.registerTool({
+        id: 'memory_delete',
+        name: 'Delete Persistent Memory',
+        description: 'Delete a persistent memory record by its exact ID or lookup key with exact-ID protection.',
+        riskTier: RISK_TIERS.LOW_IMPACT,
+        schema: {
+            type: 'object',
+            properties: {
+                idOrKey: {
+                    type: 'string',
+                    description: 'Unique memory record ID (e.g. mem_12345678) or key to delete'
+                },
+                exactIdOnly: {
+                    type: 'boolean',
+                    description: 'If true, will only delete if matching the exact record ID (never falls back to key)'
+                }
+            },
+            required: ['idOrKey']
+        },
+        handler: async (params = {}) => {
+            const idOrKey = String(params.idOrKey || params.id || params.key || '').trim();
+            if (!idOrKey) {
+                return {
+                    ok: false,
+                    status: 'invalid_parameter',
+                    error: 'Parameter idOrKey cannot be empty',
+                    verification: { verified: false, failureReason: 'Empty identifier' }
+                };
+            }
+
+            try {
+                const deleted = memoryStore.deleteMemory(idOrKey, { exactIdOnly: Boolean(params.exactIdOnly) });
+                return {
+                    ok: true,
+                    status: 'completed',
+                    deleted: Boolean(deleted),
+                    idOrKey,
+                    verification: { verified: Boolean(deleted), method: 'memory_record_deletion' }
+                };
+            } catch (err) {
+                return {
+                    ok: false,
+                    status: 'error',
+                    error: `Failed to delete memory: ${err.message}`,
+                    verification: { verified: false, failureReason: err.message }
+                };
+            }
+        },
+        dryRunSimulate: async (params = {}) => {
+            return {
+                simulatedAction: 'delete_memory_record',
+                idOrKey: params.idOrKey || ''
+            };
+        }
+    });
+
+    // 6. memory_forget: Forget a topic and optionally register a negative instruction
+    registry.registerTool({
+        id: 'memory_forget',
+        name: 'Forget Topic or Preference',
+        description: 'Remove existing memories regarding a topic and record a negative user instruction preventing future retention.',
+        riskTier: RISK_TIERS.LOW_IMPACT,
+        schema: {
+            type: 'object',
+            properties: {
+                topic: {
+                    type: 'string',
+                    description: 'The topic, keyword, or preference to forget'
+                },
+                removeExisting: {
+                    type: 'boolean',
+                    description: 'Whether to remove existing stored memories matching the topic (default: true)'
+                },
+                prohibitFuture: {
+                    type: 'boolean',
+                    description: 'Whether to create an active negative instruction preventing future storage of this topic (default: true)'
+                }
+            },
+            required: ['topic']
+        },
+        handler: async (params = {}) => {
+            const rawTopic = String(params.topic || '').trim();
+            if (!rawTopic) {
+                return {
+                    ok: false,
+                    status: 'invalid_parameter',
+                    error: 'Parameter topic cannot be empty',
+                    verification: { verified: false, failureReason: 'Empty topic' }
+                };
+            }
+
+            const removeExisting = params.removeExisting !== false;
+            const prohibitFuture = params.prohibitFuture !== false;
+            const normTopic = rawTopic.toLowerCase();
+            let removedCount = 0;
+
+            try {
+                // 1. Remove existing memories matching the topic if requested
+                if (removeExisting && Array.isArray(memoryStore.memories)) {
+                    const toDelete = memoryStore.memories.filter((m) => {
+                        if (m.status !== 'active') return false;
+                        const contentMatches = m.content && m.content.toLowerCase().includes(normTopic);
+                        const keyMatches = m.key && m.key.toLowerCase().includes(normTopic);
+                        const tagMatches = Array.isArray(m.tags) && m.tags.some((t) => t.toLowerCase().includes(normTopic));
+                        return contentMatches || keyMatches || tagMatches;
+                    });
+
+                    for (const rec of toDelete) {
+                        const del = memoryStore.deleteMemory(rec.id, { exactIdOnly: true });
+                        if (del) removedCount++;
+                    }
+                }
+
+                // 2. Prohibit future storage by recording an active negative instruction
+                let instructionRecord = null;
+                if (prohibitFuture) {
+                    instructionRecord = memoryStore.addMemory({
+                        category: MEMORY_CATEGORIES.USER_APPROVED,
+                        key: `no_${normTopic.replace(/[^a-z0-9_]/g, '_').slice(0, 32)}`,
+                        content: `Do not remember ${rawTopic}`,
+                        type: MEMORY_TYPES.USER_INSTRUCTION,
+                        source: MEMORY_SOURCES.USER_EXPLICIT,
+                        importance: 5,
+                        metadata: {
+                            isNegativeInstruction: true,
+                            prohibitedTopic: normTopic
+                        }
+                    });
+                }
+
+                return {
+                    ok: true,
+                    status: 'completed',
+                    topic: rawTopic,
+                    removedCount,
+                    instructionCreated: Boolean(instructionRecord && !instructionRecord.rejected),
+                    instructionId: instructionRecord?.id || null,
+                    verification: { verified: true, method: 'memory_topic_forgotten' }
+                };
+            } catch (err) {
+                return {
+                    ok: false,
+                    status: 'error',
+                    error: `Failed to forget topic: ${err.message}`,
+                    verification: { verified: false, failureReason: err.message }
+                };
+            }
+        },
+        dryRunSimulate: async (params = {}) => {
+            return {
+                simulatedAction: 'forget_topic',
+                topic: params.topic || ''
             };
         }
     });

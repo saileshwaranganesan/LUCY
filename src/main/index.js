@@ -572,6 +572,25 @@ function initAssistantBackend() {
     lifecycleManager.registerService('floatingCompanion', floatingCompanion);
     lifecycleManager.registerService('app', app);
 
+    // Pre-warm local Kokoro TTS worker in background only if configured engine is Kokoro
+    let startupTtsEngine = 'kokoro';
+    try {
+        if (voiceConfigFile && fs.existsSync(voiceConfigFile)) {
+            const persistedVoice = JSON.parse(fs.readFileSync(voiceConfigFile, 'utf8'));
+            if (persistedVoice && persistedVoice.ttsEngine) {
+                startupTtsEngine = persistedVoice.ttsEngine;
+            }
+        }
+    } catch (_) {}
+
+    if (startupTtsEngine !== 'windows-speech' && kokoroTtsService && typeof kokoroTtsService.loadModel === 'function' && kokoroTtsService.isAvailable()) {
+        setTimeout(() => {
+            kokoroTtsService.loadModel().catch((err) => {
+                logger.warn(`Kokoro pre-warming non-critical warning: ${err.message}`);
+            });
+        }, 1500);
+    }
+
     // Forward visual updates from companion bridge to renderer & floating companion
     companionBridge.on('visualUpdate', (state) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -582,11 +601,21 @@ function initAssistantBackend() {
         }
     });
 
-    // Forward task execution lifecycle events to UI activity & status feed
+    // Forward task execution lifecycle events to UI activity & status feed, companion bridge & floating companion
     statusManager.on('stateChanged', (event) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
             try {
                 mainWindow.webContents.send('lucy:taskLifecycleEvent', event);
+            } catch (_) {}
+        }
+        if (companionBridge && typeof companionBridge.handleStateEvent === 'function') {
+            try {
+                companionBridge.handleStateEvent(event);
+            } catch (_) {}
+        }
+        if (floatingCompanion && typeof floatingCompanion.sendTaskUpdate === 'function') {
+            try {
+                floatingCompanion.sendTaskUpdate(event);
             } catch (_) {}
         }
     });
@@ -612,7 +641,12 @@ ipcMain.handle('lucy:executeRequest', async (event, userRequest, options = {}) =
             }
         }
     };
-    return await coordinator.executeRequest(validation.sanitized.userRequest, execOptions);
+    const rawResult = await coordinator.executeRequest(validation.sanitized.userRequest, execOptions);
+    try {
+        return JSON.parse(JSON.stringify(rawResult));
+    } catch (_) {
+        return rawResult;
+    }
 });
 
 ipcMain.handle('lucy:cancelRequest', async (_event, taskId) => {

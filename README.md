@@ -59,12 +59,12 @@ node scripts/verify-packaged-release-live.js
 
 ## Documentation Index
 
-- [Comprehensive Requirements Traceability Matrix](file:///c:/Users/admin/Desktop/LUCY/docs/audit/REQUIREMENTS_TRACEABILITY_MATRIX.md) (All 44 requirements VERIFIED)
-- [Feature Completion Matrix](file:///c:/Users/admin/Desktop/LUCY/docs/audit/FEATURE_COMPLETION_MATRIX.md)
-- [Defect Register](file:///c:/Users/admin/Desktop/LUCY/docs/audit/DEFECT_REGISTER.md) (DEF-001 through DEF-006 resolved)
-- [Architecture Decision Records (ADRs)](file:///c:/Users/admin/Desktop/LUCY/docs/DECISIONS.md) (ADR-001 through ADR-025)
-- [Packaging and Installation Guide](file:///c:/Users/admin/Desktop/LUCY/docs/PACKAGING_AND_INSTALLATION_GUIDE.md)
-- [Final Project Audit Report](file:///c:/Users/admin/Desktop/LUCY/docs/audit/FINAL_PROJECT_AUDIT.md)
+- [Architecture Specification](file:///c:/Users/admin/Desktop/LUCY/docs/ARCHITECTURE.md) — Single Authority model, UIA worker, and IPC boundaries.
+- [Developer Setup & Operations Guide](file:///c:/Users/admin/Desktop/LUCY/docs/DEVELOPMENT.md) — Environment setup, scripts, packaging, and configurations.
+- [Testing & Quality Assurance Guide](file:///c:/Users/admin/Desktop/LUCY/docs/TESTING.md) — Test suites, commands, evidentiary standards, and live benchmarks.
+- [Architecture Decision Records (ADRs)](file:///c:/Users/admin/Desktop/LUCY/docs/DECISIONS.md) — ADR-001 through ADR-026.
+- [Known Issues & Open Backlog](file:///c:/Users/admin/Desktop/LUCY/docs/KNOWN_ISSUES.md) — Confirmed limitations and physical acceptance status.
+- [Historical Audit Archive](file:///c:/Users/admin/Desktop/LUCY/docs/audit/) — Historical phase reports and defect registries.
 
 ---
 

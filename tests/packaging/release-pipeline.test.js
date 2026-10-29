@@ -32,6 +32,7 @@ const {
     getOfflineVoiceStatus,
     downloadFile
 } = require('../../scripts/provision-whisper.js');
+const { executeReleasePipeline } = require('../../scripts/release-pipeline.js');
 
 test('Sprint 3: Reproducible Windows Release Pipeline Suite', async (t) => {
     const testDir = path.join(os.tmpdir(), `lucy-release-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
@@ -297,4 +298,85 @@ test('Sprint 3: Reproducible Windows Release Pipeline Suite', async (t) => {
         scanDir(rootDir);
         assert.equal(sensitiveFiles.length, 0, `No private certificates or keys allowed: ${sensitiveFiles.join(', ')}`);
     });
+
+    // -------------------------------------------------------------------------
+    // 10. Release Pipeline Environment Gate Integration
+    // -------------------------------------------------------------------------
+    await t.test('10. Release pipeline environment gate: aborts before build on prerequisite failure and continues when healthy', async (st) => {
+        // 10.1: Pipeline aborts before build work when environment verification fails
+        await st.test('10.1: Aborts with error and actionable diagnostic on environment failure', async () => {
+            const badDir = path.join(testDir, 'env-gate-bad-dir');
+            fs.mkdirSync(badDir, { recursive: true });
+
+            await assert.rejects(
+                executeReleasePipeline({ rootDir: badDir, dryRun: true, allowDirty: true }),
+                (err) => {
+                    assert.match(err.message, /Release pipeline aborted by Environment Gate/i);
+                    assert.match(err.message, /native_uia_worker/);
+                    assert.match(err.message, /core_entry_points/);
+                    return true;
+                },
+                'Pipeline must reject when environment gate fails'
+            );
+        });
+
+        // 10.2: Custom failing envReport fails closed
+        await st.test('10.2: Injected failing envReport aborts pipeline fail-closed', async () => {
+            const mockFailingReport = {
+                ok: false,
+                checksPassed: 4,
+                checksTotal: 5,
+                checks: [
+                    { name: 'native_uia_worker', passed: false, message: 'Corrupted worker PE signature. Action: Run npm run build:worker.' }
+                ]
+            };
+
+            await assert.rejects(
+                executeReleasePipeline({ envReport: mockFailingReport, dryRun: true, allowDirty: true }),
+                (err) => {
+                    assert.match(err.message, /Release pipeline aborted by Environment Gate/i);
+                    assert.match(err.message, /Corrupted worker PE signature/);
+                    return true;
+                }
+            );
+        });
+
+        // 10.3: Pipeline succeeds through Stage 0 when environment verification passes
+        await st.test('10.3: Continues through Stage 0 and Stage 1 when environment gate passes', async () => {
+            const res = await executeReleasePipeline({ dryRun: true, allowDirty: true });
+            assert.equal(res.ok, true, 'Dry run with allowDirty should succeed');
+            assert.equal(res.dryRun, true);
+            assert.ok(res.envReport, 'Result must contain envReport');
+            assert.equal(res.envReport.ok, true, 'Environment report must report healthy');
+            assert.equal(res.envReport.checksPassed, res.envReport.checksTotal);
+        });
+
+        // 10.4: Pipeline avoids re-running environment check when envReport is passed
+        await st.test('10.4: Avoids re-running environment check when options.envReport is provided', async () => {
+            const preComputedReport = {
+                ok: true,
+                checksPassed: 5,
+                checksTotal: 5,
+                reusedMarker: 'CACHE_REUSE_CONFIRMED',
+                checks: []
+            };
+
+            const res = await executeReleasePipeline({ envReport: preComputedReport, dryRun: true, allowDirty: true });
+            assert.equal(res.ok, true);
+            assert.equal(res.envReport.reusedMarker, 'CACHE_REUSE_CONFIRMED');
+        });
+
+        // 10.5: Preserves existing release flags and normal error propagation
+        await st.test('10.5: Preserves existing flags: dirty tree check still aborts when allowDirty is false', async () => {
+            // Because working tree is dirty during development, allowDirty: false must throw
+            await assert.rejects(
+                executeReleasePipeline({ allowDirty: false, dryRun: true }),
+                (err) => {
+                    assert.match(err.message, /Git working tree contains uncommitted changes/i);
+                    return true;
+                }
+            );
+        });
+    });
 });
+

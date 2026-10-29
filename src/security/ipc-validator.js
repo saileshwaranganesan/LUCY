@@ -189,11 +189,21 @@ const ALLOWED_MEMORY_CATEGORIES = Object.freeze(new Set([
 const ALLOWED_VOICE_STATES = Object.freeze(new Set([
     'idle',
     'listening',
-    'thinking',
+    'transcribing',
+    'understanding',
+    'awaiting_confirmation',
+    'awaiting-confirmation',
+    'executing',
     'speaking',
+    'cancelled',
     'error',
+    'thinking',
+    'processing',
     'waiting_permission',
-    'ready'
+    'ready',
+    'recovering',
+    'awaiting_reconciliation',
+    'interrupted'
 ]));
 
 /**
@@ -474,14 +484,16 @@ function validateSendVoiceState(voiceData) {
         return { ok: false, code: 'INVALID_TYPE', error: 'Voice state payload must be a plain object.' };
     }
 
-    if (voiceData.state !== undefined && voiceData.state !== null) {
-        if (typeof voiceData.state !== 'string' || !ALLOWED_VOICE_STATES.has(voiceData.state.toLowerCase())) {
-            return { ok: false, code: 'INVALID_VOICE_STATE', error: `Invalid voice state '${voiceData.state}'.` };
+    const stateVal = voiceData.voiceState !== undefined ? voiceData.voiceState : voiceData.state;
+    if (stateVal !== undefined && stateVal !== null) {
+        if (typeof stateVal !== 'string' || !ALLOWED_VOICE_STATES.has(stateVal.toLowerCase())) {
+            return { ok: false, code: 'INVALID_VOICE_STATE', error: `Invalid voice state '${stateVal}'.` };
         }
     }
 
-    if (voiceData.transcript !== undefined && voiceData.transcript !== null) {
-        if (typeof voiceData.transcript !== 'string' || voiceData.transcript.length > 10000) {
+    const transcriptVal = voiceData.transcript !== undefined ? voiceData.transcript : voiceData.text;
+    if (transcriptVal !== undefined && transcriptVal !== null) {
+        if (typeof transcriptVal !== 'string' || transcriptVal.length > 10000) {
             return { ok: false, code: 'INVALID_TRANSCRIPT', error: 'Voice transcript must be a string up to 10,000 characters.' };
         }
     }

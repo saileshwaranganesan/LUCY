@@ -298,12 +298,59 @@ class WakeWordEngine extends _EventEmitter {
                 // Run evaluation periodically when enough samples have accumulated
                 if (this.bufferLength >= MIN_EVALUATION_SAMPLES && this.samplesSinceLastEval >= this.hopSamples) {
                     this.samplesSinceLastEval = 0;
-                    const windowSlice = this.slidingBuffer.subarray(0, this.bufferLength);
-                    const evalResult = this.acousticModel.evaluate(windowSlice);
 
-                    if (evalResult.detected && evalResult.confidence >= this.confidenceThreshold) {
-                        detectedKeyword = evalResult.keyword;
-                        score = evalResult.confidence;
+                    // Evaluate candidate sliding windows ending at the current write position
+                    // to match variable utterance durations without forcing silence into DTW
+                    const candidateLengths = [
+                        this.bufferLength,
+                        19200, // ~1.20s (slow natural 'Hey Lucy')
+                        16000, // ~1.00s (slow 'Hey Lucy')
+                        13600, // ~0.85s (nominal 'Hey Lucy')
+                        11200, // ~0.70s (fast 'Hey Lucy' or slow 'Lucy')
+                        9600,  // ~0.60s (nominal 'Lucy')
+                        8000,  // ~0.50s (fast 'Lucy')
+                        6400   // ~0.40s (brisk natural 'Lucy')
+                    ];
+
+                    let bestEvalResult = null;
+                    let highestCandidateResult = null;
+                    const testedLengths = new Set();
+
+                    for (const candLen of candidateLengths) {
+                        const len = Math.min(this.bufferLength, candLen);
+                        if (len < MIN_EVALUATION_SAMPLES || testedLengths.has(len)) continue;
+                        testedLengths.add(len);
+
+                        const startOffset = this.bufferLength - len;
+                        const windowSlice = this.slidingBuffer.subarray(startOffset, this.bufferLength);
+                        const evalResult = this.acousticModel.evaluate(windowSlice);
+
+                        if (!highestCandidateResult || evalResult.confidence > highestCandidateResult.confidence) {
+                            highestCandidateResult = { ...evalResult, candidateLength: len };
+                        }
+
+                        if (evalResult.detected && evalResult.confidence >= this.confidenceThreshold) {
+                            if (!bestEvalResult || evalResult.confidence > bestEvalResult.confidence) {
+                                bestEvalResult = evalResult;
+                            }
+                        }
+                    }
+
+                    if (highestCandidateResult) {
+                        this.lastDiagnostic = {
+                            timestamp: now,
+                            candidateLength: highestCandidateResult.candidateLength,
+                            confidence: highestCandidateResult.confidence,
+                            threshold: this.confidenceThreshold,
+                            keyword: highestCandidateResult.keyword,
+                            details: highestCandidateResult.details
+                        };
+                        this.emit('diagnosticEvaluation', this.lastDiagnostic);
+                    }
+
+                    if (bestEvalResult) {
+                        detectedKeyword = bestEvalResult.keyword;
+                        score = bestEvalResult.confidence;
                         detectionMethod = 'acoustic';
                     }
                 } else if (this.allowLegacyEnergyFallback && normalizedFrame.length < 1600) {

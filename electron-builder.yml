@@ -57,3 +57,7 @@ nsis:
 
 portable:
   artifactName: ${productName}-Portable-${version}-win-${arch}.${ext}
+  unpackDirName: false
+
+
+

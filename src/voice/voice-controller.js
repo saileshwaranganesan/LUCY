@@ -55,8 +55,13 @@ const _voiceCleanTextForSpeech = (typeof require !== 'undefined')
 const VOICE_STATES = Object.freeze({
     IDLE: 'idle',
     LISTENING: 'listening',
-    PROCESSING: 'processing',
+    TRANSCRIBING: 'transcribing',
+    PROCESSING: 'transcribing',
+    UNDERSTANDING: 'understanding',
+    AWAITING_CONFIRMATION: 'awaiting_confirmation',
+    EXECUTING: 'executing',
     SPEAKING: 'speaking',
+    CANCELLED: 'cancelled',
     ERROR: 'error'
 });
 
@@ -170,7 +175,14 @@ class VoiceController {
             },
             onFinalResult: ({ transcript }) => {
                 if (this.activeRecognitionEngine === 'whisper') return;
-                this.onFinalTranscript(transcript);
+                const raw = typeof transcript === 'string' ? transcript.trim() : '';
+                const cleanMeaningful = raw
+                    .replace(/\[\s*(?:BLANK_AUDIO|inaudible|unintelligible|music|applause|silence)[^\]]*\]/gi, '')
+                    .replace(/\(\s*(?:inaudible|unintelligible|music|applause|silence)[^)]*\)/gi, '')
+                    .replace(/[.,!?;:~-]/g, '')
+                    .trim();
+                const finalTranscript = cleanMeaningful ? raw : '';
+                this.onFinalTranscript(finalTranscript);
                 this.setVoiceState(VOICE_STATES.IDLE);
             },
             onError: (err) => {
@@ -241,15 +253,21 @@ class VoiceController {
         const makeWakeWord = _WakeWordEngine || (globalScope ? globalScope.WakeWordEngine : null) || (typeof window !== 'undefined' ? window.WakeWordEngine : null);
         this.wakeWordEngine = makeWakeWord ? new makeWakeWord(wwOpts) : null;
 
+        this._pendingWakeCommand = false;
+        this._isSpeechExecuting = false;
+
         if (this.wakeWordEngine) {
             this.wakeWordEngine.on('wakeWordDetected', (res) => {
+                this._pendingWakeCommand = true;
                 if (typeof this.onWakeWord === 'function') {
                     this.onWakeWord(res);
                 }
                 if (typeof this.onWakeWordStateChange === 'function') {
                     this.onWakeWordStateChange({ state: 'triggered', keyword: res.keyword, confidence: res.confidence });
                 }
-                if (this.voiceState === VOICE_STATES.IDLE && !this.isSpeaking) {
+                // If speech synthesis was not started by onWakeWord, start command listening immediately
+                if (!this.isSpeaking && !this._isSpeechExecuting && this._pendingWakeCommand) {
+                    this._pendingWakeCommand = false;
                     this.startListening();
                 }
             });
@@ -437,14 +455,15 @@ class VoiceController {
             if (this.voiceState !== VOICE_STATES.LISTENING) {
                 return false;
             }
-            this.setVoiceState(VOICE_STATES.PROCESSING);
+            this.setVoiceState(VOICE_STATES.TRANSCRIBING);
 
             const recordPromise = (this.audioRecorder && typeof this.audioRecorder.stop === 'function')
                 ? Promise.resolve(this.audioRecorder.stop())
                 : Promise.resolve(null);
 
             recordPromise.then((audioBuffer) => {
-                if (!audioBuffer) {
+                if (!audioBuffer || audioBuffer.length === 0) {
+                    this.onFinalTranscript('');
                     this.setVoiceState(VOICE_STATES.IDLE);
                     return;
                 }
@@ -452,10 +471,20 @@ class VoiceController {
                 return this.transcribeAudio(audioBuffer, {
                     signal: this.transcriptionAbortController.signal
                 }).then((res) => {
-                    if (res && res.ok && res.transcript) {
-                        this.onFinalTranscript(res.transcript);
+                    if (res && res.cancelled) {
                         this.setVoiceState(VOICE_STATES.IDLE);
-                    } else if (res && res.cancelled) {
+                        return;
+                    }
+                    if (res && res.ok) {
+                        const raw = typeof res.transcript === 'string' ? res.transcript.trim() : '';
+                        const cleanMeaningful = raw
+                            .replace(/\[\s*(?:BLANK_AUDIO|inaudible|unintelligible|music|applause|silence|snort|cough)[^\]]*\]/gi, '')
+                            .replace(/\(\s*(?:inaudible|unintelligible|music|applause|silence)[^)]*\)/gi, '')
+                            .replace(/[.,!?;:~-]/g, '')
+                            .trim();
+
+                        const finalTranscript = cleanMeaningful ? raw : '';
+                        this.onFinalTranscript(finalTranscript);
                         this.setVoiceState(VOICE_STATES.IDLE);
                     } else {
                         const err = new Error(res?.error || 'Offline speech transcription failed.');
@@ -559,6 +588,46 @@ class VoiceController {
     }
 
     /**
+     * Splits text into short, natural conversational speech chunks (< 65 chars).
+     * Splits on sentences first, and further subdivides long sentences at natural
+     * clause boundaries (commas, semicolons, dashes) so Chunk 1 begins playing
+     * in under 1.8 seconds on CPU.
+     * @param {string} text
+     * @param {number} [maxChunkLen=65]
+     * @returns {string[]}
+     */
+    _splitTextIntoSpokenChunks(text, maxChunkLen = 65) {
+        const clean = String(text || '').trim();
+        if (!clean) return [];
+        const rawSentences = clean.match(/[^.!?\n]+[.!?\n]+|[^.!?\n]+$/g) || [clean];
+        const chunks = [];
+        for (const raw of rawSentences) {
+            const trimmed = raw.trim();
+            if (!trimmed) continue;
+            if (trimmed.length <= maxChunkLen) {
+                chunks.push(trimmed);
+            } else {
+                const clauses = trimmed.match(/[^,;:—\-]+[,;:—\-]+|[^,;:—\-]+$/g) || [trimmed];
+                let current = '';
+                for (const cl of clauses) {
+                    const cTrim = cl.trim();
+                    if (!cTrim) continue;
+                    if (!current) {
+                        current = cTrim;
+                    } else if ((current + ' ' + cTrim).length <= maxChunkLen) {
+                        current += ' ' + cTrim;
+                    } else {
+                        chunks.push(current);
+                        current = cTrim;
+                    }
+                }
+                if (current) chunks.push(current);
+            }
+        }
+        return chunks.length > 0 ? chunks : [clean];
+    }
+
+    /**
      * Internal unified speech execution engine for both conversational responses and voice previews.
      * @private
      */
@@ -572,8 +641,19 @@ class VoiceController {
             return false;
         }
         if (this.isListening && !isPreview) {
-            return false;
+            if (isResponse || options.force) {
+                if (typeof this.cancelListening === 'function') {
+                    this.cancelListening();
+                } else if (typeof this.stopListening === 'function') {
+                    this.stopListening();
+                } else {
+                    this.voiceState = VOICE_STATES.IDLE;
+                }
+            } else {
+                return false;
+            }
         }
+        this._isSpeechExecuting = true;
         if (this.wakeWordEngine) {
             this.wakeWordEngine.pause();
         }
@@ -583,22 +663,28 @@ class VoiceController {
         this.lastPlaybackStartTime = Date.now();
 
         try {
-            const rawVoice = options.voice || options.kokoroVoice || options.voiceName || this.kokoroVoice || '';
-            const isKokoroPreset = rawVoice === 'af_bella' || rawVoice === 'af_sky' || String(rawVoice).startsWith('kokoro');
-            const cleanVoice = String(rawVoice).replace(/^kokoro:/, '');
-
             let engine = options.ttsEngine || this.ttsEngine || 'kokoro';
-            if (isKokoroPreset) {
+            const explicitVoice = options.voice || options.voiceName || (engine === 'kokoro' ? options.kokoroVoice : '');
+            const isExplicitKokoroVoice = explicitVoice === 'af_bella' || explicitVoice === 'af_sky' || String(explicitVoice).startsWith('kokoro');
+
+            // Explicit engine selection takes absolute precedence
+            if (options.ttsEngine) {
+                engine = options.ttsEngine;
+            } else if (isExplicitKokoroVoice && !options.ttsEngine) {
                 engine = 'kokoro';
-            } else if (rawVoice && rawVoice !== 'af_bella' && rawVoice !== 'af_sky' && options.ttsEngine !== 'kokoro') {
-                engine = 'windows-speech';
+            } else if (this.ttsEngine) {
+                engine = this.ttsEngine;
             }
+
+            const rawVoice = options.voice || options.voiceName || (engine === 'kokoro' ? (options.kokoroVoice || this.kokoroVoice) : (this.synthesis?.preferredVoiceName || '')) || '';
+            const cleanVoice = String(rawVoice).replace(/^kokoro:/, '');
 
             const rate = typeof options.rate === 'number' && Number.isFinite(options.rate) ? options.rate : (this.synthesis?.rate || 1.0);
             const pitch = typeof options.pitch === 'number' && Number.isFinite(options.pitch) ? options.pitch : (this.synthesis?.pitch || 1.05);
             const volume = typeof options.volume === 'number' && Number.isFinite(options.volume) ? options.volume : (this.synthesis?.volume !== undefined ? this.synthesis.volume : 1.0);
 
             const hasKokoroIpc = Boolean(this.globalScope && this.globalScope.lucyIpc && typeof this.globalScope.lucyIpc.synthesizeSpeech === 'function');
+            const t_tts_requested = Date.now();
 
             if (engine !== 'windows-speech' && hasKokoroIpc) {
                 const clean = typeof _voiceCleanTextForSpeech === 'function' ? _voiceCleanTextForSpeech(text) : String(text || '').trim();
@@ -606,50 +692,150 @@ class VoiceController {
 
                 const kokoroVoice = (cleanVoice === 'af_sky' || cleanVoice === 'af_bella') ? cleanVoice : (this.kokoroVoice || 'af_bella');
 
-                const res = await this.globalScope.lucyIpc.synthesizeSpeech(clean, {
-                    voice: kokoroVoice,
+                // Sentence and clause pipelining: If utterance contains multiple clauses, synthesize
+                // Chunk 1 first so speech begins immediately (< 1.8s), while pipelining
+                // subsequent chunks in the background during audio playback.
+                const candidateChunks = this._splitTextIntoSpokenChunks(clean, 65);
+                const sentences = (options.pipeline !== false && candidateChunks.length > 1)
+                    ? candidateChunks
+                    : [clean];
+
+                if (sentences.length > 1) {
+                    // Pipelined mode: synthesize Sentence 1 first
+                    const resFirst = await this.globalScope.lucyIpc.synthesizeSpeech(sentences[0], {
+                        voice: kokoroVoice,
+                        rate,
+                        pitch,
+                        volume
+                    });
+
+                    if (speechId !== this.currentSpeechId) return false;
+
+                    if (resFirst && resFirst.ok && resFirst.audio) {
+                        // Prefetch Sentence 2 immediately while Sentence 1 prepares to play
+                        let nextSynthPromise = (sentences.length > 1)
+                            ? this.globalScope.lucyIpc.synthesizeSpeech(sentences[1], { voice: kokoroVoice, rate, pitch, volume })
+                            : null;
+
+                        let allOk = true;
+                        const s1Ok = await this._playAudioInRenderer(resFirst.audio, speechId, {
+                            rate,
+                            pitch,
+                            volume,
+                            sinkId: options.sinkId || options.deviceId,
+                            onStart: () => {
+                                const t_first_audible = Date.now();
+                                const latencyMs = t_first_audible - t_tts_requested;
+                                this.lastTtsStartupLatencyMs = latencyMs;
+                                if (speechId === this.currentSpeechId) {
+                                    this.setVoiceState(VOICE_STATES.SPEAKING, {
+                                        text: clean,
+                                        engine: 'kokoro',
+                                        voice: kokoroVoice,
+                                        firstAudibleLatencyMs: latencyMs
+                                    });
+                                    if (typeof options.onStart === 'function') {
+                                        try { options.onStart(); } catch (_) {}
+                                    }
+                                }
+                            }
+                        });
+
+                        if (!s1Ok || speechId !== this.currentSpeechId) return false;
+
+                        // Sequentially play and prefetch remaining sentences
+                        for (let i = 1; i < sentences.length; i++) {
+                            if (speechId !== this.currentSpeechId) return false;
+                            const resNext = await nextSynthPromise;
+                            if (speechId !== this.currentSpeechId) return false;
+                            if (!resNext || !resNext.ok || !resNext.audio) {
+                                allOk = false;
+                                break;
+                            }
+
+                            // Start prefetching sentence i+1 while sentence i plays
+                            nextSynthPromise = (i + 1 < sentences.length)
+                                ? this.globalScope.lucyIpc.synthesizeSpeech(sentences[i + 1], { voice: kokoroVoice, rate, pitch, volume })
+                                : null;
+
+                            const partOk = await this._playAudioInRenderer(resNext.audio, speechId, {
+                                rate,
+                                pitch,
+                                volume,
+                                sinkId: options.sinkId || options.deviceId
+                            });
+
+                            if (!partOk || speechId !== this.currentSpeechId) {
+                                allOk = false;
+                                break;
+                            }
+                        }
+                        return allOk;
+                    }
+                    // If Kokoro failed on sentence 1, fall back to Windows Speech below
+                } else {
+                    // Single sentence mode
+                    const res = await this.globalScope.lucyIpc.synthesizeSpeech(clean, {
+                        voice: kokoroVoice,
+                        rate,
+                        pitch,
+                        volume
+                    });
+
+                    if (speechId !== this.currentSpeechId) {
+                        return false;
+                    }
+
+                    if (res && res.ok && res.audio) {
+                        return await this._playAudioInRenderer(res.audio, speechId, {
+                            rate,
+                            pitch,
+                            volume,
+                            sinkId: options.sinkId || options.deviceId,
+                            onStart: () => {
+                                const t_first_audible = Date.now();
+                                const latencyMs = t_first_audible - t_tts_requested;
+                                this.lastTtsStartupLatencyMs = latencyMs;
+                                if (speechId === this.currentSpeechId) {
+                                    this.setVoiceState(VOICE_STATES.SPEAKING, {
+                                        text: clean,
+                                        engine: 'kokoro',
+                                        voice: kokoroVoice,
+                                        firstAudibleLatencyMs: latencyMs
+                                    });
+                                    if (typeof options.onStart === 'function') {
+                                        try { options.onStart(); } catch (_) {}
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+
+                // Transparent fallback to native Windows speech
+                return await this.synthesis.speak(clean, {
+                    ...options,
+                    voiceName: cleanVoice,
                     rate,
                     pitch,
-                    volume
+                    volume,
+                    onStart: () => {
+                        const t_first_audible = Date.now();
+                        const latencyMs = t_first_audible - t_tts_requested;
+                        this.lastTtsStartupLatencyMs = latencyMs;
+                        if (speechId === this.currentSpeechId) {
+                            this.setVoiceState(VOICE_STATES.SPEAKING, {
+                                text: clean,
+                                engine: 'windows-speech',
+                                voice: cleanVoice,
+                                firstAudibleLatencyMs: latencyMs
+                            });
+                            if (typeof options.onStart === 'function') {
+                                try { options.onStart(); } catch (_) {}
+                            }
+                        }
+                    }
                 });
-
-                if (speechId !== this.currentSpeechId) {
-                    return false;
-                }
-
-                if (res && res.ok && res.audio) {
-                    return await this._playAudioInRenderer(res.audio, speechId, {
-                        rate,
-                        pitch,
-                        volume,
-                        sinkId: options.sinkId || options.deviceId,
-                        onStart: () => {
-                            if (speechId === this.currentSpeechId) {
-                                this.setVoiceState(VOICE_STATES.SPEAKING, { text: clean, engine: 'kokoro', voice: kokoroVoice });
-                                if (typeof options.onStart === 'function') {
-                                    try { options.onStart(); } catch (_) {}
-                                }
-                            }
-                        }
-                    });
-                } else {
-                    // Transparent fallback to native Windows speech
-                    return await this.synthesis.speak(clean, {
-                        ...options,
-                        voiceName: cleanVoice,
-                        rate,
-                        pitch,
-                        volume,
-                        onStart: () => {
-                            if (speechId === this.currentSpeechId) {
-                                this.setVoiceState(VOICE_STATES.SPEAKING, { text: clean, engine: 'windows-speech', voice: cleanVoice });
-                                if (typeof options.onStart === 'function') {
-                                    try { options.onStart(); } catch (_) {}
-                                }
-                            }
-                        }
-                    });
-                }
             } else {
                 const clean = typeof _voiceCleanTextForSpeech === 'function' ? _voiceCleanTextForSpeech(text) : String(text || '').trim();
                 if (!clean || !clean.trim()) return false;
@@ -660,8 +846,16 @@ class VoiceController {
                     pitch,
                     volume,
                     onStart: () => {
+                        const t_first_audible = Date.now();
+                        const latencyMs = t_first_audible - t_tts_requested;
+                        this.lastTtsStartupLatencyMs = latencyMs;
                         if (speechId === this.currentSpeechId) {
-                            this.setVoiceState(VOICE_STATES.SPEAKING, { text: clean, engine: 'windows-speech', voice: cleanVoice });
+                            this.setVoiceState(VOICE_STATES.SPEAKING, {
+                                text: clean,
+                                engine: 'windows-speech',
+                                voice: cleanVoice,
+                                firstAudibleLatencyMs: latencyMs
+                            });
                             if (typeof options.onStart === 'function') {
                                 try { options.onStart(); } catch (_) {}
                             }
@@ -682,12 +876,21 @@ class VoiceController {
             return false;
         } finally {
             this.lastPlaybackEndTime = Date.now();
+            this._isSpeechExecuting = false;
             if (speechId === this.currentSpeechId) {
-                if (this.voiceState === VOICE_STATES.SPEAKING) {
-                    this.setVoiceState(VOICE_STATES.IDLE);
-                }
-                if (isResponse && this.continuousConversation && !this.conversationStateMachine) {
-                    this._startFollowUpListening();
+                if (this._pendingWakeCommand) {
+                    this._pendingWakeCommand = false;
+                    if (this.voiceState === VOICE_STATES.SPEAKING) {
+                        this.voiceState = VOICE_STATES.IDLE;
+                    }
+                    this.startListening();
+                } else {
+                    if (this.voiceState === VOICE_STATES.SPEAKING) {
+                        this.setVoiceState(VOICE_STATES.IDLE);
+                    }
+                    if (isResponse && this.continuousConversation && !this.conversationStateMachine) {
+                        this._startFollowUpListening();
+                    }
                 }
             }
             if (this.wakeWordEngine) {
@@ -696,6 +899,9 @@ class VoiceController {
                     if (this.wakeWordEngine && !this.isSpeaking && this.voiceState === VOICE_STATES.IDLE) {
                         this.wakeWordEngine.resume();
                         this._syncWakeWordCapture();
+                        if (typeof this.onWakeWordStateChange === 'function' && this.wakeWordEngine.enabled) {
+                            this.onWakeWordStateChange({ state: 'listening_wake' });
+                        }
                     }
                 }, 400);
             }
@@ -793,7 +999,7 @@ class VoiceController {
 
             let mediaSource = null;
             try {
-                if (this._audioCtx && this._audioCtx.state !== 'closed') {
+                if (this._audioCtx && this._audioCtx.state === 'running') {
                     if (!this._analyser) {
                         this._analyser = this._audioCtx.createAnalyser();
                         this._analyser.fftSize = 64;
@@ -1105,6 +1311,11 @@ class VoiceController {
         }
 
         this._isWakeWordCapturing = true;
+        if (this.wakeWordEngine && this.wakeWordEngine.enabled && this.voiceState === VOICE_STATES.IDLE && !this.isSpeaking) {
+            if (typeof this.onWakeWordStateChange === 'function') {
+                this.onWakeWordStateChange({ state: 'listening_wake' });
+            }
+        }
 
         Promise.resolve(this.audioRecorder.startContinuousCapture({
             onAudioFrame: (frame) => this._onWakeAudioFrame(frame)

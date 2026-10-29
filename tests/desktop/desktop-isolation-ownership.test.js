@@ -245,7 +245,15 @@ test('L.U.C.Y. Repair 8 — Safe Desktop Automation & Ownership Isolation Regres
             return {};
         };
 
-        // Calling typeText on a non-existent target should propagate error and never send keys to active window
+        manager.trackedApps.set('app_9999999', {
+            appId: 'app_9999999',
+            pid: 9999999,
+            exe: 'notepad.exe',
+            launchedByLucy: true,
+            lifecycleState: 'active'
+        });
+
+        // Calling typeText on an owned target whose window is missing should propagate error and never send keys to active window
         await assert.rejects(async () => {
             await manager.typeText(9999999, 'malicious foreground text');
         }, (err) => {
@@ -262,6 +270,13 @@ test('L.U.C.Y. Repair 8 — Safe Desktop Automation & Ownership Isolation Regres
     // =========================================================================
     await suite.test('Scenario 6: Target focus loss aborts input and returns TARGET_FOCUS_LOST', async () => {
         const manager = new DesktopAutomationManager();
+        manager.trackedApps.set('app_123', {
+            appId: 'app_123',
+            pid: 123,
+            exe: 'notepad.exe',
+            launchedByLucy: true,
+            lifecycleState: 'active'
+        });
 
         // Simulate worker detecting that target window lost focus during text entry
         manager.sendCommand = async (cmd, payload) => {
